@@ -1,7 +1,7 @@
 import { api } from '@/lib/api';
 
 /** What a paired PC lets agents do: work with files, run commands. */
-export type DevicePower = 'files' | 'commands';
+export type DevicePower = 'files' | 'commands' | 'apps' | 'tasks';
 
 export interface DeviceFolder {
   path: string;
@@ -93,6 +93,8 @@ export interface PcLink {
   connected_since: string | null;
   default_name: string;
   platform: string;
+  /** Where this PC's sign-in is kept: Credential Manager, Keychain, Secret Service or a file path. */
+  token_kept_in?: string;
 }
 
 export async function getPcLink(): Promise<PcLink> {
@@ -114,4 +116,51 @@ export async function changePcLink(patch: Partial<Pick<PcLink, 'name' | 'folders
 
 export async function removePcLink(): Promise<PcLink> {
   return (await api.delete<PcLink>('/computer/link')).data;
+}
+
+/** A fresh picture of the PC's screen (only when the PC allows apps). */
+export async function deviceScreen(id: string): Promise<{ image: string; at: number }> {
+  return (await api.get<{ image: string; at: number }>(`/computer/devices/${encodeURIComponent(id)}/screen`)).data;
+}
+
+// ── Desktop app: hand tasks to the linked web account ──
+
+export interface SentTask {
+  id: string;
+  title: string;
+  status: string;
+  result: string;
+  /** The task on the web account. */
+  url: string;
+}
+
+export async function remoteAgents(): Promise<{ id: string; name: string }[]> {
+  return (await api.get<{ agents: { id: string; name: string }[] }>('/computer/link/remote/agents')).data.agents || [];
+}
+
+export async function sendTaskToWeb(body: { title: string; description: string; steps: string[]; agent_id: string | null }): Promise<{ task_id: string; url: string }> {
+  return (await api.post<{ task_id: string; url: string }>('/computer/link/remote/tasks', body)).data;
+}
+
+export async function sentTasks(): Promise<SentTask[]> {
+  return (await api.get<{ tasks: SentTask[] }>('/computer/link/remote/tasks')).data.tasks || [];
+}
+
+// ── Undo for agents' edits on a PC ──
+
+export interface PcChange {
+  path: string;
+  kind: 'changed' | 'created' | 'deleted';
+  at?: number;
+  restorable: boolean;
+}
+
+/** Files agents in this chat changed on its PC. */
+export async function pcChanges(sessionId: string): Promise<PcChange[]> {
+  return (await api.get<{ changes: PcChange[] }>(`/computer/devices/chats/${encodeURIComponent(sessionId)}/changes`)).data.changes || [];
+}
+
+/** Put files back as they were before this chat's agents changed them; null for all. */
+export async function undoPcChanges(sessionId: string, paths: string[] | null): Promise<{ path: string; ok: boolean; error?: string }[]> {
+  return (await api.post<{ restored: { path: string; ok: boolean; error?: string }[] }>(`/computer/devices/chats/${encodeURIComponent(sessionId)}/undo`, { paths })).data.restored || [];
 }

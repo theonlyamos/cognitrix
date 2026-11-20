@@ -193,9 +193,16 @@ def needs_person(tools: tuple, args: dict) -> bool:
     assigned tool and the registered one that actually runs: an agent saved
     before Bash had ``internal_params`` only shows it on the registered one.
     """
+    names = {re.sub(r'[\s\-]+', '_', str(getattr(t, 'name', '') or '')).lower() for t in tools if t is not None}
+    if 'open_app' in names:
+        try:
+            from cognitrix.computer.paired.turn import device_turn
+            if device_turn():
+                return True  # an app opening on the person's own paired PC is theirs to OK
+        except Exception:
+            pass
     if not any('approved' in (getattr(t, 'internal_params', None) or []) for t in tools if t is not None):
         return False
-    names = {re.sub(r'[\s\-]+', '_', str(getattr(t, 'name', '') or '')).lower() for t in tools if t is not None}
     if 'copy_back_from_sandbox' in names:
         return True  # changes land on the person's computer only when they say so
     try:

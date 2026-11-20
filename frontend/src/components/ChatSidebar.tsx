@@ -1,3 +1,6 @@
+import { PcScreen } from '@/components/PcScreen';
+import { PcChanges } from '@/components/PcChanges';
+import type { PairedDevice } from '@/lib/devices';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
@@ -91,6 +94,8 @@ export interface ChatSidebarProps {
   /** The sandboxed computer is switched on for this server. */
   sandboxOn: boolean;
   desktopHeldBy?: string | null;
+  /** The person's own paired PC this chat works on, instead of the sandbox. */
+  pc?: PairedDevice | null;
   onOpenComputer: () => void;
   waiting: SidebarWaiting[];
   onApprove: (id: string) => void;
@@ -244,7 +249,16 @@ export function ChatSidebar(props: ChatSidebarProps) {
             </div>
           ))}
 
-        {section('computer', desktop ? 'live' : sandboxOn ? 'idle' : 'off', desktop ? (
+        {props.pc ? section('computer', props.pc.online && !props.pc.paused ? 'pc' : 'off', (
+          <>
+            {props.pc.powers.includes('apps') && <button type="button" onClick={props.onOpenComputer} className="block w-full text-left" aria-label={tr('ui.chatSidebar.openNameSScreen', { name: props.pc.name })}><PcScreen device={props.pc} every={4000} /></button>}
+            <div className="mt-2 flex items-center gap-2 text-[12.5px]">
+              <span className="min-w-0 flex-1 truncate">{tr('ui.chatSidebar.thisChatWorksOnName', { name: props.pc.name })}</span>
+              {props.pc.powers.includes('apps') && <button type="button" onClick={props.onOpenComputer} className={smallButton}>{tr('ui.chatSidebar.open')}</button>}
+            </div>
+            {props.sessionId && props.pc.online && <PcChanges sessionId={props.sessionId} busy={props.busy} />}
+          </>
+        )) : section('computer', desktop ? 'live' : sandboxOn ? 'idle' : 'off', desktop ? (
           <>
             <ComputerPreview desktop={desktop} label={about.agentName} onOpen={props.onOpenComputer} />
             <div className="mt-2 flex items-center gap-2 text-[12.5px]">

@@ -717,6 +717,11 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
         # Ownership is server-owned: a new web task belongs to its creator.
         task.owner_id = _user_key(ctx)
     await _check_task_references(ctx, task)
+    if task.computer:
+        # Only one of the owner's own paired PCs.
+        from cognitrix.computer.paired.store import device_of
+        if await device_of(task.owner_id, task.computer) is None:
+            raise HTTPException(status_code=422, detail='That PC is not one of yours.')
     # Tombstones are server-owned. Full-row creates/edits cannot hide or
     # resurrect a task by supplying this field themselves.
     task.deleted_at = None
@@ -749,7 +754,7 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
         # projections) and schedule fields may be omitted by API clients —
         # carry them over instead of silently wiping them.
         for field in ('callback_url', 'callback_key_id', 'notes', 'max_runs_per_day', 'swarm', 'read_memory',
-                      'report_to', 'report_only_on', 'result_artifact'):
+                      'report_to', 'report_only_on', 'result_artifact', 'computer'):
             if field not in task.model_fields_set:
                 setattr(task, field, getattr(stored, field))
         if not respecified:

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { errorMessage } from '@/lib/api';
 import { pickFolder } from '@/lib/folders';
 import {
@@ -7,6 +8,7 @@ import {
 } from '@/lib/devices';
 import { Group, SettingRow, StatusPill, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { Toggle } from '@/pages/Notifications';
+import { SentTasks } from '@/components/settings/SentTasks';
 import { tr } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
@@ -57,14 +59,22 @@ function PowerToggles({ powers, onChange, disabled }: { powers: DevicePower[]; o
       <SettingRow label={tr('ui.thisPc.commands')} detail={tr('ui.thisPc.commandsRunAsYou')}>
         <Toggle label={tr('ui.thisPc.commands')} checked={powers.includes('commands')} disabled={disabled} onChange={(v) => set('commands', v)} />
       </SettingRow>
+      <SettingRow label={tr('ui.thisPc.apps')} detail={tr('ui.thisPc.appsDetail')}>
+        <Toggle label={tr('ui.thisPc.apps')} checked={powers.includes('apps')} disabled={disabled} onChange={(v) => set('apps', v)} />
+      </SettingRow>
+      <SettingRow label={tr('ui.thisPc.sendTasks')} detail={tr('ui.thisPc.sendTasksDetail')}>
+        <Toggle label={tr('ui.thisPc.sendTasks')} checked={powers.includes('tasks')} disabled={disabled} onChange={(v) => set('tasks', v)} />
+      </SettingRow>
     </Group>
   );
 }
 
 /** Step 1: the web address and the code. Step 2: whose account it is, and what to allow. */
 function LinkForm({ defaults, onLinked }: { defaults: PcLink; onLinked: (l: PcLink) => void }) {
-  const [server, setServer] = useState(defaults.server || '');
-  const [code, setCode] = useState('');
+  // Opened from the web's "Open in the desktop app" (cognitrix://pair link).
+  const [params] = useSearchParams();
+  const [server, setServer] = useState(params.get('server') || defaults.server || '');
+  const [code, setCode] = useState((params.get('code') || '').toUpperCase().slice(0, 12));
   const [account, setAccount] = useState('');
   const [name, setName] = useState(defaults.name || defaults.default_name || '');
   const [folders, setFolders] = useState<DeviceFolder[]>([]);
@@ -192,7 +202,7 @@ export function ThisPcLink() {
       <Group>
         <SettingRow
           label={<span className="flex flex-wrap items-center gap-2">{link.name}{status}</span>}
-          detail={<>{tr('ui.thisPc.linkedToAccountOnServer', { account: link.account, server: link.server })}{link.error && link.status !== 'connected' ? <span className="block text-warn-ink">{link.error}</span> : null}</>}
+          detail={<>{tr('ui.thisPc.linkedToAccountOnServer', { account: link.account, server: link.server })}{link.token_kept_in ? <span className="block text-fg-dim">{tr('ui.thisPc.tokenKeptIn', { place: link.token_kept_in })}</span> : null}{link.error && link.status !== 'connected' ? <span className="block text-warn-ink">{link.error}</span> : null}</>}
         >
           <button type="button" onClick={() => void change({ paused: !link.paused })} disabled={busy} className={buttonClass}>
             {link.paused ? tr('ui.thisPc.resumeAgents') : tr('ui.thisPc.pauseAgents')}
@@ -205,6 +215,12 @@ export function ThisPcLink() {
       </div>
       <PowerToggles powers={link.powers} onChange={(powers) => void change({ powers })} disabled={busy} />
       <p className="text-[12px] leading-snug text-fg-dim">{tr('ui.thisPc.everyCommandAsksYouFirst')}</p>
+      {link.powers.includes('tasks') && (
+        <div>
+          <div className="mb-1 mt-2 text-[12px] text-fg-dim">{tr('ui.thisPc.tasksSentToAccount', { account: link.account })}</div>
+          <SentTasks account={link.account} />
+        </div>
+      )}
       {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
       <div className="flex flex-wrap items-center gap-2">
         {confirmUnlink ? (

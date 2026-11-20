@@ -23,6 +23,7 @@ const COMMANDS: &[&str] = &[
     "test_notification",
     "check_for_update",
     "install_update",
+    "take_pending_link",
 ];
 
 fn main() {

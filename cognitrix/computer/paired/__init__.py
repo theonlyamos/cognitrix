@@ -29,7 +29,16 @@ PROTOCOL = 1
 
 FILES = 'files'
 COMMANDS = 'commands'
-POWERS = (FILES, COMMANDS)
+APPS = 'apps'  # work in app windows on the PC's own screen, in the background
+TASKS = 'tasks'  # the other way round: this PC may hand tasks to the web account
+POWERS = (FILES, COMMANDS, APPS, TASKS)
+
+# The window tools (cognitrix/tools/computer.py): on a PC they always act on
+# the PC's own screen.
+APP_TOOLS = ('List Windows', 'Open App', 'Look At Window', 'Click Element', 'Set Text', 'Click In Window',
+             'Type In Window', 'Press Key In Window', 'Scroll Window')
+# Not a tool: the web's view of the PC's screen.
+SCREEN = '__screen__'
 
 # The tools that run on a paired PC, and the power each one needs.
 PC_TOOLS: dict[str, str] = {
@@ -41,11 +50,13 @@ PC_TOOLS: dict[str, str] = {
     'Edit': FILES,
     'Glob': FILES,
     'Grep': FILES,
+    **{name: APPS for name in APP_TOOLS},
 }
 # Registered (snake case) names of the same tools, for adding them to a turn.
 PC_TOOL_KEYS: dict[str, str] = {
     'bash': COMMANDS, 'bash_output': COMMANDS, 'kill_shell': COMMANDS,
     'read': FILES, 'write': FILES, 'edit': FILES, 'glob': FILES, 'grep': FILES,
+    **{name.lower().replace(' ', '_'): APPS for name in APP_TOOLS},
 }
 # Seconds the server waits for a call's answer (Bash may run for 10 minutes).
 CALL_TIMEOUT_S = {'Bash': 660.0}

@@ -138,6 +138,10 @@ class Task(Model):
     """When the creator is told: always (None), failure, or changed (a
     result that differs from the last one reported)."""
 
+    computer: str | None = None
+    """One of the owner's paired PCs the run works on (its shell, files and
+    apps), or None for the agent's usual computer. See computer/paired."""
+
     standing_agent_id: str | None = None
     """Set on the home task of a standing assistant (tasks/standing.py): the
     agent whose brief this task checks in on. Its runs are read-only."""
