@@ -796,6 +796,26 @@ async def get_chat(
     return JSONResponse(session.chat)
 
 
+@sessions_api.get('/{session_id}/usage')
+async def get_chat_usage(
+    session_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Tokens this chat used, its last reply, and how full the context is."""
+    from cognitrix.agents import Agent
+    from cognitrix.usage import chat as chat_usage
+
+    _, session = await _load_authorized_session(session_id, ctx)
+    llm = None
+    if session.agent_id:
+        try:
+            agent = await Agent.find_one({'id': str(session.agent_id)})
+            llm = getattr(agent, 'llm', None) if agent else None
+        except Exception:
+            logger.debug('Agent for chat usage not found', exc_info=True)
+    return JSONResponse(await chat_usage.report(session, llm))
+
+
 @sessions_api.get('/{session_id}/pending')
 async def get_pending_messages(
     session_id: str,

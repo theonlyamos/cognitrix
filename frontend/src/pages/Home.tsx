@@ -1741,7 +1741,7 @@ export default function Home() {
   const sendRef = useRef(send);
   sendRef.current = send;
   const acceptNextStep = useCallback((step: string) => {
-    void sendRef.current(`Yes, go ahead: ${step}`, 'chat', null, { keepComposer: true });
+    void sendRef.current(tr('ui.home.yesGoAheadStep', { step }), 'chat', null, { keepComposer: true });
   }, []);
   let lastReplyIndex = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -2408,6 +2408,7 @@ export default function Home() {
             folders={shownFolders}
             onChangeFolders={changeFolders}
             foldersDisabled={busy}
+            sessionId={activeSessionId}
             about={{
               agentId,
               agentName: agentById.get(agentId)?.name || 'Agent',

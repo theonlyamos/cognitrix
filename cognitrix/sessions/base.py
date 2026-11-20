@@ -296,6 +296,10 @@ class Session(Model):
     visitor_key: str | None = None
     """Hash of the visitor token that may read and continue a public-link chat."""
 
+    token_usage: dict[str, Any] | None = None
+    """Tokens this chat's turns used, by model, for the chat's side panel:
+    {models, last_turn, context}. See cognitrix/usage/chat.py."""
+
     async def save(self) -> Self:
         """Save, then refresh this chat's row in the chat-list index."""
         result = await super().save()
@@ -454,7 +458,9 @@ class Session(Model):
             )},
             {'role': 'user', 'content': f"Summarize this conversation history:\n\n{convo}"},
         ]
-        resp = await llm(prompt, stream=False)
+        from cognitrix.usage import chat as chat_usage
+        with chat_usage.side_call():
+            resp = await llm(prompt, stream=False)
         summary = ''
         if resp and not getattr(resp, 'error', None):
             summary = (resp.llm_response or '').strip()
@@ -561,7 +567,9 @@ class Session(Model):
                     "Write the updated progress summary, covering all of the above."
                 )},
             ]
-            resp = await llm(prompt, stream=False)
+            from cognitrix.usage import chat as chat_usage
+            with chat_usage.side_call():
+                resp = await llm(prompt, stream=False)
             text = ''
             if resp and not getattr(resp, 'error', None):
                 text = (resp.llm_response or '').strip()
@@ -599,9 +607,13 @@ class Session(Model):
         # Model calls in this turn count toward this person's usage totals.
         owner = self.user_id or getattr(kwargs.get('tool_context'), 'user_id', None)
         usage_token = usage.set_owner(owner, getattr(agent, 'id', None))
+        # ...and toward this chat's own token counts (side panel).
+        from cognitrix.usage import chat as chat_usage
+        sink_token = usage.set_sink(chat_usage.turn_sink(self, getattr(agent, 'llm', None), usage.current_sink()))
         try:
             return await self._run_turn(message, agent, *args, **kwargs)
         finally:
+            usage.reset_sink(sink_token)
             usage.reset_owner(usage_token)
             memory_guard.end_turn(guard_token)
             turn_goal.reset(token)
