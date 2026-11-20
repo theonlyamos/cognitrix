@@ -40,6 +40,7 @@ const es: Messages = {
   'settings.group.computer': 'ESTE EQUIPO',
   'settings.group.system': 'SISTEMA',
   'settings.section.account': 'Cuenta',
+  'settings.section.sign-ins': 'Inicios de sesión',
   'settings.section.appearance': 'Apariencia',
   'settings.section.models': 'Modelos y claves',
   'settings.section.usage': 'Uso',

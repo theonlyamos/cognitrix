@@ -130,6 +130,9 @@ async def unpair_device(device_id: str, ctx: AuthContext = Depends(jwt_only)) ->
         raise HTTPException(status_code=404, detail='No such PC')
     await PairedDevice.delete_many({'id': device.id})
     await hub.drop(device.id, {'type': 'unpaired'}, code=4401)
+    if getattr(device, 'sign_in_sid', ''):
+        from cognitrix import signins
+        await signins.end(_user_id(ctx), device.sign_in_sid)
     from cognitrix import audit
     audit.record('settings', f'Unpaired the PC {device.name}', user_id=_user_id(ctx),
                  actor=str(getattr(ctx.user, 'email', '') or ''), outcome='ok')
@@ -364,23 +367,45 @@ class PairBody(BaseModel):
     folders: list[Any] = Field(default_factory=list, max_length=50)
     powers: list[str] = Field(default_factory=list, max_length=5)
     version: str = Field(default='', max_length=40)
+    client: str = Field(default='', max_length=20)
+    """'desktop' (the desktop app) or 'cli' (cognitrix connect): how the PC shows in Settings, Sign-ins."""
 
+
+# A pairing code (Settings, Computers) or a sign-in code (Settings, Sign-ins)
+# both pair a PC. A sign-in code also signs it in, so it shows in Sign-ins.
 
 @devices_api.post('/claim')
 async def claim_code(body: ClaimBody, request: Request) -> dict[str, Any]:
+    from cognitrix import signins
     from cognitrix.computer.paired.store import PairingError, claim
     try:
         return claim(body.code, _address(request))
     except PairingError as exc:
-        raise _pairing_error(exc) from None
+        if exc.code != 'bad_code':
+            raise _pairing_error(exc) from None
+        try:
+            return await signins.peek_code(body.code, _address(request))
+        except signins.SignInError as sign_in_exc:
+            if sign_in_exc.code == 'too_many':
+                raise HTTPException(status_code=429, detail={'code': 'too_many', 'message': sign_in_exc.message}) from None
+            raise _pairing_error(exc) from None
 
 
 @devices_api.post('/pair')
 async def pair_device(body: PairBody, request: Request) -> dict[str, Any]:
-    from cognitrix.computer.paired.store import PairingError, pair
+    from cognitrix.computer.paired.store import PairingError, pair, pair_with_sign_in_code
+    args = dict(name=body.name, platform=body.platform, folders=body.folders, powers=body.powers,
+                version=body.version, client=body.client)
     try:
-        device, token = await pair(body.code, _address(request), name=body.name, platform=body.platform,
-                                   folders=body.folders, powers=body.powers, version=body.version)
+        try:
+            device, token = await pair(body.code, _address(request), **args)
+        except PairingError as exc:
+            if exc.code != 'bad_code':
+                raise
+            try:
+                device, token = await pair_with_sign_in_code(body.code, _address(request), **args)
+            except PairingError as sign_in_exc:
+                raise (sign_in_exc if sign_in_exc.code in ('too_many', 'too_many_devices') else exc) from None
     except PairingError as exc:
         raise _pairing_error(exc) from None
     from cognitrix import audit
@@ -528,7 +553,8 @@ async def make_link(body: LinkBody, ctx: AuthContext = Depends(jwt_only)) -> dic
     _desktop_only()
     from cognitrix.computer.paired.connector import LinkError, get_connector, link
     try:
-        await link(body.server, body.code, name=body.name, folders=body.folders, powers=body.powers)
+        await link(body.server, body.code, name=body.name, folders=body.folders, powers=body.powers,
+                   client='desktop')
     except LinkError as exc:
         raise _link_error(exc) from None
     connector = get_connector()

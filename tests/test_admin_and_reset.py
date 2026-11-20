@@ -19,7 +19,9 @@ async def people(tmp_path, monkeypatch):
     for name in ('COGNITRIX_ADMIN_EMAILS', 'COGNITRIX_ALLOW_SIGNUP', 'COGNITRIX_SMTP_HOST'):
         monkeypatch.delenv(name, raising=False)
     await _initialize_routes_db(tmp_path)
-    for model in (User, Invite, UsageDay, Agent):
+    from cognitrix.models.sign_in import SignIn, SignInCode
+
+    for model in (User, Invite, UsageDay, Agent, SignIn, SignInCode):
         await model._create_table_async()
     from cognitrix.usage import pricing
 

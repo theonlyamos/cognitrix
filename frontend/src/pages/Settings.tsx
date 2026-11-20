@@ -30,6 +30,7 @@ import { PeopleSettings } from '@/components/settings/People';
 import { AuditLog } from '@/components/settings/AuditLog';
 import { ComputersSettings } from '@/components/settings/Computers';
 import { ThisPcLink } from '@/components/settings/ThisPcLink';
+import { SignInsSettings } from '@/components/settings/SignIns';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -38,7 +39,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'assistant' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'computers' | 'chat-apps' | 'email' | 'people' | 'audit' | 'desktop' | 'engine';
+type SectionId = 'account' | 'sign-ins' | 'appearance' | 'models' | 'usage' | 'swarms' | 'assistant' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'computers' | 'chat-apps' | 'email' | 'people' | 'audit' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -53,6 +54,7 @@ interface SectionMeta {
 
 const SECTIONS: SectionMeta[] = [
   { id: 'account', get label() { return tr('ui.settings.account'); }, group: 'GENERAL', keywords: 'profile email name password export backup download data sign out devices api keys' },
+  { id: 'sign-ins', get label() { return tr('ui.settings.signIns'); }, group: 'GENERAL', keywords: 'devices signed in sessions sign out phone browser laptop code qr another device new device log in login security' },
   { id: 'appearance', get label() { return tr('ui.settings.appearance'); }, group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
   { id: 'models', get label() { return tr('ui.settings.modelsAndKeys'); }, group: 'AI', keywords: 'providers api key chatgpt plan subscription plus pro openai anthropic claude gemini google groq openrouter cerebras ollama' },
   { id: 'usage', get label() { return tr('ui.settings.usage'); }, group: 'AI', keywords: 'cost spend tokens money bill price how much' },
@@ -473,6 +475,13 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
         </>
       );
     case 'access': return <AccessSection desktopApp={desktopApp} />;
+    case 'sign-ins':
+      return (
+        <>
+          <SectionHeader title={tr('ui.settings.signIns')} description={tr('ui.settings.devicesSignedInToYour')} />
+          <SignInsSettings />
+        </>
+      );
     case 'computers':
       return (
         <>

@@ -41,6 +41,7 @@ const en = {
   'settings.group.computer': 'THIS COMPUTER',
   'settings.group.system': 'SYSTEM',
   'settings.section.account': 'Account',
+  'settings.section.sign-ins': 'Sign-ins',
   'settings.section.appearance': 'Appearance',
   'settings.section.models': 'Models and keys',
   'settings.section.usage': 'Usage',

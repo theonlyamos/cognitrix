@@ -40,6 +40,7 @@ const fr: Messages = {
   'settings.group.computer': 'CET ORDINATEUR',
   'settings.group.system': 'SYSTÈME',
   'settings.section.account': 'Compte',
+  'settings.section.sign-ins': 'Connexions',
   'settings.section.appearance': 'Apparence',
   'settings.section.models': 'Modèles et clés',
   'settings.section.usage': 'Utilisation',

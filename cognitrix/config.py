@@ -463,6 +463,7 @@ _AGENT_MIGRATION_COLUMNS = (
 
 _PAIRED_DEVICE_MIGRATION_COLUMNS = (
     ('sent_tasks', 'TEXT'),
+    ('sign_in_sid', 'TEXT'),
 )
 
 _SESSION_MIGRATION_COLUMNS = (
@@ -882,6 +883,7 @@ async def _ensure_schema():
     from cognitrix.assistant.models import MODELS as ASSISTANT_MODELS
     from cognitrix.tasks.pr_watch import MODELS as PR_WATCH_MODELS
     from cognitrix.models.paired_device import MODELS as PAIRED_DEVICE_MODELS
+    from cognitrix.models.sign_in import MODELS as SIGN_IN_MODELS
     from cognitrix.projects.models import MODELS as PROJECT_MODELS
     from cognitrix.safety.command_rules import MODELS as COMMAND_RULE_MODELS
     from cognitrix.file_changes.models import MODELS as FILE_CHANGE_MODELS
@@ -899,6 +901,7 @@ async def _ensure_schema():
         *ASSISTANT_MODELS,
         *PR_WATCH_MODELS,
         *PAIRED_DEVICE_MODELS,
+        *SIGN_IN_MODELS,
         *PROJECT_MODELS,
         *COMMAND_RULE_MODELS,
         *FILE_CHANGE_MODELS,

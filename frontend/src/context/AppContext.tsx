@@ -59,6 +59,15 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(() => {
     checkRun.current += 1;
+    // End this device's sign-in on the server too, so the token can't be reused.
+    const token = getToken();
+    if (token) {
+      void Promise.resolve()
+        .then(() => fetch(`${API_BACKEND_URI}/auth/sign-ins/sign-out`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        }))
+        .catch(() => undefined);
+    }
     clearToken();
     setUser(null);
   }, []);
