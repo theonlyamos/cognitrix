@@ -56,7 +56,7 @@ VOICE_PROVIDERS: dict[str, VoiceProvider] = {
     for p in (
         VoiceProvider(
             'openai', 'OpenAI',
-            ('gpt-transcribe', 'gpt-4o-mini-transcribe', 'whisper-1'),
+            ('gpt-transcribe',),
             'OPENAI_API_KEY', 'https://platform.openai.com/api-keys',
         ),
         VoiceProvider(

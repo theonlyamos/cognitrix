@@ -187,8 +187,8 @@ class CognitrixSettings:
     def get_default_model(self, provider: str) -> str:
         """Get default model for a provider"""
         model_mapping = {
-            'openai': 'gpt-6.1-sol',
-            'chatgpt': 'gpt-6.1-sol',
+            'openai': 'gpt-6.2-sol',
+            'chatgpt': 'gpt-6.2-sol',
             'openrouter': 'google/gemini-3.6-flash',
             'anthropic': 'claude-sonnet-5-5',
             'google': 'gemini-3.6-flash',

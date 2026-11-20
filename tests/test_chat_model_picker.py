@@ -30,10 +30,20 @@ def test_other_provider_uses_engine_key(monkeypatch):
     assert picked.api_key == 'sk-ant-test-key'
 
 
-@pytest.mark.parametrize('provider,model', [('claude-code', 'sonnet'), ('nope', 'x'), ('openai', ''), ('openai', 'x' * 201)])
+@pytest.mark.parametrize('provider,model', [('nope', 'x'), ('openai', ''), ('openai', 'x' * 201)])
 def test_rejects_bad_choices(provider, model):
     with pytest.raises(ValueError):
         base.build_turn_llm(_llm(), provider, model)
+
+
+@pytest.mark.parametrize('provider,model', [('claude-code', 'sonnet'), ('codex', 'gpt-6.2-sol'),
+                                            ('antigravity-cli', 'gemini-4-carbon-high')])
+def test_a_chat_can_switch_to_a_coding_agent_cli(provider, model):
+    picked = base.build_turn_llm(_llm(), provider, model)
+    assert picked.provider == provider
+    assert picked.model == model
+    # Signed in on this computer: no key from the agent's provider goes along.
+    assert picked.api_key != 'sk-test'
 
 
 def test_harness_agent_cannot_switch():

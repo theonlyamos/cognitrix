@@ -149,7 +149,7 @@ async def test_generate_image_resolves_uploaded_and_generated_sources_identicall
         'metadata': {
             'prompt': 'Make it blue',
             'source_artifact_id': 'source-1',
-            'model': 'gemini-3.1-flash-image',
+            'model': 'gemini-nano-banana-2.1',
         },
         'ownership': ownership,
         'ref': service.store_calls[0]['ref'],
