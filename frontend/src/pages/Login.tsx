@@ -8,6 +8,15 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import OAuthButtons from '@/components/OAuthButtons';
 import { useT, tr } from '@/lib/i18n';
 import { takeAfterSignIn } from '@/lib/afterSignIn';
+import { codeFromAddress } from '@/lib/signIns';
+import { isDesktop } from '@/lib/desktop';
+import { cn } from '@/lib/utils';
+
+/** 'KXRT4M9P' -> 'KXRT-4M9P' while typing; drops what can't be in a code. */
+function formatCode(value: string): string {
+  const raw = value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  return raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
+}
 
 const GRID = {
   backgroundImage:
@@ -23,7 +32,15 @@ export default function Login() {
   const { login } = useUser();
   const navigate = useNavigate();
   const t = useT();
-  const [options, setOptions] = useState({ signup_open: true, password_reset_by_email: false });
+  const [options, setOptions] = useState({ signup_open: true, password_reset_by_email: false, code_sign_in: true });
+  const [initialCode] = useState(codeFromAddress);
+  const [mode, setMode] = useState<'password' | 'code'>(initialCode ? 'code' : 'password');
+  const [code, setCode] = useState(initialCode);
+
+  // A scanned QR code puts the code in the address: keep it out of history once read.
+  useEffect(() => {
+    if (initialCode) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, [initialCode]);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotState, setForgotState] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
 
@@ -47,7 +64,9 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      const { data } = await api.post('/auth/login', { username: email, password });
+      const { data } = await api.post('/auth/login', {
+        username: email, password, ...(isDesktop() ? { device_name: 'Cognitrix desktop app', device_kind: 'desktop' } : {}),
+      });
       login(data.user, data.access_token);
       navigate(takeAfterSignIn());
     } catch (err) {
@@ -56,6 +75,35 @@ export default function Login() {
       setLoading(false);
     }
   };
+
+  const handleCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const { data } = await api.post('/auth/code-sign-in', {
+        code, ...(isDesktop() ? { device_name: 'Cognitrix desktop app', device_kind: 'desktop' } : {}),
+      });
+      login(data.user, data.access_token);
+      navigate(takeAfterSignIn());
+    } catch (err) {
+      setError(errorMessage(err, tr('ui.login.thatCodeDidNotWork')));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const tab = (value: 'password' | 'code', label: string) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={mode === value}
+      onClick={() => { setMode(value); setError(''); }}
+      className={cn('h-9 flex-1 rounded-md text-[13px]', mode === value ? 'bg-panel font-medium text-fg shadow-sm' : 'text-fg-dim hover:text-fg')}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div className="min-h-screen flex bg-bg text-fg">
@@ -101,7 +149,34 @@ export default function Login() {
             <p className="mt-2 text-fg-dim">{t('login.subtitle')}</p>
 
             <OAuthButtons mode="signin" />
-            <form onSubmit={handleLogin} className="mt-8 space-y-5">
+            {options.code_sign_in && (
+              <div role="tablist" aria-label={tr('ui.login.howToSignIn')} className="mt-6 flex gap-0.5 rounded-lg bg-panel-2 p-1">
+                {tab('password', tr('ui.login.password'))}
+                {tab('code', tr('ui.login.signInCode'))}
+              </div>
+            )}
+            {mode === 'code' && options.code_sign_in ? (
+              <form onSubmit={handleCode} className="mt-6 space-y-4">
+                <div className="space-y-1.5">
+                  <label htmlFor="signin-code" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">{tr('ui.login.codeFromASignedInDevice')}</label>
+                  <Input id="signin-code" value={code} onChange={(e) => setCode(formatCode(e.target.value))}
+                    placeholder="XXXX-XXXX" required autoComplete="one-time-code" autoCapitalize="characters" spellCheck={false}
+                    inputMode="text" autoFocus className="h-12 text-center font-mono text-[20px] tracking-[0.2em]" />
+                </div>
+                <p className="text-[13px] leading-relaxed text-fg-dim">{tr('ui.login.onADeviceWhereYou')}</p>
+                {error && (
+                  <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
+                )}
+                <Button type="submit" disabled={loading || code.length !== 9} className="w-full">
+                  {loading ? (
+                    <span className="inline-flex items-center gap-2"><Spinner /> {t('login.submitting')}</span>
+                  ) : (
+                    <>{t('login.submit')} <span aria-hidden>→</span></>
+                  )}
+                </Button>
+              </form>
+            ) : (
+            <form onSubmit={handleLogin} className="mt-6 space-y-5">
               <div className="space-y-1.5">
                 <label htmlFor="email" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">{t('auth.email')}</label>
                 <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
@@ -126,6 +201,7 @@ export default function Login() {
               </Button>
               {loading && <span role="status" className="sr-only">{t('login.submitting')}</span>}
             </form>
+            )}
 
             <details className="mt-5 text-sm text-fg-dim">
               <summary className="cursor-pointer select-none hover:text-fg">{t('login.forgot')}</summary>

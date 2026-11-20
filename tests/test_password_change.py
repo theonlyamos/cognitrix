@@ -12,6 +12,9 @@ async def _user(password='old-password'):
     from cognitrix.models import User
 
     await User._create_table_async()
+    from cognitrix.models.sign_in import SignIn, SignInCode
+    await SignIn._create_table_async()
+    await SignInCode._create_table_async()
     user = User(name='Ada', email='ada@example.com', password=Utils.hash_password(password))
     await user.save()
     return await User.find_one({'email': 'ada@example.com'})
