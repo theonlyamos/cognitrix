@@ -17,8 +17,9 @@ import { SwarmCard } from '@/components/SwarmCard';
 import type { Swarm } from '@/lib/swarms';
 import type { AppViewSummary } from '@/lib/appViews';
 import { tr } from '@/lib/i18n';
+import { ChatTokenStats, tokenSummary, useChatTokenUsage } from '@/components/ChatTokenStats';
 
-export type SidebarSection = 'swarm' | 'computer' | 'waiting' | 'artifacts' | 'apps' | 'files' | 'activity' | 'folders' | 'about';
+export type SidebarSection = 'swarm' | 'computer' | 'waiting' | 'artifacts' | 'apps' | 'files' | 'activity' | 'folders' | 'tokens' | 'about';
 
 export const SIDEBAR_SECTIONS: { id: SidebarSection; label: string }[] = [
   { id: 'swarm', get label() { return tr('ui.chatSidebar.swarm'); } },
@@ -29,6 +30,7 @@ export const SIDEBAR_SECTIONS: { id: SidebarSection; label: string }[] = [
   { id: 'files', get label() { return tr('ui.chatSidebar.files'); } },
   { id: 'activity', get label() { return tr('ui.chatSidebar.activity'); } },
   { id: 'folders', get label() { return tr('ui.chatSidebar.folders'); } },
+  { id: 'tokens', get label() { return tr('ui.chatTokens.tokens'); } },
   { id: 'about', get label() { return tr('ui.chatSidebar.aboutThisChat'); } },
 ];
 
@@ -122,6 +124,8 @@ export interface ChatSidebarProps {
   folders: WorkFolder[];
   onChangeFolders: (folders: WorkFolder[]) => void | Promise<void>;
   foldersDisabled?: boolean;
+  /** The open chat, for its token counts. */
+  sessionId?: string | null;
   about: {
     agentId: string;
     agentName: string;
@@ -141,6 +145,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
   const [hidden, setHidden] = useState(() => loadSet(HIDDEN_STORE));
   const [customizing, setCustomizing] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const tokenUsage = useChatTokenUsage(props.sessionId, props.busy);
 
   useEffect(() => {
     if (!customizing) return;
@@ -379,6 +384,8 @@ export function ChatSidebar(props: ChatSidebarProps) {
         {section('folders', props.folders.length || '', (
           <FolderChips folders={props.folders} onChange={props.onChangeFolders} emptyLabel={tr('ui.chatSidebar.privateScratchFolder')} disabled={props.foldersDisabled} />
         ))}
+
+        {props.sessionId && section('tokens', tokenSummary(tokenUsage), <ChatTokenStats usage={tokenUsage} />)}
 
         {section('about', '', (
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[12.5px]">
