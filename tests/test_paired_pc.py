@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -38,6 +39,9 @@ async def db(tmp_path, monkeypatch):
     await _ensure_schema()
     monkeypatch.setenv('COGNITRIX_PAIRED_CONFIG', str(tmp_path / 'pc' / 'paired.json'))
     monkeypatch.delenv('COGNITRIX_DESKTOP', raising=False)
+    monkeypatch.setenv('COGNITRIX_PAIRED_KEYCHAIN', '0')
+    from cognitrix.computer.paired import connector as _connector
+    monkeypatch.setattr(_connector, '_keychain_token', None)
     store._codes.clear()
     store._tries.clear()
     yield
@@ -378,3 +382,308 @@ async def test_a_helper_agent_only_looks_at_the_pc(server, tmp_path):
         assert set(tools_for(device)) == {'read', 'glob', 'grep'}
     finally:
         await connector.stop()
+
+
+async def test_apps_on_the_pc_use_its_own_screen_and_send_screenshots_back(server, tmp_path, monkeypatch):
+    import httpx
+
+    from cognitrix.computer.paired import connector as pc
+    from cognitrix.tools import base as tools_base
+    from cognitrix.tools.misc import end_image_collection, queue_image, start_image_collection
+
+    seen = {}
+
+    class FakeWindowTool:
+        name = 'Look At Window'
+
+        async def run(self, **kw):
+            seen.update(kw)
+            queue_image('data:image/png;base64,AAAA')
+            return 'window 7: Notepad'
+
+    real = tools_base.ToolManager.get_by_name
+    monkeypatch.setattr(tools_base.ToolManager, 'get_by_name',
+                        classmethod(lambda cls, n: FakeWindowTool() if n == 'Look At Window' else real(n)))
+    monkeypatch.setattr(pc, '_screen_image', lambda max_width=1280: 'data:image/jpeg;base64,SCREEN')
+
+    view, connector, shared = await _paired_pc(server, tmp_path, powers=('files',))
+    try:
+        device_id = view['device_id']
+        async with httpx.AsyncClient(base_url=server.url) as http:
+            refused = await http.get(f'/api/v1/computer/devices/{device_id}/screen')
+            assert refused.status_code == 409 and "doesn't allow apps" in refused.json()['detail']
+
+        cfg = pc.load_config()
+        cfg['powers'] = ['files', 'apps']
+        pc.save_config(cfg)
+        await connector.push_state()
+        assert await _wait(lambda: 'apps' in hub.get(device_id).powers)
+
+        token, images = start_image_collection()
+        try:
+            text = await hub.call(device_id, 'Look At Window', {'window_id': 7, 'computer': 'agent'}, power='apps')
+        finally:
+            end_image_collection(token)
+        assert text == 'window 7: Notepad'
+        assert seen['computer'] == 'person'  # always the PC's own screen
+        assert images == ['data:image/png;base64,AAAA']
+
+        async with httpx.AsyncClient(base_url=server.url) as http:
+            shot = (await http.get(f'/api/v1/computer/devices/{device_id}/screen')).json()
+        assert shot['image'] == 'data:image/jpeg;base64,SCREEN'
+    finally:
+        await connector.stop()
+
+
+def test_opening_an_app_on_a_pc_needs_a_person():
+    from cognitrix.safety.permissions import needs_person
+    from cognitrix.tools.base import ToolManager
+
+    open_app = ToolManager.get_by_name('Open App')
+    assert not needs_person((open_app,), {'target': 'notepad'})
+    token = set_execution_context(ToolExecutionContext(user_id='u1', device='d1'))
+    try:
+        assert needs_person((open_app,), {'target': 'notepad'})
+    finally:
+        reset_execution_context(token)
+
+
+async def test_the_task_worker_reaches_a_pc_through_the_web_process(server, tmp_path, monkeypatch):
+    import httpx
+
+    from cognitrix.computer.paired import relay
+    from cognitrix.computer.paired.hub import status
+
+    view, connector, shared = await _paired_pc(server, tmp_path)
+    try:
+        monkeypatch.setenv('COGNITRIX_INTERNAL_URL', server.url)
+        # What a worker does: no connection here, so it relays.
+        text, _ = await hub._relay_call(view['device_id'], 'Read', {'file_path': 'notes.txt'}, power='files',
+                                        ctx={}, timeout=20)
+        assert 'first line' in text
+        assert (await relay.send('status', {'device_id': view['device_id']}))['online'] is True
+        async with httpx.AsyncClient(base_url=server.url) as http:
+            forged = await http.post(relay.PATH, json={'op': 'status', 'device_id': view['device_id']},
+                                     headers={relay.HEADER: '1:abc'})
+        assert forged.status_code == 403
+        monkeypatch.setattr(hub, 'serving', False)
+        assert (await status('not-connected-here'))['online'] is False  # asked the web process
+    finally:
+        await connector.stop()
+
+
+async def test_a_task_waits_for_an_offline_pc_then_tells_the_person(db, monkeypatch):
+    from cognitrix.computer.paired import turn
+    from cognitrix.tasks import automation
+    from cognitrix.tools.base import ToolManager
+
+    told = []
+
+    async def fake_notify(user_id, title, message, **kw):
+        told.append((user_id, title, message, kw.get('task_id')))
+
+    monkeypatch.setattr(automation, 'create_notification', fake_notify)
+    monkeypatch.setenv('COGNITRIX_PAIRED_TASK_WAIT_S', '0.5')
+    monkeypatch.setattr(hub, 'serving', True)
+    turn._gave_up.clear()
+    token = set_execution_context(ToolExecutionContext(user_id='u1', device='gone', task_id='t1'))
+    try:
+        out = await turn.run_remote(ToolManager.get_by_name('Read'), {'file_path': 'x'})
+        assert 'offline' in out
+        assert told and told[0][0] == 'u1' and told[0][3] == 't1'
+        # Once it gave up, the task's next call doesn't wait again.
+        await turn.run_remote(ToolManager.get_by_name('Read'), {'file_path': 'x'})
+        assert len(told) == 1
+    finally:
+        reset_execution_context(token)
+
+
+async def test_a_pc_can_hand_tasks_to_the_web_account_only_when_allowed(server, tmp_path, monkeypatch):
+    from cognitrix.agents import access as agent_access
+    from cognitrix.api.routes import tasks as tasks_routes
+    from cognitrix.computer.paired import connector as pc
+    from cognitrix.models.user import User
+    from cognitrix.tasks.base import Task
+
+    async def fake_user(user_id):
+        return SimpleNamespace(id=user_id, disabled=False, email='kofi@example.com', name='Kofi')
+
+    async def fake_agents(owner):
+        return [SimpleNamespace(id='a1', name='Assistant'), SimpleNamespace(id='a2', name='Coder')]
+
+    async def no_check(ctx, task):
+        return None
+
+    started = []
+
+    async def fake_start(task_id, body=None, ctx=None):
+        started.append((task_id, str(ctx.user.id)))
+        return {'task_id': task_id, 'run_id': 'r1', 'status': 'queued'}
+
+    monkeypatch.setattr(User, 'get', staticmethod(fake_user))
+    monkeypatch.setattr(agent_access, 'visible_agents', fake_agents)
+    monkeypatch.setattr(tasks_routes, '_check_task_references', no_check)
+    monkeypatch.setattr(tasks_routes, 'start_task_run', fake_start)
+
+    view, connector, shared = await _paired_pc(server, tmp_path)
+    try:
+        with pytest.raises(pc.LinkError) as refused:
+            await pc.remote('GET', '/link/agents')
+        assert 'Send tasks' in refused.value.message
+
+        cfg = pc.load_config()
+        cfg['powers'] = ['files', 'tasks']
+        pc.save_config(cfg)
+        await connector.push_state()
+        assert await _wait(lambda: 'tasks' in hub.get(view['device_id']).powers)
+        assert await _wait_async(lambda: _powers_saved(view['device_id'], 'tasks'))
+
+        agents = (await pc.remote('GET', '/link/agents'))['agents']
+        assert [a['name'] for a in agents] == ['Assistant', 'Coder']
+        sent = await pc.remote('POST', '/link/tasks', {'title': 'Summarize the logs', 'description': 'From today',
+                                                       'steps': ['Read them', ''], 'agent_id': 'a2'})
+        task = await Task.get(sent['task_id'])
+        assert task.owner_id == 'u1' and task.assigned_agents == ['a2'] and list(task.step_instructions) == ['0']
+        assert started == [(sent['task_id'], 'u1')]
+        listed = (await pc.remote('GET', '/link/tasks'))['tasks']
+        assert listed[0]['id'] == sent['task_id'] and listed[0]['title'] == 'Summarize the logs'
+    finally:
+        await connector.stop()
+
+
+async def _powers_saved(device_id, power):
+    from cognitrix.computer.paired.store import powers_of
+    from cognitrix.models.paired_device import PairedDevice
+    device = await PairedDevice.find_one({'id': device_id})
+    return power in powers_of(device)
+
+
+async def _wait_async(make, seconds: float = 10.0):
+    for _ in range(int(seconds / 0.05)):
+        if await make():
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+def test_the_pc_token_goes_to_the_keychain_when_there_is_one(tmp_path, monkeypatch):
+    from cognitrix.computer.paired import connector, secret_store
+
+    monkeypatch.setenv('COGNITRIX_PAIRED_CONFIG', str(tmp_path / 'paired.json'))
+    monkeypatch.setattr(connector, '_keychain_token', None)
+    vault: dict[str, str] = {}
+    monkeypatch.setattr(secret_store, 'where', lambda: 'Keychain')
+    monkeypatch.setattr(secret_store, 'save', lambda token: vault.update(t=token) or True)
+    monkeypatch.setattr(secret_store, 'load', lambda: vault.get('t'))
+    monkeypatch.setattr(secret_store, 'delete', lambda: vault.clear())
+
+    connector.save_config({'server': 'https://x', 'token': 'cgxd_secret', 'name': 'pc'})
+    on_disk = json.loads((tmp_path / 'paired.json').read_text())
+    assert 'token' not in on_disk and on_disk['token_store'] == 'keychain'
+    assert vault['t'] == 'cgxd_secret'
+
+    monkeypatch.setattr(connector, '_keychain_token', None)  # a fresh process
+    cfg = connector.load_config()
+    assert cfg['token'] == 'cgxd_secret'
+    assert connector.public_config(cfg)['token_kept_in'] == 'Keychain'
+
+    # Saving the loaded config again keeps the token out of the file.
+    connector.save_config({**cfg, 'paused': True})
+    assert 'token' not in json.loads((tmp_path / 'paired.json').read_text())
+
+    connector.forget_config()
+    assert not vault and not (tmp_path / 'paired.json').exists()
+
+
+def test_the_pc_token_stays_in_the_file_when_the_keychain_refuses(tmp_path, monkeypatch):
+    from cognitrix.computer.paired import connector, secret_store
+
+    monkeypatch.setenv('COGNITRIX_PAIRED_CONFIG', str(tmp_path / 'paired.json'))
+    monkeypatch.setattr(connector, '_keychain_token', None)
+    monkeypatch.setattr(secret_store, 'save', lambda token: False)
+    connector.save_config({'server': 'https://x', 'token': 'cgxd_secret'})
+    assert json.loads((tmp_path / 'paired.json').read_text())['token'] == 'cgxd_secret'
+    assert connector.load_config()['token'] == 'cgxd_secret'
+
+
+async def test_edits_on_the_pc_can_be_undone_from_the_chat(server, tmp_path, monkeypatch):
+    import httpx
+
+    from cognitrix.api.routes import sessions as sessions_routes
+
+    view, connector, shared = await _paired_pc(server, tmp_path)
+    device_id = view['device_id']
+    chat = {'session_id': 's1'}
+    try:
+        await hub.call(device_id, 'Edit', {'file_path': 'notes.txt', 'old_string': 'first line',
+                                           'new_string': 'agent was here'}, power='files', ctx=chat)
+        await hub.call(device_id, 'Write', {'file_path': 'notes.txt', 'content': 'and again'}, power='files', ctx=chat)
+        await hub.call(device_id, 'Write', {'file_path': 'new.txt', 'content': 'brand new'}, power='files', ctx=chat)
+        # Another chat's edit is its own.
+        await hub.call(device_id, 'Write', {'file_path': 'other.txt', 'content': 'x'}, power='files',
+                       ctx={'session_id': 's2'})
+        assert (shared / 'notes.txt').read_text(encoding='utf-8') == 'and again'
+
+        async def owned(session_id, ctx):
+            return None, SimpleNamespace(id=session_id, computer=device_id)
+        monkeypatch.setattr(sessions_routes, '_load_authorized_session', owned)
+        async with httpx.AsyncClient(base_url=server.url) as http:
+            listed = (await http.get('/api/v1/computer/devices/chats/s1/changes')).json()
+            kinds = {Path(c['path']).name: c['kind'] for c in listed['changes']}
+            assert kinds == {'notes.txt': 'changed', 'new.txt': 'created'}
+            assert listed['device']['name'] == 'Kofi desktop'
+
+            # One file back: the version from before the chat touched it.
+            out = (await http.post('/api/v1/computer/devices/chats/s1/undo',
+                                   json={'paths': [str((shared / 'notes.txt').resolve())]})).json()
+            assert out['restored'][0]['ok'] is True
+            assert (shared / 'notes.txt').read_text(encoding='utf-8') == 'first line\n'
+
+            # The rest: the new file goes away; s2's file stays.
+            out = (await http.post('/api/v1/computer/devices/chats/s1/undo', json={})).json()
+            assert [r['ok'] for r in out['restored']] == [True]
+            assert not (shared / 'new.txt').exists() and (shared / 'other.txt').exists()
+            assert (await http.get('/api/v1/computer/devices/chats/s1/changes')).json()['changes'] == []
+    finally:
+        await connector.stop()
+
+
+async def test_an_older_database_gets_the_sent_tasks_column(tmp_path):
+    from odbms import DBMS
+
+    from cognitrix.config import _ensure_schema, _patch_odbms_sqlite
+
+    db_file = str(tmp_path / 'old.db')
+    if hasattr(DBMS, 'initialize_async'):
+        await DBMS.initialize_async('sqlite', database=db_file)
+    else:
+        DBMS.initialize('sqlite', database=db_file)
+    _patch_odbms_sqlite()
+    await DBMS.Database.query('CREATE TABLE paireddevices (id TEXT PRIMARY KEY, user_id TEXT, name TEXT)')
+    await _ensure_schema()
+    cursor = await DBMS.Database.query('PRAGMA table_info(paireddevices)')
+    rows = cursor.fetchall() if hasattr(cursor, 'fetchall') else cursor
+    assert 'sent_tasks' in {r[1] for r in rows}
+
+
+async def test_a_task_step_waits_for_its_pc_before_the_step_clock_starts(db, monkeypatch):
+    from cognitrix.computer.paired import turn
+
+    monkeypatch.setenv('COGNITRIX_PAIRED_TASK_WAIT_S', '0.4')
+    turn._gave_up.clear()
+    why = await turn.wait_before_step('pc-gone', task_id='t9', user_id='u1')
+    assert why and 'offline' in why
+
+    online = {'online': False}
+
+    async def status(device_id):
+        return dict(online)
+    monkeypatch.setattr('cognitrix.computer.paired.hub.status', status)
+    turn._gave_up.clear()
+
+    async def come_back():
+        await asyncio.sleep(0.1)
+        online['online'] = True
+    asyncio.get_running_loop().create_task(come_back())
+    monkeypatch.setenv('COGNITRIX_PAIRED_TASK_WAIT_S', '5')
+    assert await turn.wait_before_step('pc-back', task_id='t10', user_id='u1') is None

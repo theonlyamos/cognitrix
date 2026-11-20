@@ -149,6 +149,63 @@ pub(crate) fn show_main(app: &AppHandle, path: Option<String>) {
     }
 }
 
+/// The in-app route for a `cognitrix://` link, or None for links we don't know.
+/// `cognitrix://pair?server=…&code=…` opens Settings › Computers with the
+/// web account's address and pairing code filled in (the person still checks
+/// the account and chooses folders before anything is allowed).
+fn link_route(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("cognitrix://")?;
+    let (target, query) = rest.split_once('?').unwrap_or((rest, ""));
+    match target.trim_end_matches('/') {
+        "pair" => {
+            let keep: Vec<&str> = query
+                .split('&')
+                .filter(|kv| kv.starts_with("server=") || kv.starts_with("code="))
+                .filter(|kv| kv.len() < 400 && kv.chars().all(|c| c.is_ascii_graphic()))
+                .collect();
+            Some(format!("/settings/computers?{}", keep.join("&")))
+        }
+        _ => None,
+    }
+}
+
+// A link that arrived before the engine's page was up; the page asks for it.
+static PENDING_LINK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn open_link(app: &AppHandle, url: &str) {
+    if let Some(route) = link_route(url) {
+        if let Ok(mut pending) = PENDING_LINK.lock() {
+            *pending = Some(route.clone());
+        }
+        show_main(app, Some(route));
+    }
+}
+
+fn watch_links(app: &AppHandle) {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    #[cfg(any(windows, target_os = "linux"))]
+    if let Err(e) = app.deep_link().register_all() {
+        log::warn!("could not register cognitrix:// links: {e}");
+    }
+    if let Ok(Some(urls)) = app.deep_link().get_current() {
+        for url in urls {
+            open_link(app, url.as_str());
+        }
+    }
+    let handle = app.clone();
+    app.deep_link().on_open_url(move |event| {
+        for url in event.urls() {
+            open_link(&handle, url.as_str());
+        }
+    });
+}
+
+/// The page asks once it's up: a link that opened the app before it was ready.
+#[tauri::command]
+fn take_pending_link() -> Option<String> {
+    PENDING_LINK.lock().ok().and_then(|mut pending| pending.take())
+}
+
 pub(crate) fn toggle_quick_ask(app: &AppHandle) {
     let Some(quick) = app.get_webview_window(QUICK) else {
         // Engine not ready yet: open the main window, which shows progress.
@@ -466,6 +523,9 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app, None);
         }))
+        // After single-instance: a cognitrix:// link opened while the app
+        // runs reaches this instance through it.
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -496,6 +556,7 @@ pub fn run() {
             if let Err(e) = handle.global_shortcut().register(quick_ask_shortcut()) {
                 log::warn!("Alt+Space is taken by another app, quick ask has no hotkey: {e}");
             }
+            watch_links(&handle);
             engine::start(&handle);
             overlay::watch(&handle);
             update::watch(&handle);
@@ -516,6 +577,7 @@ pub fn run() {
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
+            take_pending_link,
             engine_status,
             restart_engine,
             open_folder,

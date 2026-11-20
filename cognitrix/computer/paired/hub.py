@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cognitrix.computer.paired import (
+    APPS,
     COMMANDS,
     DEFAULT_CALL_TIMEOUT_S,
     FILES,
@@ -62,6 +63,9 @@ class Hub:
     def __init__(self) -> None:
         self._conns: dict[str, Connection] = {}
         self._ids = itertools.count(1)
+        # True in the web process, where PCs connect. Elsewhere (the task
+        # worker) calls go to the web process through relay.py.
+        self.serving = False
 
     # -- connections -----------------------------------------------------------
     def register(self, conn: Connection) -> Connection | None:
@@ -108,7 +112,21 @@ class Hub:
     async def call(self, device_id: Any, tool: str, args: dict[str, Any], *, power: str,
                    ctx: dict[str, Any] | None = None, timeout: float = DEFAULT_CALL_TIMEOUT_S) -> str:
         """Run one tool on the PC and return its text. Raises DeviceUnavailable."""
+        text, images = await self.call_full(device_id, tool, args, power=power, ctx=ctx, timeout=timeout)
+        if images:
+            # Screenshots the tool showed the model on the PC: show them here too.
+            from cognitrix.tools.misc import queue_image
+            for image in images:
+                queue_image(image)
+        return text
+
+    async def call_full(self, device_id: Any, tool: str, args: dict[str, Any], *, power: str,
+                        ctx: dict[str, Any] | None = None,
+                        timeout: float = DEFAULT_CALL_TIMEOUT_S) -> tuple[str, list[str]]:
+        """Like ``call``, returning (text, images) without showing the images."""
         conn = self.get(device_id)
+        if conn is None and not self.serving:
+            return await self._relay_call(device_id, tool, args, power=power, ctx=ctx or {}, timeout=timeout)
         if conn is None:
             raise DeviceUnavailable('offline')
         if conn.paused:
@@ -117,8 +135,19 @@ class Hub:
             raise DeviceUnavailable(f'no_{power}')
         return await _on_loop(conn.loop, self._call(conn, tool, args, ctx or {}, timeout))
 
+    async def _relay_call(self, device_id: Any, tool: str, args: dict[str, Any], *, power: str,
+                          ctx: dict[str, Any], timeout: float) -> tuple[str, list[str]]:
+        from cognitrix.computer.paired import relay
+        reply = await relay.send('call', {'device_id': str(device_id), 'tool': tool, 'args': args, 'power': power,
+                                          'ctx': ctx, 'timeout': timeout}, timeout=timeout + 15)
+        if reply is None:
+            raise DeviceUnavailable('offline')
+        if reply.get('error'):
+            raise DeviceUnavailable(str(reply['error']))
+        return str(reply.get('text') or ''), list(reply.get('images') or [])
+
     async def _call(self, conn: Connection, tool: str, args: dict[str, Any], ctx: dict[str, Any],
-                    timeout: float) -> str:
+                    timeout: float) -> tuple[str, list[str]]:
         call_id = f'c{next(self._ids)}'
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         conn.pending[call_id] = fut
@@ -129,19 +158,35 @@ class Hub:
             raise DeviceUnavailable(f'{conn.name} did not answer within {int(timeout)} seconds.') from None
         except DeviceUnavailable:
             raise
-        except Exception as exc:
-            raise DeviceUnavailable(f'{conn.name} went offline ({exc}).') from None
+        except Exception:
+            # The detail stays in the server log; the chat (and the relay) only get the plain reason.
+            logger.info('Lost %s during a call', conn.name, exc_info=True)
+            raise DeviceUnavailable(f'{conn.name} went offline.') from None
         finally:
             conn.pending.pop(call_id, None)
         if not reply.get('ok'):
             code = str(reply.get('error') or 'failed')
-            if code in ('paused', f'no_{FILES}', f'no_{COMMANDS}'):
+            if code in ('paused', f'no_{FILES}', f'no_{COMMANDS}', f'no_{APPS}'):
                 raise DeviceUnavailable(code)
-            return f"Error: {reply.get('message') or 'The call failed on the PC.'}"
+            return f"Error: {reply.get('message') or 'The call failed on the PC.'}", []
         text = str(reply.get('text') or '')
         if len(text) > MAX_RESULT_CHARS:
             text = text[:MAX_RESULT_CHARS] + '\n\n[... cut: the answer from the PC was too long ...]'
-        return text
+        images = [i for i in (reply.get('images') or [])[:4]
+                  if isinstance(i, str) and i.startswith('data:image/') and len(i) < 8_000_000]
+        return text, images
+
+
+async def status(device_id: Any) -> dict[str, Any] | None:
+    """A PC's live state ({online, paused, powers, folders}), asking the web
+    process when this one isn't it. None when that can't be told."""
+    conn = hub.get(device_id)
+    if conn is not None:
+        return {'online': True, 'paused': conn.paused, 'powers': list(conn.powers), 'folders': list(conn.folders)}
+    if hub.serving:
+        return {'online': False}
+    from cognitrix.computer.paired import relay
+    return await relay.send('status', {'device_id': str(device_id)}, timeout=10)
 
 
 async def _on_loop(loop: asyncio.AbstractEventLoop, coro):

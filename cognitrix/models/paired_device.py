@@ -19,13 +19,15 @@ class PairedDevice(Model):
     folders_json: str = '[]'
     """JSON list of {path, writable}: the folders the PC shares."""
     powers: str = ''
-    """Comma separated: 'files', 'commands'."""
+    """Comma separated: 'files', 'commands', 'apps', 'tasks'."""
     paused: bool = False
     version: str = ''
     """The connector's Cognitrix version."""
     paired_at: str = ''
     last_seen_at: str = ''
     """Naive UTC 'YYYY-MM-DD HH:MM:SS'."""
+    sent_tasks: str = ''
+    """Comma separated ids of tasks this PC handed to the web account (newest last, at most 50)."""
 
 
 MODELS = (PairedDevice,)

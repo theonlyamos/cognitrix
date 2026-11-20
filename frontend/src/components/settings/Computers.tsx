@@ -7,6 +7,7 @@ import {
 } from '@/lib/devices';
 import { Group, SettingRow, StatusPill, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { tr, trn } from '@/lib/i18n';
+import { PcScreen } from '@/components/PcScreen';
 import { cn } from '@/lib/utils';
 
 const inputClass = 'h-10 w-full rounded-lg border border-line bg-panel-2 px-3 text-[13px] outline-none focus:border-accent md:h-9';
@@ -18,12 +19,13 @@ const PcIcon = () => (
 );
 
 function powersText(d: PairedDevice) {
-  const files = d.powers.includes('files');
-  const commands = d.powers.includes('commands');
-  if (files && commands) return tr('ui.computers.filesAndCommands');
-  if (files) return tr('ui.computers.filesOnly');
-  if (commands) return tr('ui.computers.commandsOnly');
-  return tr('ui.computers.nothingAllowed');
+  const names = [
+    d.powers.includes('files') && tr('ui.computers.files'),
+    d.powers.includes('commands') && tr('ui.computers.commands'),
+    d.powers.includes('apps') && tr('ui.computers.apps'),
+    d.powers.includes('tasks') && tr('ui.computers.sendsTasks'),
+  ].filter(Boolean);
+  return names.length ? names.join(', ') : tr('ui.computers.nothingAllowed');
 }
 
 /** One paired PC: status, shared folders, rename and unpair. */
@@ -33,6 +35,7 @@ function DeviceRow({ device, onChange, onRemove }: { device: PairedDevice; onCha
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmUnpair, setConfirmUnpair] = useState(false);
+  const [watching, setWatching] = useState(false);
   const kind = platformLabel(device.platform);
 
   const save = async () => {
@@ -78,11 +81,25 @@ function DeviceRow({ device, onChange, onRemove }: { device: PairedDevice; onCha
           </div>
         </div>
         <div className="flex flex-none items-center gap-2">
+          {device.powers.includes('apps') && device.online && !device.paused && (
+            <button type="button" onClick={() => setWatching(true)} className={quietButtonClass}>{tr('ui.computers.viewScreen')}</button>
+          )}
           <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)} className={buttonClass}>
             {open ? tr('ui.computers.done') : tr('ui.computers.manage')}
           </button>
         </div>
       </div>
+      {watching && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-3 sm:p-6" onClick={(e) => { if (e.target === e.currentTarget) setWatching(false); }}>
+          <div role="dialog" aria-modal="true" aria-label={tr('ui.computers.nameSScreen', { name: device.name })} className="flex max-h-full w-full max-w-[1100px] flex-col rounded-2xl border border-line bg-panel p-3 shadow-lg" onKeyDown={(e) => { if (e.key === 'Escape') setWatching(false); }}>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="flex-1 truncate text-[13.5px] font-medium">{tr('ui.computers.nameSScreen', { name: device.name })}</span>
+              <button type="button" autoFocus onClick={() => setWatching(false)} className={buttonClass}>{tr('ui.computers.close')}</button>
+            </div>
+            <div className="min-h-0 overflow-auto"><PcScreen device={device} every={1500} /></div>
+          </div>
+        </div>
+      )}
       {open && (
         <div className="mt-3 space-y-3 rounded-lg border border-line bg-panel-2/50 p-3">
           <div>
@@ -209,7 +226,14 @@ export function PairDialog({ onClose, onPaired }: { onClose: () => void; onPaire
           )}
         </div>
         <ol className="mt-4 space-y-2.5 text-[13px] leading-snug">
-          <li><span className="font-medium">{tr('ui.computers.withTheDesktopApp')}</span>{' '}<span className="text-fg-dim">{tr('ui.computers.openSettingsComputersLinkThis')}</span></li>
+          <li>
+            <span className="font-medium">{tr('ui.computers.withTheDesktopApp')}</span>{' '}<span className="text-fg-dim">{tr('ui.computers.openSettingsComputersLinkThis')}</span>
+            {code && !expired && (
+              <div className="mt-1.5">
+                <a href={`cognitrix://pair?server=${encodeURIComponent(code.server)}&code=${encodeURIComponent(code.code)}`} className={buttonClass}>{tr('ui.computers.openInTheDesktopApp')}</a>
+              </div>
+            )}
+          </li>
           <li>
             <span className="font-medium">{tr('ui.computers.orInATerminal')}</span>
             {code && (

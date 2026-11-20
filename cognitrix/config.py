@@ -372,6 +372,7 @@ _TASK_MIGRATION_COLUMNS = (
     ('max_runs_per_day', 'INTEGER'), ('standing_agent_id', 'TEXT'),
     ('swarm', 'BOOLEAN'), ('read_memory', 'BOOLEAN'),
     ('created_by', 'TEXT'), ('report_to', 'TEXT'), ('report_only_on', 'TEXT'),
+    ('computer', 'TEXT'),
 )
 
 _USER_MIGRATION_COLUMNS = (
@@ -458,8 +459,13 @@ _AGENT_MIGRATION_COLUMNS = (
     ('tool_mode', 'TEXT'),
 )
 
+_PAIRED_DEVICE_MIGRATION_COLUMNS = (
+    ('sent_tasks', 'TEXT'),
+)
+
 _SESSION_MIGRATION_COLUMNS = (
     ('user_id', 'TEXT'), ('run_id', 'TEXT'),
+    ('computer', 'TEXT'),
     ('step_index', 'INTEGER'), ('step_title', 'TEXT'),
     ('folders', 'TEXT'),
     ('group_chat', 'BOOLEAN'),
@@ -711,6 +717,7 @@ async def _migrate_relational_task_schema(database) -> None:
         ('memories', _MEMORY_MIGRATION_COLUMNS),
         ('memorysetting', _MEMORY_SETTINGS_MIGRATION_COLUMNS),
         ('agentoffers', _OFFER_MIGRATION_COLUMNS),
+        ('paireddevices', _PAIRED_DEVICE_MIGRATION_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
@@ -985,6 +992,7 @@ async def _ensure_schema():
         ('memorysetting', _MEMORY_SETTINGS_MIGRATION_COLUMNS),
         ('agentoffers', _OFFER_MIGRATION_COLUMNS),
         ('meetingnotes', _MEETING_MIGRATION_COLUMNS),
+        ('paireddevices', _PAIRED_DEVICE_MIGRATION_COLUMNS),
     ):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')

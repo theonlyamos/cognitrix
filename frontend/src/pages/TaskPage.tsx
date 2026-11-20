@@ -7,6 +7,8 @@ import { Textarea } from '@/lib/components/ui/textarea';
 import { Select } from '@/lib/components/ui/select';
 import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm, CheckList } from '@/components/form';
+import { getPcLink, listDevices, remoteAgents, sendTaskToWeb, type PairedDevice } from '@/lib/devices';
+import { isDesktop } from '@/lib/desktop';
 import { tr } from '@/lib/i18n';
 
 interface Step { step: string; done: boolean }
@@ -27,6 +29,7 @@ interface TaskData {
   schedule_enabled?: boolean;
   swarm?: boolean;
   read_memory?: boolean;
+  computer?: string | null;
 }
 
 type ScheduleMode = 'none' | 'once' | 'interval' | 'cron';
@@ -68,6 +71,25 @@ export default function TaskPage() {
   const [autostart, setAutostart] = useState(false);
   const [swarm, setSwarm] = useState(false);
   const [readMemory, setReadMemory] = useState(false);
+  const [computer, setComputer] = useState('');
+  const [pcs, setPcs] = useState<PairedDevice[]>([]);
+  useEffect(() => { listDevices().then(setPcs).catch(() => {}); }, []);
+  // Desktop app linked to a web account that takes tasks from this PC: a new
+  // task can be sent there instead of running here.
+  const [webAccount, setWebAccount] = useState('');
+  const [webAgents, setWebAgents] = useState<{ id: string; name: string }[]>([]);
+  const [onWeb, setOnWeb] = useState(false);
+  const [webAgent, setWebAgent] = useState('');
+  useEffect(() => {
+    if (!isDesktop() || taskId) return;
+    getPcLink()
+      .then((l) => {
+        if (!l.linked || !l.powers.includes('tasks')) return;
+        setWebAccount(l.account);
+        remoteAgents().then((a) => { setWebAgents(a); setWebAgent((v) => v || a[0]?.id || ''); }).catch(() => {});
+      })
+      .catch(() => {});
+  }, [taskId]);
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('none');
   const [scheduleAt, setScheduleAt] = useState('');
   const [intervalN, setIntervalN] = useState('30');
@@ -93,6 +115,7 @@ export default function TaskPage() {
     setAutostart(!!existing.autostart);
     setSwarm(!!existing.swarm);
     setReadMemory(!!existing.read_memory);
+    setComputer(existing.computer || '');
     if (existing.schedule_at) {
       setScheduleMode('once');
       setScheduleAt(utcToLocalInput(existing.schedule_at));
@@ -171,6 +194,17 @@ export default function TaskPage() {
     if (scheduleMode === 'cron' && !cronExpr.trim()) return setError(tr('ui.taskPage.enterACronExpression'));
     setError('');
     setSaving(true);
+    if (onWeb) {
+      try {
+        await sendTaskToWeb({ title: title.trim(), description: description.trim(), steps: steps.map((s) => s.step.trim()).filter(Boolean), agent_id: webAgent || null });
+        navigate('/settings/computers');
+      } catch (err) {
+        setError(errorMessage(err, tr('ui.taskPage.couldNotSendTheTask')));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     try {
       const step_instructions: Record<string, Step> = {};
       steps.filter((s) => s.step.trim()).forEach((s, i) => (step_instructions[i] = { step: s.step.trim(), done: s.done }));
@@ -184,6 +218,7 @@ export default function TaskPage() {
         autostart,
         swarm,
         read_memory: readMemory,
+        computer: computer || null,
         // Always sent: the form is authoritative for schedule state (the
         // server treats their presence as a full respecification).
         schedule_at: scheduleMode === 'once' && scheduleAt ? new Date(scheduleAt).toISOString() : null,
@@ -226,6 +261,15 @@ export default function TaskPage() {
       saving={saving}
       onDelete={editing ? remove : undefined}
     >
+      {webAccount && (
+        <Field label={tr('ui.taskPage.runOn')} hint={onWeb ? tr('ui.taskPage.runOnWebHint', { account: webAccount }) : undefined}>
+          <Select value={onWeb ? 'web' : 'here'} onChange={(e) => setOnWeb(e.target.value === 'web')}>
+            <option value="here">{tr('ui.taskPage.thisComputer')}</option>
+            <option value="web">{tr('ui.taskPage.accountOnTheWeb', { account: webAccount })}</option>
+          </Select>
+        </Field>
+      )}
+
       <Field label={tr('ui.taskPage.title')} required>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={tr('ui.taskPage.researchCompetitorPricing')} autoFocus />
       </Field>
@@ -251,6 +295,15 @@ export default function TaskPage() {
         </div>
       </Field>
 
+      {onWeb && (
+        <Field label={tr('ui.taskPage.agentOnTheWeb')}>
+          <Select value={webAgent} onChange={(e) => setWebAgent(e.target.value)}>
+            {webAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </Select>
+        </Field>
+      )}
+
+      {!onWeb && (<>
       <Field label={tr('ui.taskPage.team')} hint={tr('ui.taskPage.optionalAssignTheTaskTo')}>
         <Select value={teamId} onChange={(e) => changeTeam(e.target.value)} disabled={(teamList || []).length === 0}>
           <option value="">{tr('ui.taskPage.noTeam')}</option>
@@ -259,6 +312,17 @@ export default function TaskPage() {
           ))}
         </Select>
       </Field>
+
+      {(pcs.length > 0 || computer) && (
+        <Field label={tr('ui.taskPage.computer')} hint={tr('ui.taskPage.computerHint')}>
+          <Select value={computer} onChange={(e) => setComputer(e.target.value)}>
+            <option value="">{tr('ui.taskPage.agentsUsualComputer')}</option>
+            {pcs.map((d) => (
+              <option key={d.id} value={d.id}>{d.online ? d.name : tr('ui.taskPage.nameOffline', { name: d.name })}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
 
       <Field label={tr('ui.taskPage.assignedAgentsSize', { size: assigned.size })} hint={teamId ? tr('ui.taskPage.fromTheSelectedTeamEditable') : undefined} composite>
         <CheckList
@@ -326,6 +390,7 @@ export default function TaskPage() {
         <input type="checkbox" checked={autostart} onChange={(e) => setAutostart(e.target.checked)} className="accent-[var(--accent)]" />
         <span className="text-sm">{tr('ui.taskPage.autoStartWhenCreated')}</span>
       </label>
+      </>)}
     </PageForm>
   );
 }
