@@ -68,6 +68,11 @@ def get_arguments():
                             help="Email of the account whose agents and sign-ins to use (default: all local agents)")
     acp_parser.set_defaults(func=acp_command)
 
+    # Pair this PC with a web server so agents there can work on it (cognitrix/computer/paired).
+    from cognitrix.computer.paired.cli import add_parser as add_connect_parser
+
+    add_connect_parser(subparsers)
+
     # Swarm evals: a set of jobs run with and without workers, scored by a judge model.
     from cognitrix.swarms.evals import command as swarm_evals
 

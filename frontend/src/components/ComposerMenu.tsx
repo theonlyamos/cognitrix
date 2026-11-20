@@ -49,7 +49,7 @@ interface Props {
   /** Swarm: the agent splits this message's job across parallel workers. Left out where swarms can't run. */
   swarm?: { on: boolean; onToggle: () => void };
   /** Run in sandbox: shown when the sandboxed computer is on (or the chat already uses it). */
-  sandbox?: { on: boolean; available: boolean; onToggle: () => void };
+  sandbox?: { on: boolean; available: boolean; onToggle: () => void; /** The computer chip already shows it. */ hideTag?: boolean };
   /** Shown between the + button and the on/off indicators (agent, model, folders). */
   children?: ReactNode;
 }
@@ -238,7 +238,7 @@ export default function ComposerMenu(p: Props) {
           <span className="hidden sm:inline">{tr('ui.composerMenu.swarm')}</span>
         </button>
       )}
-      {p.sandbox?.on && (
+      {p.sandbox?.on && !p.sandbox.hideTag && (
         <button
           type="button"
           onClick={p.sandbox.onToggle}

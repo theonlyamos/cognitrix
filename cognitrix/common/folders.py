@@ -108,6 +108,8 @@ def _apps_folder_allowed() -> bool:
     """Signed-in turns, the CLI and internal calls get the apps folder;
     calls made with an API key (apps' own keys included) don't."""
     from cognitrix.tools.utils import current_execution_context
+    if getattr(current_execution_context(), 'device_host', False):
+        return False  # a call from the server on a paired PC: only its shared folders
     try:
         from cognitrix.hosted_apps.runner import apps_enabled
         if not apps_enabled():

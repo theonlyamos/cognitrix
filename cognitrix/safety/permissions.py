@@ -205,6 +205,14 @@ def needs_person(tools: tuple, args: dict) -> bool:
     except Exception:
         pass
     command = args.get('command') if isinstance(args, dict) else None
+    try:
+        from cognitrix.computer.paired.turn import device_turn
+        if device_turn() and 'bash' in names and isinstance(command, str) and command.strip():
+            # A paired PC: every command on the person's own computer is theirs
+            # to approve (an approval for this chat covers the same command).
+            return True
+    except Exception:
+        pass
     if not isinstance(command, str) or not command.strip():
         return False
     try:

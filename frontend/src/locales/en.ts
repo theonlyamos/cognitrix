@@ -49,6 +49,7 @@ const en = {
   'settings.section.voice': 'Voice',
   'settings.section.apps': 'Connected apps',
   'settings.section.access': 'Agent access',
+  'settings.section.computers': 'Computers',
   'settings.section.chat-apps': 'Chat apps',
   'settings.section.email': 'Agent email',
   'settings.section.people': 'People',

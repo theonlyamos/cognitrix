@@ -866,6 +866,7 @@ async def _ensure_schema():
     from cognitrix.meetings.calendar_calls import MODELS as CALENDAR_CALL_MODELS
     from cognitrix.assistant.models import MODELS as ASSISTANT_MODELS
     from cognitrix.tasks.pr_watch import MODELS as PR_WATCH_MODELS
+    from cognitrix.models.paired_device import MODELS as PAIRED_DEVICE_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
@@ -879,6 +880,7 @@ async def _ensure_schema():
         *CALENDAR_CALL_MODELS,
         *ASSISTANT_MODELS,
         *PR_WATCH_MODELS,
+        *PAIRED_DEVICE_MODELS,
         AgentOffer,
         SideQuestion,
         MeetingNote,

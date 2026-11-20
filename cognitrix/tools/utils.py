@@ -53,6 +53,12 @@ class ToolExecutionContext:
     # the user's sandboxed computer instead of this machine
     # (cognitrix.common.sandbox_work).
     sandbox: bool = False
+    # A paired PC (cognitrix/computer/paired): the id of the person's PC this
+    # turn's shell and file tools run on, instead of this machine.
+    device: str | None = None
+    # Set on the PC itself while it runs a call from the server: only the
+    # folders its owner shared count (no apps folder, no app working folder).
+    device_host: bool = False
 
     @property
     def restricted(self) -> bool:

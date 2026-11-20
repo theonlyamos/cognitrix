@@ -25,6 +25,7 @@ from ...api.routes.payments import payments_api
 from ...api.routes.computer import computer_api
 from ...api.routes.computer_overlay import overlay_api
 from ...api.routes.computer_sandbox import sandbox_api
+from ...api.routes.computer_devices import devices_api, link_api
 from ...api.routes.oauth import oauth_api
 from ...api.routes.onboarding import onboarding_api
 from ...api.routes.whats_new import whats_new_api
@@ -104,3 +105,5 @@ api_router.include_router(payments_api)
 api_router.include_router(computer_api)
 api_router.include_router(overlay_api)
 api_router.include_router(sandbox_api)
+api_router.include_router(devices_api)
+api_router.include_router(link_api)
