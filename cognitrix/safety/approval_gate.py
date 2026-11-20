@@ -282,7 +282,9 @@ class ApprovalGate:
         # "Always allow" answers: this tool for this agent (until the agent is
         # reloaded with it set to allow), or a saved command prefix.
         tool_key = self._tool_allow_key(scope, tool_call)
-        if not person_only and not always_ask and tool_key in self.session_cache:
+        chat_tool_key = self._chat_tool_allow_key(scope, tool_call, interface)
+        if not person_only and not always_ask and (
+                tool_key in self.session_cache or (chat_tool_key and chat_tool_key in self.session_cache)):
             return ApprovalResult(approved=True, cached=True, remember=True)
         if person_only and not always_ask and await self._command_allowed(tool_call, interface):
             return ApprovalResult(approved=True, cached=True)
@@ -331,9 +333,14 @@ class ApprovalGate:
             self.session_denied.add(scoped)
 
         if result.approved and getattr(result, 'always', False) and not always_ask:
-            await self._save_always(tool_call, scope, interface, person_only)
+            saved_for_agent = await self._save_always(tool_call, scope, interface, person_only)
             if not person_only:
-                self.session_cache.add(tool_key)
+                # The agent-wide key only when its owner changed the agent's
+                # setting; otherwise the answer holds for this person's chat.
+                if saved_for_agent:
+                    self.session_cache.add(tool_key)
+                elif chat_tool_key:
+                    self.session_cache.add(chat_tool_key)
 
         # Cache if approved (scoped). The full shell is only ever remembered
         # for the session, never permanently.
@@ -396,6 +403,18 @@ class ApprovalGate:
         return f"tool_allow:{scope or 'global'}:{_normal_name(tool_call.tool_name)}"
 
     @staticmethod
+    def _chat_tool_allow_key(scope: str | None, tool_call: ToolCall, interface: str) -> str | None:
+        """"Always allow" on an agent the person doesn't own: this person, this chat."""
+        if interface not in ('web', 'ws', 'websocket'):
+            return None
+        ctx = web_turn_ctx.get(None) or {}
+        session_id = ctx.get('session_id')
+        if not session_id:
+            return None
+        return (f"tool_allow:{scope or 'global'}:{ctx.get('user_key') or ''}:{session_id}:"
+                f"{_normal_name(tool_call.tool_name)}")
+
+    @staticmethod
     def _command(tool_call: ToolCall) -> str | None:
         if _normal_name(tool_call.tool_name) != 'bash':
             return None
@@ -437,30 +456,33 @@ class ApprovalGate:
         return {'kind': 'tool', 'label': str(tool_call.tool_name)}
 
     async def _save_always(self, tool_call: ToolCall, scope: str | None, interface: str,
-                           person_only: bool) -> None:
+                           person_only: bool) -> bool:
+        """Save the answer. True when the agent's own setting now allows the tool."""
         owner = self._app_owner(interface)
         if not owner or owner == 'local':
-            return
+            return False
         try:
             if person_only:
                 from cognitrix.safety import command_rules
                 command = self._command(tool_call)
                 if command:
                     await command_rules.add(owner, self._computer(), command)
-                return
+                return False
             if not scope:
-                return
+                return False
             from cognitrix.models.agent import Agent
             agent = await Agent.get(str(scope))
             # Only the agent's owner changes its settings; on someone else's
             # agent the answer holds for this chat.
             if agent is None or str(getattr(agent, 'owner_id', '') or '') != str(owner):
-                return
+                return False
             perms = dict(getattr(agent, 'tool_permissions', None) or {})
             perms[str(tool_call.tool_name)] = 'allow'
             await Agent.update_one({'id': agent.id}, {'tool_permissions': perms})
+            return True
         except Exception:
             logger.exception("Could not save 'always allow' for %s", tool_call.tool_name)
+            return False
 
     @staticmethod
     def _shell_key(scope: str | None, interface: str) -> str | None:

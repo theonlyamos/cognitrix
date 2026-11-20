@@ -238,3 +238,55 @@ async def test_always_allow_tool_saves_on_owned_agent(db):
         web_turn_ctx.reset(token)
     stored = await Agent.get(agent.id)
     assert stored.tool_permissions.get('Send Email') == 'allow'
+
+
+async def test_always_allow_on_someone_elses_agent_holds_for_this_chat(db):
+    from cognitrix.models.agent import Agent
+    from cognitrix.providers.base import LLM
+    from cognitrix.safety.approval_gate import ApprovalGate, ApprovalResult, ToolCall, web_turn_ctx
+    from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
+
+    agent = Agent(name='Shared', system_prompt='hi', owner_id='owner', llm=LLM(provider='ollama', model='llama3'))
+    await agent.save()
+    gate = ApprovalGate(cache_dir=None)
+    asked = []
+
+    async def fake_web(*a, **k):
+        asked.append(1)
+        return ApprovalResult(approved=True, always=True)
+
+    gate._web_approval = fake_web
+    risk = RiskAssessment(RiskLevel.MEDIUM, ['network'], 'post')
+    call = lambda: gate.check_approval(ToolCall('Send Email', {'to': 'a'}), risk,  # noqa: E731
+                                       interface='web', scope=str(agent.id))
+    token = web_turn_ctx.set({'emit': None, 'session_id': 's1', 'user_key': 'u1'})
+    try:
+        await call()
+        assert (await call()).cached and len(asked) == 1
+    finally:
+        web_turn_ctx.reset(token)
+    # Another person on the same agent is still asked.
+    token = web_turn_ctx.set({'emit': None, 'session_id': 's2', 'user_key': 'u2'})
+    try:
+        await call()
+        assert len(asked) == 2
+    finally:
+        web_turn_ctx.reset(token)
+    stored = await Agent.get(agent.id)
+    assert not (stored.tool_permissions or {}).get('Send Email')
+
+
+async def test_dream_keeps_same_fact_in_two_projects(monkeypatch):
+    from cognitrix.memory import dream, saved
+
+    rows = [SimpleNamespace(id=f'm{i}', scope='project', agent_id=None, project_id=f'p{i}', content='Use pnpm',
+                            pinned=False, created=f'2026-11-2{i}', source='agent', by='agent', valid_until=None)
+            for i in (1, 2)]
+    deleted = []
+
+    async def fake_delete(row, **k):
+        deleted.append(row.id)
+
+    monkeypatch.setattr(saved, 'delete', fake_delete)
+    counts = await dream.free_pass('u1', rows, 'd1', auto=True, proposals=[])
+    assert counts['duplicates'] == 0 and not deleted

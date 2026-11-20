@@ -383,7 +383,9 @@ async def prompt_block(user_id: str | None, agent: Any, query: str = '',
     if not settings.enabled:
         return ''
     rows = await visible_memories(user_id, agent)
-    profile = await get_profile(user_id) if agent_reads_global(agent) else None
+    project = _turn_project()
+    account_ok = project is None or project.use_account_memory
+    profile = await get_profile(user_id) if account_ok and agent_reads_global(agent) else None
     profile_text = (profile.text if profile else '') or ''
     if not rows and not profile_text:
         return ''

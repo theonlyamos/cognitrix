@@ -246,13 +246,15 @@ async def project_changes(project_id: str, ctx: AuthContext = Depends(jwt_only))
 
     found = await asyncio.gather(*(one(c) for c in chats[:MAX_CHANGE_CHATS]))
     # With the shared project sandbox every chat sees the same sandbox copy:
-    # show it once, under the newest chat.
+    # show it once, under the newest chat. Otherwise each agent has its own
+    # sandbox, so the same folder name is a different copy.
+    shared = row.computer == 'sandbox'
     seen: set[str] = set()
     out = []
     for chat in (c for c in found if c):
         kept = []
         for src in chat['sources']:
-            if src.get('kind') == 'sandbox':
+            if shared and src.get('kind') == 'sandbox':
                 if src['key'] in seen:
                     continue
                 seen.add(src['key'])

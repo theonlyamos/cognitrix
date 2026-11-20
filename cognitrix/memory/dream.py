@@ -235,12 +235,12 @@ async def free_pass(user_id: str, rows: list[Any], dream_id: str, *, auto: bool,
     """Merge exact duplicates and retire expired facts. Returns counts."""
     counts = {'duplicates': 0, 'expired': 0}
     today = saved.today()
-    seen: dict[tuple[str, str, str], Any] = {}
+    seen: dict[tuple[str, str, str, str], Any] = {}
     for row in sorted(rows, key=lambda r: (not r.pinned, r.created)):
         normal = _norm(row.content)
         if not normal:
             continue  # nothing to compare on: never treat as a duplicate
-        key = (row.scope, row.agent_id or '', normal)
+        key = (row.scope, row.agent_id or '', getattr(row, 'project_id', None) or '', normal)
         keeper = seen.get(key)
         if keeper is None:
             seen[key] = row
