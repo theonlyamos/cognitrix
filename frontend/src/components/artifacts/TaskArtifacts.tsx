@@ -1,22 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { LayoutPanelTop, Shapes, Table2 } from 'lucide-react';
-import { api } from '@/lib/api';
-import type { ArtifactList, PageSummary } from '@/lib/artifactPages';
+import { useResource } from '@/hooks/useResource';
+import type { ArtifactList } from '@/lib/artifactPages';
 import { tr } from '@/lib/i18n';
 
 /** The artifacts a task made (its results page, boards its runs keep fresh),
  * as a strip of links at the top of the task. Nothing when it made none. */
 export function TaskArtifacts({ taskId, refreshKey }: { taskId: string; refreshKey?: unknown }) {
-  const [pages, setPages] = useState<PageSummary[]>([]);
-
+  const { data, refetch } = useResource<ArtifactList>(`/artifact-pages?task_id=${encodeURIComponent(taskId)}`);
+  const first = useMemo(() => ({ key: refreshKey }), []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    let live = true;
-    api.get<ArtifactList>('/artifact-pages', { params: { task_id: taskId } })
-      .then(({ data }) => { if (live) setPages([...(data.pages ?? [])].sort((a, b) => (b.updated || '').localeCompare(a.updated || ''))); })
-      .catch(() => { if (live) setPages([]); });
-    return () => { live = false; };
-  }, [taskId, refreshKey]);
+    if (refreshKey !== first.key) void refetch({ silent: true });
+  }, [refreshKey, first, refetch]);
+  const pages = useMemo(
+    () => [...(data?.pages ?? [])].sort((a, b) => (b.updated || '').localeCompare(a.updated || '')),
+    [data],
+  );
 
   if (!pages.length) return null;
   return (
