@@ -195,3 +195,39 @@ async def test_password_change_and_sign_out_everywhere_end_other_devices(world):
     await auth.logout(await _ctx(fresh))
     with pytest.raises(HTTPException):
         await _ctx(fresh)
+
+
+async def test_codes_stop_working_when_their_device_signs_out(world):
+    from cognitrix.api.routes import auth, sign_ins
+
+    laptop, phone = await _ctx(await _login()), await _ctx(await _login(SAFARI_IPHONE))
+    from_laptop = (await sign_ins.make_sign_in_code(_request(), laptop))['code']
+    from_phone = (await sign_ins.make_sign_in_code(_request(), phone))['code']
+
+    await sign_ins.end_sign_in(laptop.sid, phone)  # the laptop is signed out from the phone
+    with pytest.raises(HTTPException):
+        await sign_ins.code_sign_in(sign_ins.CodeSignIn(code=from_laptop), _request(ip='10.0.0.7'))
+
+    # Changing the password voids every open code, even the one the phone itself made.
+    other = await _ctx(await _login())
+    from_other = (await sign_ins.make_sign_in_code(_request(), other))['code']
+    fresh = (await auth.change_password(
+        auth.PasswordChange(current_password='old-password', new_password='new-password-1'), phone))['access_token']
+    for code in (from_other, from_phone):
+        with pytest.raises(HTTPException):
+            await sign_ins.code_sign_in(sign_ins.CodeSignIn(code=code), _request(ip='10.0.0.7'))
+    # A code made after the change works.
+    new_code = (await sign_ins.make_sign_in_code(_request(), await _ctx(fresh)))['code']
+    assert (await sign_ins.code_sign_in(sign_ins.CodeSignIn(code=new_code), _request(ip='10.0.0.7')))['access_token']
+
+
+async def test_sign_out_everywhere_voids_open_codes(world):
+    from cognitrix.api.routes import auth, sign_ins
+    from cognitrix.models.sign_in import SignInCode
+
+    ctx = await _ctx(await _login())
+    code = (await sign_ins.make_sign_in_code(_request(), ctx))['code']
+    await auth.logout(ctx)
+    assert all(c.canceled for c in await SignInCode.find({'user_id': str(world.ada.id)}))
+    with pytest.raises(HTTPException):
+        await sign_ins.code_sign_in(sign_ins.CodeSignIn(code=code), _request(ip='10.0.0.8'))

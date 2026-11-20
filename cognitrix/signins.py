@@ -229,6 +229,7 @@ async def end(user_id: str, sid: str) -> bool:
         return False
     await SignIn.update_one({'sid': sid}, {'ended_at': now_stamp()})
     forget(sid)
+    await _cancel_codes(user_id, made_by=[sid])
     await _unlink_pcs([sid])
     return True
 
@@ -246,8 +247,46 @@ async def end_all(user_id: str, keep_sid: str = '') -> int:
         forget(row.sid)
         ended.append(row.sid)
         count += 1
+    # Signing out other devices (or everywhere) also voids every open code, this device's too.
+    await _cancel_codes(user_id)
     await _unlink_pcs(ended)
     return count
+
+
+async def _cancel_codes(user_id: str, made_by: list[str] | None = None) -> None:
+    """Cancel the user's open sign-in codes (only the ones those sign-ins made, with ``made_by``)."""
+    from cognitrix.models.sign_in import SignInCode
+
+    try:
+        rows = await SignInCode.find({'user_id': str(user_id)}) or []
+    except Exception:  # noqa: BLE001 - no codes table yet means no codes
+        return
+    now = int(time.time())
+    for c in rows:
+        if c.used_at or c.canceled or int(c.expires_at or 0) <= now:
+            continue
+        if made_by is not None and c.made_by_sid not in made_by:
+            continue
+        await SignInCode.update_one({'code_hash': c.code_hash}, {'canceled': True})
+
+
+async def _code_backed(item, user) -> bool:
+    """A code only works while the sign-in that made it is still signed in, and only if it
+    was made after the account's last sign-out everywhere."""
+    from cognitrix.models.sign_in import SignIn
+
+    cutoff = getattr(user, 'tokens_valid_after', None)
+    made_at = int(item.expires_at or 0) - CODE_TTL_S
+    try:
+        if cutoff and made_at < int(cutoff):
+            return False
+    except (TypeError, ValueError):
+        return False
+    if item.made_by_sid:
+        row = await SignIn.find_one({'sid': item.made_by_sid})
+        if row is None or row.ended_at or str(row.user_id) != str(user.id):
+            return False
+    return True
 
 
 async def _unlink_pcs(sids: list[str]) -> None:
@@ -437,7 +476,7 @@ async def peek_code(code: str, address: str) -> dict[str, Any]:
     item = await SignInCode.find_one({'code_hash': _hash(key)}) if key else None
     user = await User.get(item.user_id) if item is not None else None
     if item is None or item.canceled or item.used_at or int(item.expires_at or 0) <= int(time.time()) \
-            or user is None or getattr(user, 'disabled', None):
+            or user is None or getattr(user, 'disabled', None) or not await _code_backed(item, user):
         raise SignInError('bad_code', "That code isn't right or has expired. Make a new one on your signed-in device.",
                           400)
     _forgive(address or 'unknown')
@@ -471,7 +510,7 @@ async def redeem_code(code: str, *, address: str = '', user_agent: str = '', nam
         if item is None or item.canceled or item.used_at or int(item.expires_at or 0) <= int(time.time()):
             raise bad
         user = await User.get(item.user_id)
-        if user is None or getattr(user, 'disabled', None):
+        if user is None or getattr(user, 'disabled', None) or not await _code_backed(item, user):
             raise bad
         await SignInCode.update_one({'code_hash': item.code_hash}, {'used_at': int(time.time())})
     _forgive(address)
