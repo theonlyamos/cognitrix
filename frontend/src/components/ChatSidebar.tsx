@@ -96,8 +96,6 @@ export interface ChatSidebarProps {
   desktopHeldBy?: string | null;
   /** The person's own paired PC this chat works on, instead of the sandbox. */
   pc?: PairedDevice | null;
-  /** This chat, for the files its agents changed on the PC. */
-  sessionId?: string | null;
   onOpenComputer: () => void;
   waiting: SidebarWaiting[];
   onApprove: (id: string) => void;

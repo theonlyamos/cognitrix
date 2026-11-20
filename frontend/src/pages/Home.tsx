@@ -2448,7 +2448,6 @@ export default function Home() {
             sandboxOn={sandboxOn}
             desktopHeldBy={agentDesktop?.held_by}
             pc={chatPcDevice}
-            sessionId={activeSessionId}
             onOpenComputer={() => { closeArtifact(); closeAppView(); setComputerOpen(true); }}
             waiting={sidebarWaiting}
             onApprove={(id) => void respondApproval(id, true)}
