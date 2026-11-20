@@ -344,7 +344,7 @@ export default function Home() {
 
   // Agent selection — chat + SSE must share one agent_id (they rendezvous on a
   // per-(user, agent) manager on the backend).
-  const { data: agentsData, loading: agentsLoading, refetch: refetchAgents } = useResource<(PickerAgent & { folders?: WorkFolder[] | null; run_in_sandbox?: boolean })[]>('/agents');
+  const { data: agentsData, loading: agentsLoading, refetch: refetchAgents } = useResource<(PickerAgent & { folders?: WorkFolder[] | null; run_in_sandbox?: boolean; code_on_my_computer?: boolean })[]>('/agents');
   const agents = useMemo(() => (agentsData || []).filter((a) => a.id), [agentsData]);
   // The agents' sandboxed computer (one desktop per agent), when the server has it on.
   const [sandboxOn, setSandboxOn] = useState(false);
@@ -754,7 +754,9 @@ export default function Home() {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [activeSessionId]);
-  const agentSandboxDefault = !!agents.find((a) => a.id === agentId)?.run_in_sandbox;
+  // Code runs in the sandbox unless the agent is set to use this computer.
+  const pickedAgent = agents.find((a) => a.id === agentId);
+  const agentSandboxDefault = !!pickedAgent && (!!pickedAgent.run_in_sandbox || (!pickedAgent.code_on_my_computer && sandboxOn));
   const runInSandbox = chatSandbox ? chatSandbox.effective : (draftSandbox ?? agentSandboxDefault);
   const toggleSandbox = useCallback(async () => {
     const sid = activeRef.current;

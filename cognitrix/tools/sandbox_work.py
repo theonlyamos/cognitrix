@@ -52,6 +52,8 @@ def sb_bash(ws: sw.SandboxWork, command: str, timeout: Any, working_dir: str | N
     timeout_s = max(1, min(timeout_s, 1800))
     try:
         env = sw.credential_env(sw.credential_names(credentials))
+        command = sw.map_command(ws, command)
+        working_dir = sw.to_sandbox_path(ws, working_dir)
         out = ws.run(command, working_dir, timeout_s, background, env=env)
     except sw.SandboxWorkError as e:
         return _err(e)
@@ -95,7 +97,7 @@ def sb_kill(ws: sw.SandboxWork, shell_id: str) -> str:
 
 def sb_read(ws: sw.SandboxWork, file_path: str, start_line: int, end_line: int | None, numbers: bool) -> str:
     try:
-        out = ws.files('read', path=file_path, start=start_line, end=end_line, numbers=numbers)
+        out = ws.files('read', path=sw.to_sandbox_path(ws, file_path), start=start_line, end=end_line, numbers=numbers)
     except sw.SandboxWorkError as e:
         return _err(e)
     value = f"File: {out['path']} (sandbox)\nLines: {out['start']}-{out['end']} of {out['total']}\n\n{out['text']}"
@@ -106,7 +108,7 @@ def sb_read(ws: sw.SandboxWork, file_path: str, start_line: int, end_line: int |
 
 def sb_write(ws: sw.SandboxWork, file_path: str, content: str, append: bool) -> str:
     try:
-        out = ws.files('write', path=file_path, content=content, append=append)
+        out = ws.files('write', path=sw.to_sandbox_path(ws, file_path), content=content, append=append)
     except sw.SandboxWorkError as e:
         return _err(e)
     return f"{'Appended to' if append else 'Written to'} file: {out['path']} (sandbox)\nSize: {out['size']} bytes"
@@ -114,7 +116,7 @@ def sb_write(ws: sw.SandboxWork, file_path: str, content: str, append: bool) -> 
 
 def sb_edit(ws: sw.SandboxWork, file_path: str, old: str, new: str, replace_all: bool, create: bool) -> str:
     try:
-        out = ws.files('edit', path=file_path, old=old, new=new, replace_all=replace_all, create=create)
+        out = ws.files('edit', path=sw.to_sandbox_path(ws, file_path), old=old, new=new, replace_all=replace_all, create=create)
     except sw.SandboxWorkError as e:
         return _err(e)
     if out.get('created'):
@@ -124,7 +126,7 @@ def sb_edit(ws: sw.SandboxWork, file_path: str, old: str, new: str, replace_all:
 
 def sb_glob(ws: sw.SandboxWork, pattern: str, path: str, include_dirs: bool, max_results: int) -> str:
     try:
-        out = ws.files('glob', pattern=pattern, path=path, include_dirs=include_dirs, max_results=max_results)
+        out = ws.files('glob', pattern=pattern, path=sw.to_sandbox_path(ws, path), include_dirs=include_dirs, max_results=max_results)
     except sw.SandboxWorkError as e:
         return _err(e)
     if not out['matches']:
@@ -136,7 +138,7 @@ def sb_glob(ws: sw.SandboxWork, pattern: str, path: str, include_dirs: bool, max
 def sb_grep(ws: sw.SandboxWork, pattern: str, path: str, include: str | None, exclude: str | None,
             context: int, ignore_case: bool, max_results: int) -> str:
     try:
-        out = ws.files('grep', pattern=pattern, path=path, include=include, exclude=exclude, context=context,
+        out = ws.files('grep', pattern=pattern, path=sw.to_sandbox_path(ws, path), include=include, exclude=exclude, context=context,
                        ignore_case=ignore_case, max_results=max_results)
     except sw.SandboxWorkError as e:
         return _err(e)
@@ -161,6 +163,7 @@ def sb_coding_agent(ws: sw.SandboxWork, which: str, run_mode: str, model: str | 
     command = sw.sandbox_cli_command(key, argv)
     label = f'{cli.label} ({run_mode}): {task.splitlines()[0][:80]}'
     try:
+        working_dir = sw.to_sandbox_path(ws, working_dir)
         out = ws.run(command, working_dir, background=True, env=sw.cli_env(key), stdin=task, label=label)
         try:
             wait = max(0, min(int(wait_seconds or 0), ca.MAX_WAIT))
@@ -196,6 +199,35 @@ def _need_sandbox() -> sw.SandboxWork | ToolOutcome:
             'not_in_sandbox', 'This chat works on this computer, not in the sandbox. Ask the person to turn on '
             'Run in sandbox for the chat (the + menu in the message box) first.')
     return ws
+
+
+@tool(category='system', retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
+def switch_computer_for_code(computer: str = 'person'):
+    """Choose where your shell and file tools (Bash, Read, Write, Edit, Glob, Grep, Coding Agent, Run Tests)
+    work in this chat. They work in your sandboxed computer by default. Only switch to 'person' when the person
+    explicitly asks you to run code or change files on their own computer ("on my computer", "on my laptop").
+
+    Args:
+        computer (str): 'person' for the person's own computer (from now on, in this chat), or 'agent' for
+            your sandboxed computer again (from the person's next message).
+
+    Returns:
+        str: Where the tools work now.
+    """
+    from cognitrix.tools.utils import current_execution_context
+    ctx = current_execution_context()
+    which = str(computer or '').strip().lower()
+    if which not in ('person', 'agent'):
+        return ToolOutcome.failure('bad_computer', "computer is 'person' (the person's computer) or 'agent' (yours).")
+    if not ctx.session_id:
+        return ToolOutcome.failure('no_chat', 'Only a chat can switch computers.')
+    sw.set_chat_switch(ctx.session_id, which == 'agent')
+    if which == 'person':
+        return ToolOutcome.success(
+            "Your shell and file tools now work on the person's computer in this chat, with its usual approvals "
+            'and working folders. The person can switch back with Run in sandbox in the + menu.')
+    return ToolOutcome.success("From the person's next message, your shell and file tools work in your sandboxed "
+                               'computer again.')
 
 
 @tool(category='system', retryable=False, max_attempts=1)
@@ -249,13 +281,15 @@ def copy_into_sandbox(folder: str | None = None, name: str | None = None, replac
 
 
 @tool(category='system', retryable=False, max_attempts=1)
-def sandbox_changes(project: str, show_diff: bool = True):
+def sandbox_changes(project: str, show_diff: bool = True, review: bool = False):
     """Show what changed in a folder you copied into the sandbox since it was copied in (or last copied
     back): the changed files and the diff. The person sees the file list as a card.
 
     Args:
         project (str): The project name Copy Into Sandbox gave (the folder's name).
         show_diff (bool, optional): Include the full diff, not just the file list. Defaults to true.
+        review (bool, optional): Put "Copy back to my computer" and "Keep in the sandbox" buttons on the card,
+            for the person to decide.
 
     Returns:
         str: The changed files and the diff.
@@ -270,14 +304,16 @@ def sandbox_changes(project: str, show_diff: bool = True):
     files = out.get('files') or []
     if not files:
         return ToolOutcome.success(f"No changes in '{project}' since it was copied in (or last copied back).")
+    from cognitrix.tools.utils import current_execution_context
+    sw.note_reviewed(current_execution_context().session_id, project, out)
     text = f"{len(files)} changed file(s) in {out['path']} (from {out.get('source') or 'the computer'}):\n"
     text += sw.describe_changes(files, 200)
     if show_diff and out.get('patch'):
         text += '\n\n' + out['patch'] + ('\n[Diff cut; read the files for the rest]' if out.get('patch_cut') else '')
-    return ToolOutcome.success(text, card=_changes_card(project, out))
+    return ToolOutcome.success(text, card=_changes_card(project, out, review=bool(review)))
 
 
-def _changes_card(project: str, out: dict) -> dict | None:
+def _changes_card(project: str, out: dict, review: bool = False) -> dict | None:
     from cognitrix.cards import CardError, normalize
     files = out.get('files') or []
     added = sum(f.get('added') or 0 for f in files)
@@ -292,6 +328,11 @@ def _changes_card(project: str, out: dict) -> dict | None:
                    {'label': 'Lines removed', 'value': f'-{removed}', 'tone': 'bad' if removed else 'neutral'}],
         'table': {'columns': ['File', 'Change', 'Lines'], 'rows': rows},
     }
+    if review:
+        spec['buttons'] = [
+            {'label': 'Copy back to my computer', 'action': 'copy_back', 'value': project, 'style': 'primary'},
+            {'label': 'Keep in the sandbox', 'action': 'keep_in_sandbox', 'value': project},
+        ]
     try:
         return normalize(spec)
     except CardError:
@@ -414,6 +455,8 @@ def run_tests(command: str, working_dir: str | None = None, timeout: int = 600,
     started = time.time()
     try:
         env = sw.credential_env(sw.credential_names(credentials))
+        command = sw.map_command(ws, command)
+        working_dir = sw.to_sandbox_path(ws, working_dir)
         out = ws.run(command, working_dir, timeout_s, env=env, label=f'{command}  (Run Tests)')
         full = ws.full_output(out['id'])
         shots = ws.files('find', path=out.get('cwd') or '.', since=started - 1,
