@@ -45,6 +45,19 @@ def set_sink(sink) -> Any:
     return _sink.set(sink)
 
 
+def current_sink() -> Any:
+    return _sink.get()
+
+
+def reset_sink(token) -> None:
+    _sink.reset(token)
+
+
+def current_model() -> tuple[str, str]:
+    """(provider, model) of the model call being made now, if one was noted."""
+    return _model.get() or ('', '')
+
+
 def note_model(provider: str | None, model: str | None) -> None:
     """Called just before a model request so its usage can be attributed."""
     _model.set((str(provider or ''), str(model or '')))
