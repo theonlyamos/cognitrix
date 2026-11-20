@@ -18,12 +18,15 @@ import type { Swarm } from '@/lib/swarms';
 import type { AppViewSummary } from '@/lib/appViews';
 import { tr } from '@/lib/i18n';
 import { ChatTokenStats, tokenSummary, useChatTokenUsage } from '@/components/ChatTokenStats';
+import type { ChangeSource } from '@/lib/fileChanges';
+import { Counts, PathText, StatusBadge, WherePill } from '@/components/changes/DiffParts';
 
-export type SidebarSection = 'swarm' | 'computer' | 'waiting' | 'artifacts' | 'apps' | 'files' | 'activity' | 'folders' | 'tokens' | 'about';
+export type SidebarSection = 'swarm' | 'computer' | 'changes' | 'waiting' | 'artifacts' | 'apps' | 'files' | 'activity' | 'folders' | 'tokens' | 'about';
 
 export const SIDEBAR_SECTIONS: { id: SidebarSection; label: string }[] = [
   { id: 'swarm', get label() { return tr('ui.chatSidebar.swarm'); } },
   { id: 'computer', get label() { return tr('ui.chatSidebar.computer'); } },
+  { id: 'changes', get label() { return tr('ui.fileChanges.changes'); } },
   { id: 'waiting', get label() { return tr('ui.chatSidebar.waitingOnYou'); } },
   { id: 'artifacts', get label() { return tr('ui.chatSidebar.artifacts'); } },
   { id: 'apps', get label() { return tr('ui.chatSidebar.connectedApps'); } },
@@ -124,6 +127,9 @@ export interface ChatSidebarProps {
   foldersDisabled?: boolean;
   /** The open chat, for its token counts. */
   sessionId?: string | null;
+  /** Files this chat's agent changed, by where they live. */
+  changes?: ChangeSource[];
+  onOpenChanges?: (source?: string, path?: string) => void;
   about: {
     agentId: string;
     agentName: string;
@@ -276,6 +282,36 @@ export function ChatSidebar(props: ChatSidebarProps) {
           </>
         ) : empty(tr('ui.chatSidebar.theSandboxedComputerIsOff')))}
 
+        {props.onOpenChanges && section('changes', (props.changes ?? []).reduce((n, s) => n + s.files.length, 0) || '', (props.changes ?? []).length === 0
+          ? empty(tr('ui.fileChanges.sidebarEmpty'))
+          : (
+            <div className="flex flex-col gap-3">
+              {(props.changes ?? []).map((src) => (
+                <div key={src.key}>
+                  <div className="mb-1 flex items-center gap-2">
+                    <WherePill source={src} className="max-w-full" />
+                    <Counts added={src.added} removed={src.removed} className="ml-auto" />
+                  </div>
+                  <ul>
+                    {src.files.slice(0, 12).map((f) => (
+                      <li key={f.full_path}>
+                        <button type="button" onClick={() => props.onOpenChanges!(src.key, f.full_path)}
+                          className="flex min-h-11 w-full items-center gap-2 rounded px-1 text-left hover:bg-panel-2 md:min-h-7">
+                          <StatusBadge status={f.status} />
+                          <PathText path={f.path} gone={f.status === 'deleted'} className={cn(f.state === 'accepted' && 'text-fg-dim')} />
+                          <Counts added={f.added} removed={f.removed} className="ml-auto" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {src.files.length > 12 && <p className="px-1 text-[12px] text-fg-dim">{tr('ui.fileChanges.andMore', { count: src.files.length - 12 })}</p>}
+                </div>
+              ))}
+              <button type="button" onClick={() => props.onOpenChanges!()} className="inline-flex h-10 items-center self-start rounded-lg border border-line px-3 text-[12.5px] hover:bg-panel-2 md:h-8">
+                {tr('ui.fileChanges.reviewAll')}
+              </button>
+            </div>
+          ))}
         {section('waiting', waiting.length || '', waiting.length === 0 ? empty(tr('ui.chatSidebar.nothingIsWaitingOnYou')) : (
           <ul className="flex flex-col gap-2">
             {waiting.map((item) => (
