@@ -145,3 +145,22 @@ export async function sendTaskToWeb(body: { title: string; description: string; 
 export async function sentTasks(): Promise<SentTask[]> {
   return (await api.get<{ tasks: SentTask[] }>('/computer/link/remote/tasks')).data.tasks || [];
 }
+
+// ── Undo for agents' edits on a PC ──
+
+export interface PcChange {
+  path: string;
+  kind: 'changed' | 'created' | 'deleted';
+  at?: number;
+  restorable: boolean;
+}
+
+/** Files agents in this chat changed on its PC. */
+export async function pcChanges(sessionId: string): Promise<PcChange[]> {
+  return (await api.get<{ changes: PcChange[] }>(`/computer/devices/chats/${encodeURIComponent(sessionId)}/changes`)).data.changes || [];
+}
+
+/** Put files back as they were before this chat's agents changed them; null for all. */
+export async function undoPcChanges(sessionId: string, paths: string[] | null): Promise<{ path: string; ok: boolean; error?: string }[]> {
+  return (await api.post<{ restored: { path: string; ok: boolean; error?: string }[] }>(`/computer/devices/chats/${encodeURIComponent(sessionId)}/undo`, { paths })).data.restored || [];
+}

@@ -37,6 +37,7 @@ from cognitrix.computer.paired import (
     normalize_code,
     secret_store,
     tool_power,
+    undo,
 )
 
 logger = logging.getLogger('cognitrix.paired')
@@ -344,7 +345,7 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
         _log({'at': time.time(), 'tool': name, 'ok': False, 'error': code})
         return {'type': 'result', 'id': call_id, 'ok': False, 'error': code, 'message': text}
 
-    power = APPS if name == SCREEN else tool_power(name)
+    power = APPS if name == SCREEN else FILES if name in (undo.CHANGES, undo.UNDO) else tool_power(name)
     if power is None:
         return fail('not_allowed', f"{name} doesn't run on a paired PC.")
     if cfg.get('paused'):
@@ -360,8 +361,8 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     if not folders:
         return fail('no_folders', "This PC hasn't shared any folders (or they were moved). Ask the person to add one "
                     'on the PC.')
-    tool = ToolManager.get_by_name(name)
-    if tool is None:
+    tool = None if name in (undo.CHANGES, undo.UNDO) else ToolManager.get_by_name(name)
+    if tool is None and name not in (undo.CHANGES, undo.UNDO):
         return fail('not_allowed', f'{name} is not available on this PC.')
     if name != 'Bash':
         args.pop('approved', None)
@@ -377,6 +378,10 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     token = set_execution_context(context)
     started = time.time()
     try:
+        if name in (undo.CHANGES, undo.UNDO):
+            return _run_undo_call(call_id, name, args, ctx, fail)
+        if name in undo.EDIT_TOOLS:
+            _keep_for_undo(ctx, args)
         validated = tool.validate_parameters(dict(args)) if hasattr(tool, 'validate_parameters') else dict(args)
         text = _text(await tool.run(**validated))
     except Exception as exc:
@@ -387,6 +392,35 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     _log({'at': started, 'tool': name, 'ok': True, 'seconds': round(time.time() - started, 1),
           'command': args.get('command'), 'path': args.get('file_path') or args.get('path')})
     return {'type': 'result', 'id': call_id, 'ok': True, 'text': text}
+
+
+def _keep_for_undo(ctx: dict[str, Any], args: dict[str, Any]) -> None:
+    """Before an agent's Write or Edit: keep the file as it is, so the chat can undo."""
+    from cognitrix.common.folders import resolve_path
+    raw = args.get('file_path') or args.get('path')
+    if not raw:
+        return
+    try:
+        undo.remember(str(ctx.get('session_id') or ctx.get('task_id') or ''), resolve_path(str(raw), write=True))
+    except Exception:
+        # The tool itself will say why the path is refused; a failed copy must not block the edit.
+        logger.debug('Could not keep a copy for undo', exc_info=True)
+
+
+def _run_undo_call(call_id: Any, name: str, args: dict[str, Any], ctx: dict[str, Any], fail) -> dict[str, Any]:
+    """The chat's changed files on this PC, or putting some of them back."""
+    from cognitrix.common.folders import resolve_path
+    chat = str(ctx.get('session_id') or ctx.get('task_id') or '')
+    if not chat:
+        return fail('failed', 'Which chat? No chat was given.')
+    if name == undo.CHANGES:
+        return {'type': 'result', 'id': call_id, 'ok': True, 'text': json.dumps({'changes': undo.changes(chat)})}
+    paths = args.get('paths')
+    paths = None if paths is None else [str(p) for p in paths if p]
+    results = undo.restore(chat, paths, lambda p: resolve_path(p, write=True))
+    _log({'at': time.time(), 'tool': 'Undo', 'ok': all(r['ok'] for r in results),
+          'paths': [r['path'] for r in results]})
+    return {'type': 'result', 'id': call_id, 'ok': True, 'text': json.dumps({'restored': results})}
 
 
 def _screen_image(max_width: int = 1280) -> str:

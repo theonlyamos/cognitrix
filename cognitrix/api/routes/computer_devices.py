@@ -10,6 +10,8 @@ On the web (browser sessions):
     DELETE /computer/devices/{id}                  unpair (the PC is told and forgets its token)
     GET    /computer/devices/chats/{session_id}    which PC a chat works on
     PUT    /computer/devices/chats/{session_id}    set it {computer: id | null}
+    GET    /computer/devices/chats/{session_id}/changes  files its agents changed on the PC
+    POST   /computer/devices/chats/{session_id}/undo     {paths?}: put them back
 
 From the PC (no session; the code or the PC's token is the proof):
 
@@ -298,6 +300,52 @@ async def put_chat_computer(session_id: str, body: ChatComputerBody,
     session.computer = body.computer or None
     await session.save()
     return await _chat_view(session, ctx)
+
+
+class UndoBody(BaseModel):
+    # None puts back every file the chat changed on the PC.
+    paths: list[str] | None = Field(default=None, max_length=500)
+
+
+async def _chat_pc_call(session_id: str, ctx: AuthContext, op: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Ask the chat's PC about the files its agents changed there."""
+    from cognitrix.api.routes.sessions import _load_authorized_session
+    from cognitrix.computer.paired import FILES
+    from cognitrix.computer.paired.hub import DeviceUnavailable, hub
+    from cognitrix.computer.paired.store import device_of
+    _, session = await _load_authorized_session(session_id, ctx)
+    device = await device_of(_user_id(ctx), session.computer) if getattr(session, 'computer', None) else None
+    if device is None:
+        raise HTTPException(status_code=404, detail="This chat doesn't work on one of your PCs")
+    try:
+        text = await hub.call(device.id, op, args, power=FILES, ctx={'session_id': str(session.id)}, timeout=60)
+    except DeviceUnavailable as exc:
+        reason = str(exc)
+        detail = {
+            'offline': f'{device.name} is offline.',
+            'paused': f'Agents are paused on {device.name}.',
+            f'no_{FILES}': f"{device.name} doesn't allow files.",
+        }.get(reason, reason)
+        raise HTTPException(status_code=409, detail=detail) from None
+    try:
+        out = json.loads(text)
+    except ValueError:
+        raise HTTPException(status_code=502, detail=text.removeprefix('Error: ') or 'The PC did not answer.') from None
+    return {**out, 'device': {'id': device.id, 'name': device.name}}
+
+
+@devices_api.get('/chats/{session_id}/changes')
+async def chat_pc_changes(session_id: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Files agents in this chat changed on its PC, which can be put back."""
+    from cognitrix.computer.paired.undo import CHANGES
+    return await _chat_pc_call(session_id, ctx, CHANGES, {})
+
+
+@devices_api.post('/chats/{session_id}/undo')
+async def chat_pc_undo(session_id: str, body: UndoBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Put files on the PC back as they were before this chat's agents changed them."""
+    from cognitrix.computer.paired.undo import UNDO
+    return await _chat_pc_call(session_id, ctx, UNDO, {'paths': body.paths})
 
 
 # ---------------------------------------------------------------------------

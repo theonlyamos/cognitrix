@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -603,3 +604,45 @@ def test_the_pc_token_stays_in_the_file_when_the_keychain_refuses(tmp_path, monk
     connector.save_config({'server': 'https://x', 'token': 'cgxd_secret'})
     assert json.loads((tmp_path / 'paired.json').read_text())['token'] == 'cgxd_secret'
     assert connector.load_config()['token'] == 'cgxd_secret'
+
+
+async def test_edits_on_the_pc_can_be_undone_from_the_chat(server, tmp_path, monkeypatch):
+    import httpx
+
+    from cognitrix.api.routes import sessions as sessions_routes
+
+    view, connector, shared = await _paired_pc(server, tmp_path)
+    device_id = view['device_id']
+    chat = {'session_id': 's1'}
+    try:
+        await hub.call(device_id, 'Edit', {'file_path': 'notes.txt', 'old_string': 'first line',
+                                           'new_string': 'agent was here'}, power='files', ctx=chat)
+        await hub.call(device_id, 'Write', {'file_path': 'notes.txt', 'content': 'and again'}, power='files', ctx=chat)
+        await hub.call(device_id, 'Write', {'file_path': 'new.txt', 'content': 'brand new'}, power='files', ctx=chat)
+        # Another chat's edit is its own.
+        await hub.call(device_id, 'Write', {'file_path': 'other.txt', 'content': 'x'}, power='files',
+                       ctx={'session_id': 's2'})
+        assert (shared / 'notes.txt').read_text(encoding='utf-8') == 'and again'
+
+        async def owned(session_id, ctx):
+            return None, SimpleNamespace(id=session_id, computer=device_id)
+        monkeypatch.setattr(sessions_routes, '_load_authorized_session', owned)
+        async with httpx.AsyncClient(base_url=server.url) as http:
+            listed = (await http.get('/api/v1/computer/devices/chats/s1/changes')).json()
+            kinds = {Path(c['path']).name: c['kind'] for c in listed['changes']}
+            assert kinds == {'notes.txt': 'changed', 'new.txt': 'created'}
+            assert listed['device']['name'] == 'Kofi desktop'
+
+            # One file back: the version from before the chat touched it.
+            out = (await http.post('/api/v1/computer/devices/chats/s1/undo',
+                                   json={'paths': [str((shared / 'notes.txt').resolve())]})).json()
+            assert out['restored'][0]['ok'] is True
+            assert (shared / 'notes.txt').read_text(encoding='utf-8') == 'first line\n'
+
+            # The rest: the new file goes away; s2's file stays.
+            out = (await http.post('/api/v1/computer/devices/chats/s1/undo', json={})).json()
+            assert [r['ok'] for r in out['restored']] == [True]
+            assert not (shared / 'new.txt').exists() and (shared / 'other.txt').exists()
+            assert (await http.get('/api/v1/computer/devices/chats/s1/changes')).json()['changes'] == []
+    finally:
+        await connector.stop()

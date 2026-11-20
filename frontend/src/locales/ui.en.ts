@@ -3724,6 +3724,19 @@ const uiEn = {
   "ui.computers.sendsTasks": "sends tasks here",
   "ui.computers.openInTheDesktopApp": "Open in the desktop app",
   "ui.thisPc.tokenKeptIn": "Sign-in kept in {place}",
+  "ui.pcChanges.oneFileChanged": "{n} file changed on this PC",
+  "ui.pcChanges.filesChanged": "{n} files changed on this PC",
+  "ui.pcChanges.undoAll": "Undo all",
+  "ui.pcChanges.putAllBack": "Put all back",
+  "ui.pcChanges.cancel": "Cancel",
+  "ui.pcChanges.undo": "Undo",
+  "ui.pcChanges.kindCreated": "new",
+  "ui.pcChanges.kindDeleted": "deleted",
+  "ui.pcChanges.kindChanged": "changed",
+  "ui.pcChanges.removeTheNewFile": "Remove the new file",
+  "ui.pcChanges.putBackAsItWas": "Put it back as it was before this chat",
+  "ui.pcChanges.tooBigToUndo": "Too big to keep a copy, so it can't be undone",
+  "ui.pcChanges.couldNotPutBack": "Couldn't put back {path}: {error}",
 } as const;
 
 export default uiEn;

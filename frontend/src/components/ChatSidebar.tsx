@@ -1,4 +1,5 @@
 import { PcScreen } from '@/components/PcScreen';
+import { PcChanges } from '@/components/PcChanges';
 import type { PairedDevice } from '@/lib/devices';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -93,6 +94,8 @@ export interface ChatSidebarProps {
   desktopHeldBy?: string | null;
   /** The person's own paired PC this chat works on, instead of the sandbox. */
   pc?: PairedDevice | null;
+  /** This chat, for the files its agents changed on the PC. */
+  sessionId?: string | null;
   onOpenComputer: () => void;
   waiting: SidebarWaiting[];
   onApprove: (id: string) => void;
@@ -250,6 +253,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
               <span className="min-w-0 flex-1 truncate">{tr('ui.chatSidebar.thisChatWorksOnName', { name: props.pc.name })}</span>
               {props.pc.powers.includes('apps') && <button type="button" onClick={props.onOpenComputer} className={smallButton}>{tr('ui.chatSidebar.open')}</button>}
             </div>
+            {props.sessionId && props.pc.online && <PcChanges sessionId={props.sessionId} busy={props.busy} />}
           </>
         )) : section('computer', desktop ? 'live' : sandboxOn ? 'idle' : 'off', desktop ? (
           <>
