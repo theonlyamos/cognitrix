@@ -139,7 +139,9 @@ async def test_ensure_schema_adds_artifact_metadata_columns_without_destructive_
         for statement in statements
         if statement.startswith('ALTER TABLE artifacts ADD COLUMN')
     ]
-    assert artifact_alters == [
+    # The hand-typed columns come first; any other model field the table
+    # lacks follows as TEXT.
+    assert artifact_alters[:5] == [
         'ALTER TABLE artifacts ADD COLUMN run_id TEXT',
         'ALTER TABLE artifacts ADD COLUMN origin TEXT',
         'ALTER TABLE artifacts ADD COLUMN vision_storage_key TEXT',
