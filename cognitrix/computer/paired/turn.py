@@ -7,8 +7,11 @@ PC tools (``PC_TOOLS``) to it instead of running them on the server.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
+import time
 from typing import Any
 
 from cognitrix.computer.paired import (
@@ -27,6 +30,9 @@ READ_ONLY_PC_TOOLS = frozenset({'Read', 'Glob', 'Grep'})
 
 # device id -> name, so an offline PC can still be named in an error.
 _names: dict[str, str] = {}
+
+# How long a task run waits for its PC to come online.
+OFFLINE_WAIT_S = 30 * 60.0
 
 
 def _platform_label(platform: str) -> str:
@@ -57,6 +63,11 @@ async def device_view(user_id: Any, device_id: Any, *, read_only: bool = False) 
     if device is None:
         return None
     out = view(device)
+    from cognitrix.computer.paired.hub import hub, status
+    if not hub.serving and not out['online']:
+        live = await status(out['id'])  # the task worker: ask the web process
+        if live and live.get('online'):
+            out.update({k: live[k] for k in ('online', 'paused', 'powers', 'folders') if k in live})
     _names[out['id']] = out['name']
     if read_only:
         out['read_only'] = True
@@ -162,17 +173,72 @@ async def run_remote(tool: Any, params: dict[str, Any]) -> str | None:
     from cognitrix.computer.paired.hub import DeviceUnavailable, hub
 
     label = (hub.get(device_id).name if hub.get(device_id) else None) or _names.get(str(device_id)) or 'The PC'
-    try:
+
+    async def go() -> str:
         return await hub.call(
             device_id, name, _jsonable(params), power=power,
             ctx={'session_id': ctx.session_id, 'agent_id': ctx.agent_id, 'task_id': ctx.task_id,
                  'coords_normalized': _coords_normalized()},
             timeout=CALL_TIMEOUT_S.get(name, DEFAULT_CALL_TIMEOUT_S),
         )
+
+    try:
+        try:
+            return await go()
+        except DeviceUnavailable as exc:
+            if str(exc) != 'offline' or not ctx.task_id:
+                raise
+            # A task waits for the PC to come back, then tells the person.
+            if not await _wait_for(device_id, ctx, label):
+                raise
+            return await go()
     except DeviceUnavailable as exc:
         msg = str(exc)
         return _unavailable(msg, label) if msg in ('offline', 'paused', f'no_{FILES}', f'no_{COMMANDS}', f'no_{APPS}') \
             else f'Error: {msg}'
+
+
+# (task id, device id) -> when a task gave up waiting for that PC, so its
+# later calls fail at once instead of waiting again.
+_gave_up: dict[tuple[str, str], float] = {}
+
+
+def offline_wait_s() -> float:
+    try:
+        return float(os.environ.get('COGNITRIX_PAIRED_TASK_WAIT_S', '') or OFFLINE_WAIT_S)
+    except ValueError:
+        return OFFLINE_WAIT_S
+
+
+async def _wait_for(device_id: Any, ctx: Any, label: str) -> bool:
+    """A task run's PC is offline: wait up to 30 minutes for it to come back.
+    True when it did; otherwise tell the person and return False."""
+    from cognitrix.computer.paired.hub import status
+
+    key = (str(ctx.task_id), str(device_id))
+    if key in _gave_up:
+        return False
+    wait = offline_wait_s()
+    step = max(0.2, min(15.0, wait / 20))
+    deadline = time.monotonic() + wait
+    logger.info('Task %s is waiting for %s to come online', ctx.task_id, label)
+    while time.monotonic() < deadline:
+        await asyncio.sleep(step)
+        live = await status(device_id)
+        if live and live.get('online'):
+            return True
+    _gave_up[key] = time.time()
+    try:
+        from cognitrix.tasks.automation import create_notification
+        if ctx.user_id:
+            await create_notification(
+                str(ctx.user_id), f'{label} is offline',
+                f'A task waited {int(wait // 60) or 1} minutes for {label} to come online, then stopped using it. '
+                'Start the Cognitrix desktop app (or `cognitrix connect`) on that PC and run the task again.',
+                task_id=str(ctx.task_id), urgent=True)
+    except Exception:
+        logger.debug('Could not tell the person the PC stayed offline', exc_info=True)
+    return False
 
 
 def _coords_normalized() -> bool:

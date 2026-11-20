@@ -3702,6 +3702,10 @@ const uiEn = {
   "ui.computers.nameSScreen": "{name}'s screen",
   "ui.thisPc.apps": "Apps",
   "ui.thisPc.appsDetail": "Work in app windows on this screen, in the background. Opening an app asks you first, and the web can see this screen.",
+  "ui.taskPage.computer": "Computer",
+  "ui.taskPage.computerHint": "Where runs do their commands, files and apps. A PC that's offline is waited for up to 30 minutes, then you're told.",
+  "ui.taskPage.agentsUsualComputer": "The agent's usual computer",
+  "ui.taskPage.nameOffline": "{name} (offline)",
 } as const;
 
 export default uiEn;

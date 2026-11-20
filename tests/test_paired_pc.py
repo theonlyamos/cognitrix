@@ -442,3 +442,53 @@ def test_opening_an_app_on_a_pc_needs_a_person():
         assert needs_person((open_app,), {'target': 'notepad'})
     finally:
         reset_execution_context(token)
+
+
+async def test_the_task_worker_reaches_a_pc_through_the_web_process(server, tmp_path, monkeypatch):
+    import httpx
+
+    from cognitrix.computer.paired import relay
+    from cognitrix.computer.paired.hub import status
+
+    view, connector, shared = await _paired_pc(server, tmp_path)
+    try:
+        monkeypatch.setenv('COGNITRIX_INTERNAL_URL', server.url)
+        # What a worker does: no connection here, so it relays.
+        text, _ = await hub._relay_call(view['device_id'], 'Read', {'file_path': 'notes.txt'}, power='files',
+                                        ctx={}, timeout=20)
+        assert 'first line' in text
+        assert (await relay.send('status', {'device_id': view['device_id']}))['online'] is True
+        async with httpx.AsyncClient(base_url=server.url) as http:
+            forged = await http.post(relay.PATH, json={'op': 'status', 'device_id': view['device_id']},
+                                     headers={relay.HEADER: '1:abc'})
+        assert forged.status_code == 403
+        monkeypatch.setattr(hub, 'serving', False)
+        assert (await status('not-connected-here'))['online'] is False  # asked the web process
+    finally:
+        await connector.stop()
+
+
+async def test_a_task_waits_for_an_offline_pc_then_tells_the_person(db, monkeypatch):
+    from cognitrix.computer.paired import turn
+    from cognitrix.tasks import automation
+    from cognitrix.tools.base import ToolManager
+
+    told = []
+
+    async def fake_notify(user_id, title, message, **kw):
+        told.append((user_id, title, message, kw.get('task_id')))
+
+    monkeypatch.setattr(automation, 'create_notification', fake_notify)
+    monkeypatch.setenv('COGNITRIX_PAIRED_TASK_WAIT_S', '0.5')
+    monkeypatch.setattr(hub, 'serving', True)
+    turn._gave_up.clear()
+    token = set_execution_context(ToolExecutionContext(user_id='u1', device='gone', task_id='t1'))
+    try:
+        out = await turn.run_remote(ToolManager.get_by_name('Read'), {'file_path': 'x'})
+        assert 'offline' in out
+        assert told and told[0][0] == 'u1' and told[0][3] == 't1'
+        # Once it gave up, the task's next call doesn't wait again.
+        await turn.run_remote(ToolManager.get_by_name('Read'), {'file_path': 'x'})
+        assert len(told) == 1
+    finally:
+        reset_execution_context(token)

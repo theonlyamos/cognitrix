@@ -7,6 +7,7 @@ import { Textarea } from '@/lib/components/ui/textarea';
 import { Select } from '@/lib/components/ui/select';
 import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm, CheckList } from '@/components/form';
+import { listDevices, type PairedDevice } from '@/lib/devices';
 import { tr } from '@/lib/i18n';
 
 interface Step { step: string; done: boolean }
@@ -27,6 +28,7 @@ interface TaskData {
   schedule_enabled?: boolean;
   swarm?: boolean;
   read_memory?: boolean;
+  computer?: string | null;
 }
 
 type ScheduleMode = 'none' | 'once' | 'interval' | 'cron';
@@ -68,6 +70,9 @@ export default function TaskPage() {
   const [autostart, setAutostart] = useState(false);
   const [swarm, setSwarm] = useState(false);
   const [readMemory, setReadMemory] = useState(false);
+  const [computer, setComputer] = useState('');
+  const [pcs, setPcs] = useState<PairedDevice[]>([]);
+  useEffect(() => { listDevices().then(setPcs).catch(() => {}); }, []);
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('none');
   const [scheduleAt, setScheduleAt] = useState('');
   const [intervalN, setIntervalN] = useState('30');
@@ -93,6 +98,7 @@ export default function TaskPage() {
     setAutostart(!!existing.autostart);
     setSwarm(!!existing.swarm);
     setReadMemory(!!existing.read_memory);
+    setComputer(existing.computer || '');
     if (existing.schedule_at) {
       setScheduleMode('once');
       setScheduleAt(utcToLocalInput(existing.schedule_at));
@@ -184,6 +190,7 @@ export default function TaskPage() {
         autostart,
         swarm,
         read_memory: readMemory,
+        computer: computer || null,
         // Always sent: the form is authoritative for schedule state (the
         // server treats their presence as a full respecification).
         schedule_at: scheduleMode === 'once' && scheduleAt ? new Date(scheduleAt).toISOString() : null,
@@ -259,6 +266,17 @@ export default function TaskPage() {
           ))}
         </Select>
       </Field>
+
+      {(pcs.length > 0 || computer) && (
+        <Field label={tr('ui.taskPage.computer')} hint={tr('ui.taskPage.computerHint')}>
+          <Select value={computer} onChange={(e) => setComputer(e.target.value)}>
+            <option value="">{tr('ui.taskPage.agentsUsualComputer')}</option>
+            {pcs.map((d) => (
+              <option key={d.id} value={d.id}>{d.online ? d.name : tr('ui.taskPage.nameOffline', { name: d.name })}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
 
       <Field label={tr('ui.taskPage.assignedAgentsSize', { size: assigned.size })} hint={teamId ? tr('ui.taskPage.fromTheSelectedTeamEditable') : undefined} composite>
         <CheckList

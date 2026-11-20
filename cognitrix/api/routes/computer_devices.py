@@ -158,6 +158,30 @@ async def device_screen(device_id: str, ctx: AuthContext = Depends(jwt_only)) ->
     return {'image': images[0], 'at': time.time()}
 
 
+@devices_api.post('/relay', include_in_schema=False)
+async def relay_call(request: Request) -> dict[str, Any]:
+    """The task worker reaching a PC through this process (see relay.py)."""
+    from cognitrix.computer.paired import relay
+    from cognitrix.computer.paired.hub import DeviceUnavailable, hub, status
+    body = await request.body()
+    if not relay.verify(body, request.headers.get(relay.HEADER, '')):
+        raise HTTPException(status_code=403, detail='Not allowed')
+    hub.serving = True
+    data = json.loads(body or b'{}')
+    device_id = str(data.get('device_id') or '')
+    if data.get('op') == 'status':
+        return await status(device_id) or {'online': False}
+    if data.get('op') != 'call':
+        raise HTTPException(status_code=400, detail='Unknown op')
+    try:
+        text, images = await hub.call_full(
+            device_id, str(data.get('tool') or ''), data.get('args') or {}, power=str(data.get('power') or ''),
+            ctx=data.get('ctx') or {}, timeout=min(float(data.get('timeout') or 150), 900))
+    except DeviceUnavailable as exc:
+        return {'error': str(exc)}
+    return {'text': text, 'images': images}
+
+
 class ChatComputerBody(BaseModel):
     computer: str | None = None
 
@@ -239,6 +263,14 @@ async def connect(websocket: WebSocket) -> None:
     from cognitrix.models.paired_device import PairedDevice
 
     await websocket.accept()
+    hub.serving = True
+    try:
+        server = websocket.scope.get('server') or ()
+        if len(server) > 1 and server[1]:
+            from cognitrix.computer.paired.relay import remember_address
+            remember_address(int(server[1]))
+    except Exception:
+        logger.debug('Could not note the relay address', exc_info=True)
     try:
         hello = json.loads(await asyncio.wait_for(websocket.receive_text(), 20))
     except Exception:

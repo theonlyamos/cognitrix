@@ -1133,6 +1133,7 @@ async def _execute_compiled_steps(
                 step_title=row.title,
                 emitter=emitter,
                 cancel_check=check_cancelled,
+                computer=getattr(task, 'computer', None),
             )
             try:
                 async with metrics.measure(
