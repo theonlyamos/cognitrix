@@ -226,7 +226,14 @@ export function PairDialog({ onClose, onPaired }: { onClose: () => void; onPaire
           )}
         </div>
         <ol className="mt-4 space-y-2.5 text-[13px] leading-snug">
-          <li><span className="font-medium">{tr('ui.computers.withTheDesktopApp')}</span>{' '}<span className="text-fg-dim">{tr('ui.computers.openSettingsComputersLinkThis')}</span></li>
+          <li>
+            <span className="font-medium">{tr('ui.computers.withTheDesktopApp')}</span>{' '}<span className="text-fg-dim">{tr('ui.computers.openSettingsComputersLinkThis')}</span>
+            {code && !expired && (
+              <div className="mt-1.5">
+                <a href={`cognitrix://pair?server=${encodeURIComponent(code.server)}&code=${encodeURIComponent(code.code)}`} className={buttonClass}>{tr('ui.computers.openInTheDesktopApp')}</a>
+              </div>
+            )}
+          </li>
           <li>
             <span className="font-medium">{tr('ui.computers.orInATerminal')}</span>
             {code && (

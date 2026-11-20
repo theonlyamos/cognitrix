@@ -38,6 +38,9 @@ async def db(tmp_path, monkeypatch):
     await _ensure_schema()
     monkeypatch.setenv('COGNITRIX_PAIRED_CONFIG', str(tmp_path / 'pc' / 'paired.json'))
     monkeypatch.delenv('COGNITRIX_DESKTOP', raising=False)
+    monkeypatch.setenv('COGNITRIX_PAIRED_KEYCHAIN', '0')
+    from cognitrix.computer.paired import connector as _connector
+    monkeypatch.setattr(_connector, '_keychain_token', None)
     store._codes.clear()
     store._tries.clear()
     yield
@@ -560,3 +563,43 @@ async def _wait_async(make, seconds: float = 10.0):
             return True
         await asyncio.sleep(0.05)
     return False
+
+
+def test_the_pc_token_goes_to_the_keychain_when_there_is_one(tmp_path, monkeypatch):
+    from cognitrix.computer.paired import connector, secret_store
+
+    monkeypatch.setenv('COGNITRIX_PAIRED_CONFIG', str(tmp_path / 'paired.json'))
+    monkeypatch.setattr(connector, '_keychain_token', None)
+    vault: dict[str, str] = {}
+    monkeypatch.setattr(secret_store, 'where', lambda: 'Keychain')
+    monkeypatch.setattr(secret_store, 'save', lambda token: vault.update(t=token) or True)
+    monkeypatch.setattr(secret_store, 'load', lambda: vault.get('t'))
+    monkeypatch.setattr(secret_store, 'delete', lambda: vault.clear())
+
+    connector.save_config({'server': 'https://x', 'token': 'cgxd_secret', 'name': 'pc'})
+    on_disk = json.loads((tmp_path / 'paired.json').read_text())
+    assert 'token' not in on_disk and on_disk['token_store'] == 'keychain'
+    assert vault['t'] == 'cgxd_secret'
+
+    monkeypatch.setattr(connector, '_keychain_token', None)  # a fresh process
+    cfg = connector.load_config()
+    assert cfg['token'] == 'cgxd_secret'
+    assert connector.public_config(cfg)['token_kept_in'] == 'Keychain'
+
+    # Saving the loaded config again keeps the token out of the file.
+    connector.save_config({**cfg, 'paused': True})
+    assert 'token' not in json.loads((tmp_path / 'paired.json').read_text())
+
+    connector.forget_config()
+    assert not vault and not (tmp_path / 'paired.json').exists()
+
+
+def test_the_pc_token_stays_in_the_file_when_the_keychain_refuses(tmp_path, monkeypatch):
+    from cognitrix.computer.paired import connector, secret_store
+
+    monkeypatch.setenv('COGNITRIX_PAIRED_CONFIG', str(tmp_path / 'paired.json'))
+    monkeypatch.setattr(connector, '_keychain_token', None)
+    monkeypatch.setattr(secret_store, 'save', lambda token: False)
+    connector.save_config({'server': 'https://x', 'token': 'cgxd_secret'})
+    assert json.loads((tmp_path / 'paired.json').read_text())['token'] == 'cgxd_secret'
+    assert connector.load_config()['token'] == 'cgxd_secret'

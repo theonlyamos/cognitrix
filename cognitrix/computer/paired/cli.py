@@ -39,6 +39,8 @@ def _print_link(view: dict[str, Any]) -> None:
     print('Folders: ' + (', '.join(f"{f['path']}{'' if f.get('writable', True) else ' (read only)'}"
                                    for f in view.get('folders') or []) or 'none'))
     print('Allowed: ' + (', '.join(view.get('powers') or []) or 'nothing'))
+    if view.get('token_kept_in'):
+        print(f"Token:   kept in {view['token_kept_in']}")
 
 
 async def command(args) -> None:

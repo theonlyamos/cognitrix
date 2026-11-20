@@ -3722,6 +3722,8 @@ const uiEn = {
   "ui.thisPc.sendTasksDetail": "Let this PC hand tasks to the web account, to run on its agents. Results come back here.",
   "ui.thisPc.tasksSentToAccount": "Tasks sent to {account}",
   "ui.computers.sendsTasks": "sends tasks here",
+  "ui.computers.openInTheDesktopApp": "Open in the desktop app",
+  "ui.thisPc.tokenKeptIn": "Sign-in kept in {place}",
 } as const;
 
 export default uiEn;

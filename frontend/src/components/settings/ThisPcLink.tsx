@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { errorMessage } from '@/lib/api';
 import { pickFolder } from '@/lib/folders';
 import {
@@ -70,8 +71,10 @@ function PowerToggles({ powers, onChange, disabled }: { powers: DevicePower[]; o
 
 /** Step 1: the web address and the code. Step 2: whose account it is, and what to allow. */
 function LinkForm({ defaults, onLinked }: { defaults: PcLink; onLinked: (l: PcLink) => void }) {
-  const [server, setServer] = useState(defaults.server || '');
-  const [code, setCode] = useState('');
+  // Opened from the web's "Open in the desktop app" (cognitrix://pair link).
+  const [params] = useSearchParams();
+  const [server, setServer] = useState(params.get('server') || defaults.server || '');
+  const [code, setCode] = useState((params.get('code') || '').toUpperCase().slice(0, 12));
   const [account, setAccount] = useState('');
   const [name, setName] = useState(defaults.name || defaults.default_name || '');
   const [folders, setFolders] = useState<DeviceFolder[]>([]);
@@ -199,7 +202,7 @@ export function ThisPcLink() {
       <Group>
         <SettingRow
           label={<span className="flex flex-wrap items-center gap-2">{link.name}{status}</span>}
-          detail={<>{tr('ui.thisPc.linkedToAccountOnServer', { account: link.account, server: link.server })}{link.error && link.status !== 'connected' ? <span className="block text-warn-ink">{link.error}</span> : null}</>}
+          detail={<>{tr('ui.thisPc.linkedToAccountOnServer', { account: link.account, server: link.server })}{link.token_kept_in ? <span className="block text-fg-dim">{tr('ui.thisPc.tokenKeptIn', { place: link.token_kept_in })}</span> : null}{link.error && link.status !== 'connected' ? <span className="block text-warn-ink">{link.error}</span> : null}</>}
         >
           <button type="button" onClick={() => void change({ paused: !link.paused })} disabled={busy} className={buttonClass}>
             {link.paused ? tr('ui.thisPc.resumeAgents') : tr('ui.thisPc.pauseAgents')}

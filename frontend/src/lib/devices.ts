@@ -93,6 +93,8 @@ export interface PcLink {
   connected_since: string | null;
   default_name: string;
   platform: string;
+  /** Where this PC's sign-in is kept: Credential Manager, Keychain, Secret Service or a file path. */
+  token_kept_in?: string;
 }
 
 export async function getPcLink(): Promise<PcLink> {

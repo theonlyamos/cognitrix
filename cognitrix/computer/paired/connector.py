@@ -35,6 +35,7 @@ from cognitrix.computer.paired import (
     clean_folders,
     clean_powers,
     normalize_code,
+    secret_store,
     tool_power,
 )
 
@@ -60,15 +61,36 @@ def config_path() -> Path:
     return Path(os.environ.get('COGNITRIX_PAIRED_CONFIG') or (Path.home() / '.cognitrix' / 'paired.json'))
 
 
+_keychain_token: str | None = None  # what the keychain last gave or took, so it isn't asked on every call
+
+
 def load_config() -> dict[str, Any]:
+    global _keychain_token
     try:
         data = json.loads(config_path().read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    if not data.get('token') and data.get('token_store') == 'keychain':
+        if _keychain_token is None:
+            _keychain_token = secret_store.load()
+        if _keychain_token:
+            data['token'] = _keychain_token
+    return data
 
 
 def save_config(cfg: dict[str, Any]) -> None:
+    """Write the link. The token goes to the system keychain when there is one; else into the file."""
+    global _keychain_token
+    cfg = dict(cfg)
+    token = cfg.get('token')
+    cfg.pop('token_store', None)
+    if token:
+        if token == _keychain_token or secret_store.save(token):
+            _keychain_token = token
+            cfg.pop('token')
+            cfg['token_store'] = 'keychain'
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix('.tmp')
@@ -80,7 +102,21 @@ def save_config(cfg: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def token_location(cfg: dict[str, Any] | None = None) -> str:
+    """Where this PC's token is kept, in words for the person."""
+    try:
+        raw = json.loads(config_path().read_text(encoding='utf-8')) if cfg is None else cfg
+    except (OSError, ValueError):
+        raw = {}
+    if isinstance(raw, dict) and raw.get('token_store') == 'keychain':
+        return secret_store.where() or 'keychain'
+    return str(config_path())
+
+
 def forget_config() -> None:
+    global _keychain_token
+    _keychain_token = None
+    secret_store.delete()
     try:
         config_path().unlink()
     except OSError:
@@ -99,6 +135,7 @@ def public_config(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         'folders': clean_folders(cfg.get('folders')),
         'powers': clean_powers(cfg.get('powers')),
         'paused': bool(cfg.get('paused')),
+        'token_kept_in': token_location(cfg) if cfg.get('token') else '',
     }
 
 
