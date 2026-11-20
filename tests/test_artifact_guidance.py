@@ -160,3 +160,18 @@ async def test_result_artifact_setting_round_trips(db):  # noqa: F811
     assert out == {'result_artifact': 'auto'} and (await Task.get(str(task.id))).result_artifact is None
     with pytest.raises(HTTPException):
         await save_result_artifact(str(task.id), ResultArtifactBody(result_artifact='sometimes'), _ctx(amos))
+
+
+async def test_two_callers_on_the_same_run_publish_once(db):  # noqa: F811
+    import asyncio
+
+    from cognitrix.artifact_pages.guidance import ensure_schema, save_task_result
+    from cognitrix.artifact_pages.models import ArtifactPage, ArtifactVersion
+
+    await ensure_schema()
+    amos = await _user('Amos', 'amos@example.com')
+    task = SimpleNamespace(id='t1', owner_id=str(amos.id), title='Weekly report', assigned_agents=[], result_artifact=None)
+    results = await asyncio.gather(*(save_task_result(task, _run('r1'), LONG) for _ in range(4)))
+    assert sum(1 for r in results if r is not None) == 1
+    assert len(await ArtifactPage.find({'task_id': 't1'}) or []) == 1
+    assert len(await ArtifactVersion.find({'run_id': 'r1'}) or []) == 1

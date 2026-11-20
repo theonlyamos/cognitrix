@@ -109,6 +109,53 @@ async def context_block(owner: str | None, *, session_id: str = '', task_id: str
     return '\n'.join(parts)
 
 
+CLAIM_INDEX = 'ux_artifact_result_claims_run'
+
+
+async def ensure_schema() -> None:
+    """Create the unique index that makes per-run result claims atomic."""
+    from odbms import DBMS
+
+    from cognitrix.artifact_pages.models import ArtifactResultClaim
+
+    database = DBMS.Database
+    if getattr(database, 'dbms', '') not in ('sqlite', 'postgresql', 'mysql'):
+        return
+    table = ArtifactResultClaim.table_name()
+    statement = (f'CREATE UNIQUE INDEX {CLAIM_INDEX} ON {table} (run_id)'
+                 if database.dbms == 'mysql' else
+                 f'CREATE UNIQUE INDEX IF NOT EXISTS {CLAIM_INDEX} ON {table} (run_id)')
+    try:
+        await database.query(statement)
+    except Exception as exc:
+        if 'exist' not in str(exc).lower() and 'duplicate' not in str(exc).lower():
+            raise
+
+
+async def _claim_run(task_id: str, run_id: str) -> bool:
+    """True for exactly one caller per run."""
+    from cognitrix.artifact_pages.models import ArtifactResultClaim
+
+    if await ArtifactResultClaim.find({'run_id': run_id}):
+        return False
+    try:
+        await ArtifactResultClaim(run_id=run_id, task_id=str(task_id)).save()
+    except Exception as exc:
+        if 'unique' in str(exc).lower() or 'duplicate' in str(exc).lower():
+            return False
+        raise
+    return True
+
+
+async def _unclaim_run(run_id: str) -> None:
+    from cognitrix.artifact_pages.models import ArtifactResultClaim
+
+    try:
+        await ArtifactResultClaim.delete_many({'run_id': run_id})
+    except Exception:
+        logger.debug('Could not release the result claim of run %s', run_id, exc_info=True)
+
+
 def worth_keeping(text: str) -> bool:
     """A result long or structured enough to be a page rather than a line."""
     body = str(text or '').strip()
@@ -139,6 +186,9 @@ async def save_task_result(task: Any, run: Any, text: str) -> Any | None:
     task_id = str(getattr(task, 'id', '') or '')
     if run_id and await ArtifactVersion.find({'run_id': run_id}):
         return None  # the run published its own page (or this ran already)
+    # Completion and recovery can both reach a finished run: one claim per run.
+    if run_id and not await _claim_run(task_id, run_id):
+        return None
     title = str(getattr(task, 'title', '') or 'Task result')
     agent_id = str(getattr(run, 'agent_id', '') or getattr(task, 'assigned_agent_id', '') or '')
     if not agent_id:
@@ -153,6 +203,10 @@ async def save_task_result(task: Any, run: Any, text: str) -> Any | None:
     except store.PageError as exc:
         logger.info('Task %s result not saved as an artifact: %s', task_id, exc.message)
         return None
+    except BaseException:
+        if run_id:
+            await _unclaim_run(run_id)  # let a later pass try again
+        raise
     return page
 
 
