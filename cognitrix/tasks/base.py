@@ -138,6 +138,10 @@ class Task(Model):
     """When the creator is told: always (None), failure, or changed (a
     result that differs from the last one reported)."""
 
+    project_id: str | None = None
+    """The project the task belongs to (cognitrix/projects). Its runs get the
+    project's instructions, knowledge, memories and computer."""
+
     computer: str | None = None
     """One of the owner's paired PCs the run works on (its shell, files and
     apps), or None for the agent's usual computer. See computer/paired."""

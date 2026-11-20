@@ -29,6 +29,7 @@ class ChatIndex(Model):
     marker (bookkeeping: this person's older chats have been indexed)."""
     agent_id: str = ''
     team_id: str = ''
+    project_id: str = ''
     title: str = ''
     """Derived from the first message."""
     custom_title: str = ''
@@ -41,7 +42,7 @@ class ChatIndex(Model):
     """The session's updated_at, ISO."""
     started_by: dict[str, Any] | None = None
 
-    @field_validator('user_id', 'agent_id', 'team_id', 'title', 'custom_title', 'started', 'changed', mode='before')
+    @field_validator('user_id', 'agent_id', 'team_id', 'project_id', 'title', 'custom_title', 'started', 'changed', mode='before')
     @classmethod
     def _text(cls, value):
         return '' if value is None else str(value)
@@ -116,6 +117,7 @@ def _fields(session, owner: str) -> dict[str, Any]:
         'kind': KIND_TEAM if team else KIND_AGENT,
         'agent_id': str(session.agent_id or ''),
         'team_id': str(session.team_id or ''),
+        'project_id': str(getattr(session, 'project_id', None) or ''),
         'title': group_chat.chat_title(chat) if team else _session_title(chat),
         'custom_title': (getattr(session, 'title', None) or '').strip(),
         'pinned': bool(getattr(session, 'pinned', False)),

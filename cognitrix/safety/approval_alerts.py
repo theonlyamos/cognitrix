@@ -103,6 +103,7 @@ def public_item(request_id: str, entry: dict) -> dict[str, Any]:
         'details': entry.get('details') or '',
         'full_shell': bool(entry.get('person_only')),
         'app': entry.get('app') or '',
+        'always': entry.get('always') or None,
         'status': 'pending',
         'created_at': entry.get('created_at') or '',
         'task_title': '',

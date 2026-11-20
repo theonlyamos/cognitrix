@@ -32,6 +32,7 @@ _SCOPES = {
     'global': 'global', 'all': 'global', 'shared': 'global', 'everyone': 'global', 'user': 'global',
     'all_agents': 'global', 'agent': 'agent', 'self': 'agent', 'me': 'agent', 'private': 'agent',
     'this_agent': 'agent', 'agent_only': 'agent', 'local': 'agent',
+    'project': 'project', 'this_project': 'project', 'project_only': 'project',
 }
 
 
@@ -49,14 +50,14 @@ def _proposal_reason(settings: Any) -> str:
 
 
 def _proposed(row: Any, reason: str) -> ToolOutcome:
-    where = 'agent' if row.scope == 'agent' else 'global'
+    where = row.scope if row.scope in ('agent', 'project') else 'global'
     return ToolOutcome.success(
         f'Memory proposed (id {row.id}, {where}): {row.content}\n'
         f'{reason} It is waiting for their OK in the chat; it is not saved until they approve it.')
 
 
 def _line(row: Any) -> str:
-    where = 'this agent only' if row.scope == 'agent' else 'global'
+    where = {'agent': 'this agent only', 'project': 'this project only'}.get(row.scope, 'global')
     until = f', until {row.valid_until}' if getattr(row, 'valid_until', '') else ''
     return f'- {row.content} (id {row.id}, {where}{until})'
 
@@ -88,7 +89,8 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
       tells you about themselves, their work, their preferences and decisions on ongoing projects, or
       anything they ask you to remember. Don't save one-off task details, things you can look up again,
       passwords or keys, or private details about other people.
-      scope: "global" (every agent of this person sees it) or "agent" (only you). Leave it empty for your default.
+      scope: "global" (every agent of this person sees it), "agent" (only you) or "project" (only chats in this
+        project; the default inside a project). Leave it empty for your default.
       kind (optional): "about" (the person), "preference", "person" (someone they know), "project",
       "howto" (how they like something done) or "other".
       valid_until (optional, YYYY-MM-DD): for facts that stop being true, like "on leave until the 20th"
@@ -132,6 +134,12 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
                         'This person only wants memories saved when they ask you to remember '
                         'something. Don\'t save this one.')
             chosen = _SCOPES.get(str(scope or '').strip().lower().replace(' ', '_').replace('-', '_'), '')
+            from cognitrix.projects.context import get as _turn_project
+            in_project = _turn_project() is not None
+            if chosen == 'project' and not in_project:
+                chosen = ''
+            if not chosen and in_project:
+                chosen = 'project'  # what's learned in a project stays with it
             if not chosen:
                 chosen = 'global' if await saved.agent_saves_global(parent) else 'agent'
             if chosen == 'global' and not saved.agent_reads_global(parent):
@@ -165,7 +173,8 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
             reason = _proposal_reason(settings)
             if reason:
                 proposal, _created = await saved.add(
-                    user_id, content or row.content, scope=row.scope, agent_id=row.agent_id, source='agent',
+                    user_id, content or row.content, scope=row.scope, agent_id=row.agent_id,
+                    project_id=row.project_id, source='agent',
                     session_id=str(ctx.session_id or ''), pending=True, replaces=str(row.id),
                     kind=_kind(kind) or row.kind, valid_until=valid_until or row.valid_until)
                 if not proposal.pending:

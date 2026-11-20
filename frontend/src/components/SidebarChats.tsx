@@ -8,6 +8,7 @@ import { useOptionalNotifications } from '@/context/NotificationsContext';
 import { AgentBadge } from '@/components/StartChat';
 import { ChatRowMenu } from '@/components/ChatRowMenu';
 import { ShareChatDialog } from '@/components/sharing/ShareChatDialog';
+import { MoveToProjectDialog } from '@/components/projects/ProjectForm';
 import { sharedChatHref, type SharedChatRow } from '@/lib/sharedChats';
 import { ChatRail, type RailChat, type RailGroup } from '@/components/ChatRail';
 import { exportChat } from '@/lib/chatExport';
@@ -35,6 +36,8 @@ export interface SidebarChat {
   pinned?: boolean;
   archived?: boolean;
   running?: boolean;
+  /** The project the chat is in (projects are managed on the Projects page). */
+  project_id?: string | null;
   started_by?: { agent_id: string; agent_name: string } | null;
 }
 
@@ -91,6 +94,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [sharing, setSharing] = useState<{ id: string; title: string } | null>(null);
+  const [moving, setMoving] = useState<{ id: string; title: string; project: string | null } | null>(null);
   // Chats other people shared with me (sessions/sharing.py).
   const location = useLocation();
   const { data: sharedData, refetch: refetchShared } = useResource<SharedChatRow[]>('/shared-chats');
@@ -306,6 +310,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
       { label: c.archived ? 'Move back to chats' : 'Archive', disabled: busy, onSelect: () => void update(c, { archived: !c.archived }) },
       ...(c.kind === 'team' ? [] : [
         { label: tr('ui.sidebarChats.share'), onSelect: () => setSharing({ id: c.id, title: c.title }) },
+        { label: tr('ui.projects.moveToProject'), disabled: busy, onSelect: () => setMoving({ id: c.id, title: c.title, project: c.project_id ?? null }) },
         { label: tr('ui.sidebarChats.exportAsMarkdown'), onSelect: () => void exportChat(c.id, c.title, who).catch(() => {}) },
         { label: tr('ui.sidebarChats.saveAsSkill'), disabled: busy, onSelect: () => void saveAsSkill(c) },
       ]),
@@ -486,6 +491,10 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
       </div>
     </div>
     {sharing && <ShareChatDialog chatId={sharing.id} title={sharing.title} onClose={() => setSharing(null)} />}
+    {moving && (
+      <MoveToProjectDialog chatId={moving.id} title={moving.title} current={moving.project}
+        onClose={() => setMoving(null)} onMoved={() => { void refetch({ silent: true }); chatsEdited(); }} />
+    )}
     </>
   );
 }

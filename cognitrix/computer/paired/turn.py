@@ -96,6 +96,11 @@ def device_prompt(device: dict[str, Any]) -> str:
         'real files, not on the server and not in a sandbox. Paths are paths on that computer.',
     ]
     folders = device.get('folders') or []
+    try:
+        from cognitrix.projects.context import narrow_pc_folders
+        folders = narrow_pc_folders(list(folders))
+    except Exception:
+        pass
     if folders:
         lines.append('Folders you can use there (nothing outside them):')
         for f in folders:
@@ -127,6 +132,18 @@ def device_prompt(device: dict[str, Any]) -> str:
     elif device.get('paused'):
         lines.append(f'Agents are paused on {name} right now. Tell the person if you need it.')
     return '\n'.join(lines)
+
+
+def _project_folders() -> dict[str, Any]:
+    """The PC folders the turn's project limits it to (sent with each call)."""
+    try:
+        from cognitrix.projects.context import get
+        project = get()
+    except Exception:
+        return {}
+    if project is None or not project.pc_folders or project.computer in ('', 'sandbox'):
+        return {}
+    return {'only_folders': list(project.pc_folders)}
 
 
 def _jsonable(args: dict[str, Any]) -> dict[str, Any]:
@@ -179,7 +196,7 @@ async def run_remote(tool: Any, params: dict[str, Any]) -> str | None:
         return await hub.call(
             device_id, name, _jsonable(params), power=power,
             ctx={'session_id': ctx.session_id, 'agent_id': ctx.agent_id, 'task_id': ctx.task_id,
-                 'coords_normalized': _coords_normalized()},
+                 'coords_normalized': _coords_normalized(), **_project_folders()},
             timeout=CALL_TIMEOUT_S.get(name, DEFAULT_CALL_TIMEOUT_S),
         )
 
