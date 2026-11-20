@@ -884,6 +884,7 @@ async def _ensure_schema():
     from cognitrix.models.paired_device import MODELS as PAIRED_DEVICE_MODELS
     from cognitrix.projects.models import MODELS as PROJECT_MODELS
     from cognitrix.safety.command_rules import MODELS as COMMAND_RULE_MODELS
+    from cognitrix.file_changes.models import MODELS as FILE_CHANGE_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
@@ -900,6 +901,7 @@ async def _ensure_schema():
         *PAIRED_DEVICE_MODELS,
         *PROJECT_MODELS,
         *COMMAND_RULE_MODELS,
+        *FILE_CHANGE_MODELS,
         AgentOffer,
         SideQuestion,
         MeetingNote,
