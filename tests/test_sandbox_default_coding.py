@@ -77,8 +77,9 @@ def test_switching_to_the_persons_computer(ctx, monkeypatch):
     assert isinstance(sw.for_turn(), sw.SandboxWork)
     out = asyncio.run(switch_computer_for_code.run(computer='person'))
     assert "person's computer" in str(out.content)
-    # At once in this turn...
+    # At once in this turn, safety checks included...
     assert sw.for_turn() is None
+    assert sw.turn_in_sandbox() is False
     # ...and the chat keeps it from the next turn.
     session = Session(id='chat1')
     assert session._turn_sandbox(_agent('Bash'), 'web') is False
@@ -136,6 +137,18 @@ def test_the_sandbox_path_copies_the_folder_in(ctx, tmp_path):
     assert box.imports == [(str(proj), 'site')]
 
 
+def test_the_sandbox_path_points_at_the_actual_copy(ctx, tmp_path):
+    proj = tmp_path / 'site'
+    proj.mkdir()
+    box = _Box()
+    box.projects_list.append({'name': 'site', 'source': '/elsewhere/site'})
+    work = _work(box)
+    ctx(user_id='u', agent_id='a', folders=(Folder(str(proj), 'write', 'site', True),))
+    assert sw.to_sandbox_path(work, '/home/agent/work/a/site/x.py') == '/home/agent/work/a/site-2/x.py'
+    assert sw.map_command(work, 'cd /home/agent/work/a/site') == 'cd /home/agent/work/a/site-2'
+    assert box.imports == [(str(proj), 'site-2')]
+
+
 def test_an_earlier_copy_is_reused(ctx, tmp_path):
     proj = tmp_path / 'proj'
     proj.mkdir()
@@ -163,13 +176,14 @@ def test_changes_are_reviewed_once(tmp_path):
     box = _Box()
     box.projects_list.append({'name': 'proj', 'source': str(proj)})
     work = _work(box)
-    files = [{'path': 'a.py', 'status': 'modified', 'added': 2, 'removed': 1}]
-    work.changes = lambda name, patch=True: {'files': files}
+    state = {'files': [{'path': 'a.py', 'status': 'modified', 'added': 1, 'removed': 1}], 'tree': 't1'}
+    work.changes = lambda name, patch=True: dict(state)
     folders = [Folder(str(proj), 'write', 'proj', True)]
     assert sw.changes_to_review(work, 'chat', folders) == ['proj']
-    sw.note_reviewed('chat', 'proj', files)
+    sw.note_reviewed('chat', 'proj', dict(state))
     assert sw.changes_to_review(work, 'chat', folders) == []
-    files.append({'path': 'b.py', 'status': 'added', 'added': 5, 'removed': 0})
+    # The same line changed again: same counts, new content.
+    state['tree'] = 't2'
     assert sw.changes_to_review(work, 'chat', folders) == ['proj']
 
 

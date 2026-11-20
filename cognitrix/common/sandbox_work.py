@@ -108,7 +108,10 @@ def sandbox_available() -> bool:
 def turn_in_sandbox() -> bool:
     """True when this turn's shell and files work in the sandbox."""
     from cognitrix.tools.utils import current_execution_context
-    return bool(getattr(current_execution_context(), 'sandbox', False))
+    ctx = current_execution_context()
+    # Switch Computer For Code moves the rest of the turn to the person's
+    # computer: its safety checks and approvals apply again.
+    return bool(getattr(ctx, 'sandbox', False)) and chat_switch(getattr(ctx, 'session_id', None)) is not False
 
 
 def sandbox_choice(session_value: Any, agent: Any) -> tuple[bool, bool]:
@@ -581,16 +584,20 @@ SANDBOX_WORK_ROOT = '/home/agent/work'
 
 # (chat, project) -> the changes the person last saw on a card, so the
 # end-of-turn review shows each set of changes once.
-_reviewed: dict[tuple[str, str], int] = {}
+_reviewed: dict[tuple[str, str], Any] = {}
 
 
-def _changes_key(files: list[dict]) -> int:
-    return hash(tuple((f.get('path'), f.get('status'), f.get('added'), f.get('removed')) for f in files))
+def _changes_key(out: dict) -> Any:
+    """What identifies a set of changes: the content of the sandbox copy (its
+    git tree) when the sandbox reports it, else the changed files."""
+    files = out.get('files') or []
+    return out.get('tree') or hash(tuple((f.get('path'), f.get('status'), f.get('added'), f.get('removed'))
+                                         for f in files))
 
 
-def note_reviewed(session_id: Any, project: str, files: list[dict]) -> None:
+def note_reviewed(session_id: Any, project: str, out: dict) -> None:
     if session_id:
-        _reviewed[(str(session_id), str(project))] = _changes_key(files)
+        _reviewed[(str(session_id), str(project))] = _changes_key(out)
 
 
 def changes_to_review(ws: SandboxWork, session_id: Any, folders: list[Any]) -> list[str]:
@@ -601,8 +608,8 @@ def changes_to_review(ws: SandboxWork, session_id: Any, folders: list[Any]) -> l
         name = ws.project_for(folder, copy=False)
         if not name:
             continue
-        files = ws.changes(name, patch=False).get('files') or []
-        if files and _reviewed.get((str(session_id), name)) != _changes_key(files):
+        got = ws.changes(name, patch=False)
+        if got.get('files') and _reviewed.get((str(session_id), name)) != _changes_key(got):
             out.append(name)
     return out
 
@@ -646,16 +653,22 @@ def to_sandbox_path(ws: SandboxWork, path: str | None) -> str | None:
         if rel is not None:
             name = ws.project_for(folder)
             return f'{ws.root}/{name}' + ('' if rel in ('', '.') else f'/{rel}')
-    _copy_named(ws, raw, folders)
-    return path
+    return _copy_named(ws, raw, folders)
 
 
-def _copy_named(ws: SandboxWork, text: str, folders: list[Any]) -> None:
-    """Copy in a chat folder whose sandbox path (as the prompt gives it) is used."""
+def _copy_named(ws: SandboxWork, text: str, folders: list[Any]) -> str:
+    """Copy in a chat folder whose sandbox path (as the prompt gives it) is
+    used, and point that path at the folder's actual copy (which can have
+    another name when the folder was copied in under one, or the name was
+    taken)."""
     for folder in folders:
         guess = f'{ws.root}/{default_project_name(folder)}'
-        if re.search(re.escape(guess) + r'(?![A-Za-z0-9._-])', text):
-            ws.project_for(folder)
+        pattern = re.escape(guess) + r'(?![A-Za-z0-9._-])'
+        if re.search(pattern, text):
+            actual = f'{ws.root}/{ws.project_for(folder)}'
+            if actual != guess:
+                text = re.sub(pattern, lambda _m, to=actual: to, text)
+    return text
 
 
 def map_command(ws: SandboxWork, command: str) -> str:
@@ -672,8 +685,7 @@ def map_command(ws: SandboxWork, command: str) -> str:
             name = ws.project_for(folder)
             for sp in sorted(hit, key=len, reverse=True):
                 command = command.replace(sp, f'{ws.root}/{name}')
-    _copy_named(ws, command, folders)
-    return command
+    return _copy_named(ws, command, folders)
 
 
 # ---------------------------------------------------------------------------

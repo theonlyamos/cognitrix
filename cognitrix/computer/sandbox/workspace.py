@@ -791,6 +791,12 @@ class Workspace:
                     files[bits[2]]['added'], files[bits[2]]['removed'] = int(bits[0]), int(bits[1])
         out = {'project': name, 'path': self.project_dir(agent, name), 'source': self.source(agent, name),
                'files': list(files.values())}
+        try:
+            # The copy's content as it is now, so a review can tell new
+            # changes from ones the person already saw.
+            out['tree'] = self._git(agent, name, 'write-tree').stdout.strip()
+        except WorkspaceError:
+            pass
         if patch:
             raw = self._git(agent, name, 'diff', '--cached', '--no-renames', '--no-color', 'HEAD').stdout
             out['patch'] = raw[:MAX_PATCH]

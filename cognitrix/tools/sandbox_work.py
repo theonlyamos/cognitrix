@@ -305,7 +305,7 @@ def sandbox_changes(project: str, show_diff: bool = True, review: bool = False):
     if not files:
         return ToolOutcome.success(f"No changes in '{project}' since it was copied in (or last copied back).")
     from cognitrix.tools.utils import current_execution_context
-    sw.note_reviewed(current_execution_context().session_id, project, files)
+    sw.note_reviewed(current_execution_context().session_id, project, out)
     text = f"{len(files)} changed file(s) in {out['path']} (from {out.get('source') or 'the computer'}):\n"
     text += sw.describe_changes(files, 200)
     if show_diff and out.get('patch'):
