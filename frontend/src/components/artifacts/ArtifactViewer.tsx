@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Clock, Code2, ExternalLink, Eye, Globe, LayoutPanelTop, Lock, Maximize2, MessageCircle, Minimize2,
-  MoreHorizontal, Shapes, Share, Sparkles, Table2, Users, X,
+  MessageSquarePlus, MoreHorizontal, Shapes, Share, Sparkles, Table2, Users, X,
 } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import {
@@ -121,6 +121,29 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
   }, [load, loadComments, pageId]);
 
   const shownVersion = pinnedVersion ?? page?.viewer_version ?? 0;
+
+  /** Click a place on the page to comment there: open the comments and wait for the click. */
+  const startPinning = useCallback(() => {
+    setView('preview');
+    setCommentsOpen(true);
+    setActiveThread(null);
+    setPicking(true);
+  }, []);
+
+  // C starts a comment on a spot, Esc stops placing it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (e.key === 'Escape' && picking) { e.preventDefault(); setPicking(false); return; }
+      if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey && !e.altKey && frame) {
+        e.preventDefault();
+        startPinning();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [picking, frame, startPinning]);
 
   useEffect(() => {
     if (!page || !shownVersion) return;
@@ -269,6 +292,12 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
             </button>
           ))}
         </div>
+        <button type="button" onClick={() => (picking ? setPicking(false) : startPinning())} aria-pressed={picking}
+          title={tr('ui.artifacts.artifactViewer.clickAPlaceOnThe')}
+          className={cn('inline-flex h-9 flex-none items-center gap-1.5 rounded-md border px-2.5 text-[12.5px] font-medium md:h-8',
+            picking ? 'border-accent-ink bg-accent/15 text-accent-ink' : 'border-line bg-panel hover:bg-panel-2')}>
+          <MessageSquarePlus size={14} /> <span className="hidden sm:inline">{picking ? tr('ui.artifacts.artifactViewer.clickThePage') : tr('ui.artifacts.artifactViewer.comment')}</span>
+        </button>
         <button type="button" onClick={() => { setCommentsOpen((v) => !v); setPicking(false); }} aria-pressed={commentsOpen}
           aria-label={`Comments${openCount ? `, ${openCount} open` : ''}`} title={tr('ui.artifacts.artifactViewer.comments')}
           className={cn(iconButton, 'relative', commentsOpen && 'bg-panel-2 text-fg')}>

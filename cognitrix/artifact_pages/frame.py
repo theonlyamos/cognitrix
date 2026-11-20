@@ -120,6 +120,16 @@ RUNTIME = r"""
     e.preventDefault(); e.stopPropagation();
     var s = size();
     var el = e.target;
+    // The words under the pointer, not the whole table or section around them.
+    try {
+      var r = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+      if (!r && document.caretPositionFromPoint) {
+        var cp = document.caretPositionFromPoint(e.clientX, e.clientY);
+        r = cp ? {startContainer: cp.offsetNode} : null;
+      }
+      var node = r && r.startContainer;
+      if (node) el = node.nodeType === 3 ? node.parentElement : node;
+    } catch (_) {}
     var text = (el && (el.innerText || el.textContent) || '').replace(/\s+/g, ' ').trim().slice(0, 160);
     picking = false;
     document.documentElement.style.cursor = '';
