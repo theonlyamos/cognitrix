@@ -57,6 +57,7 @@ PRIVATE = (
     ('cognitrix.tasks.pr_watch', 'PullRequestWatch', 'owner_id'),
     ('cognitrix.tasks.pr_watch', 'GitHubRepoHook', 'owner_id'),
     ('cognitrix.models.computer_app', 'ComputerAppPermission', 'user_id'),
+    ('cognitrix.models.paired_device', 'PairedDevice', 'user_id'),
     ('cognitrix.models.voice_settings', 'VoiceSettings', 'user_id'),
     ('cognitrix.themes', 'ThemeSettings', 'user_id'),
     ('cognitrix.skills.personal', 'PersonalSkill', 'user_id'),

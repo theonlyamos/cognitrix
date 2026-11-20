@@ -48,6 +48,8 @@ import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 import { setViewingChat } from '@/lib/chatPresence';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
 import { tr, dateLocale } from '@/lib/i18n';
+import ComputerChip from '@/components/ComputerChip';
+import { getChatComputer, listDevices, setChatComputer, type PairedDevice } from '@/lib/devices';
 
 
 interface ConvoSummary {
@@ -770,6 +772,40 @@ export default function Home() {
     }
   }, [runInSandbox]);
 
+  // ── The person's own paired PCs ──
+  // A chat can work on one of them instead of its usual computer. A new chat
+  // sends the pick with its first message.
+  const [pcs, setPcs] = useState<PairedDevice[]>([]);
+  const refreshPcs = useCallback(() => { listDevices().then(setPcs).catch(() => {}); }, []);
+  useEffect(() => { refreshPcs(); }, [refreshPcs]);
+  const [chatComputer, setChatComputerState] = useState<string | null>(null);
+  const [draftComputer, setDraftComputer] = useState<string | null>(null);
+  const draftComputerRef = useRef<string | null>(null);
+  draftComputerRef.current = draftComputer;
+  useEffect(() => {
+    if (!busyRef.current) setDraftComputer(null);
+  }, [activeSessionId]);
+  useEffect(() => {
+    setChatComputerState(null);
+    if (!activeSessionId) return;
+    let cancelled = false;
+    getChatComputer(activeSessionId)
+      .then((v) => { if (!cancelled) setChatComputerState(v.computer); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeSessionId]);
+  const chatPc = activeSessionId ? chatComputer : draftComputer;
+  const changeComputer = useCallback(async (id: string | null) => {
+    const sid = activeRef.current;
+    if (sid) {
+      try {
+        setChatComputerState((await setChatComputer(sid, id)).computer);
+      } catch { /* keep the old pick */ }
+    } else {
+      setDraftComputer(id);
+    }
+  }, []);
+
   // Default to the first agent once the list loads (or if the saved one is gone).
   useEffect(() => {
     if (agents.length === 0) return;
@@ -1431,6 +1467,7 @@ export default function Home() {
           ...(!activeRef.current && draftFoldersRef.current ? { folders: draftFoldersRef.current } : {}),
           ...(!activeRef.current && incognitoRef.current ? { incognito: true } : {}),
           ...(!activeRef.current && draftSandboxRef.current !== null ? { run_in_sandbox: draftSandboxRef.current } : {}),
+          ...(!activeRef.current && draftComputerRef.current ? { computer: draftComputerRef.current } : {}),
         };
         if (pending.length) {
           const form = new FormData();
@@ -2046,10 +2083,11 @@ export default function Home() {
             reasoning={reasoning}
             onReasoning={changeReasoning}
             swarm={incognito ? undefined : { on: swarmOn, onToggle: () => setSwarmOn((v) => !v) }}
-            sandbox={sandboxOn || runInSandbox ? {
+            sandbox={!chatPc && (sandboxOn || runInSandbox) ? {
               on: runInSandbox,
               available: sandboxOn,
               onToggle: () => void toggleSandbox(),
+              hideTag: pcs.length > 0,
             } : undefined}
           >
             {empty && (
@@ -2058,14 +2096,27 @@ export default function Home() {
               </div>
             )}
             <ChatModelPicker agentLlm={currentAgent?.llm} value={chatModel} onChange={changeChatModel} />
-            <FolderChips
-              variant="button"
-              className="min-w-0"
-              folders={shownFolders}
-              onChange={changeFolders}
-              emptyLabel={tr('ui.home.scratchFolder')}
-              disabled={busy}
-            />
+            {(pcs.length > 0 || chatPc) && (
+              <ComputerChip
+                devices={pcs}
+                value={chatPc}
+                onChange={(id) => void changeComputer(id)}
+                usualIsSandbox={runInSandbox}
+                onPair={() => navigate('/settings/computers')}
+                onOpen={refreshPcs}
+                disabled={busy}
+              />
+            )}
+            {!chatPc && (
+              <FolderChips
+                variant="button"
+                className="min-w-0"
+                folders={shownFolders}
+                onChange={changeFolders}
+                emptyLabel={tr('ui.home.scratchFolder')}
+                disabled={busy}
+              />
+            )}
           </ComposerMenu>
           </div>
           <span className="flex-1" />

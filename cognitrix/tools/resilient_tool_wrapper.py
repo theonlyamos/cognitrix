@@ -68,7 +68,13 @@ class ResilientToolManager:
                 # Validate parameters
                 validated = await self._validate_params(tool, current_params)
 
-                # Execute tool
+                # Execute tool: on the chat's paired PC when it runs there
+                # (cognitrix/computer/paired), else here.
+                from cognitrix.computer.paired.turn import run_remote
+                remote = run_remote(tool, validated)
+                remote_text = await remote
+                if remote_text is not None:
+                    return ToolResult(success=True, data=remote_text, attempts=attempt)
                 operation = tool.run(**validated)
                 if accounting is not None:
                     result = await accounting.wait_within_wall(operation)

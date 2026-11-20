@@ -680,6 +680,10 @@ class SSEManager:
                 # Run in sandbox picked before the first message of a new chat.
                 if session is not None and not requested_sid and action.get('run_in_sandbox') is not None:
                     session.run_in_sandbox = bool(action['run_in_sandbox'])
+                # A paired PC picked before the first message (checked against
+                # the owner on every turn, cognitrix/computer/paired/turn.py).
+                if session is not None and not requested_sid and action.get('computer'):
+                    session.computer = str(action['computer'])
             except Exception:
                 logger.exception('Failed to resolve chat session')
                 await emit({

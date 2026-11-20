@@ -28,6 +28,8 @@ import { PasswordChange } from '@/components/settings/PasswordChange';
 import { SpokenRepliesSettings } from '@/components/settings/SpokenReplies';
 import { PeopleSettings } from '@/components/settings/People';
 import { AuditLog } from '@/components/settings/AuditLog';
+import { ComputersSettings } from '@/components/settings/Computers';
+import { ThisPcLink } from '@/components/settings/ThisPcLink';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -36,7 +38,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'assistant' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'email' | 'people' | 'audit' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'assistant' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'computers' | 'chat-apps' | 'email' | 'people' | 'audit' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -60,6 +62,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'voice', get label() { return tr('ui.settings.voice'); }, group: 'AI', keywords: 'input mic microphone speech transcription dictation spoken replies read aloud listen text to speech tts' },
   { id: 'apps', get label() { return tr('ui.settings.connectedApps'); }, group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
   { id: 'access', get label() { return tr('ui.settings.agentAccess'); }, group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
+  { id: 'computers', get label() { return tr('ui.settings.computers'); }, group: 'AGENTS', keywords: 'pc pair pairing my computer laptop desktop device link connect sandbox remote machine' },
   { id: 'swarms', get label() { return tr('ui.settings.swarms'); }, group: 'AGENTS', keywords: 'swarm workers parallel sub agents subagents fan out limit budget tokens concurrency how many at once' },
   { id: 'chat-apps', get label() { return tr('ui.settings.chatApps'); }, group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp sms text message twilio phone bot alerts approvals mention channel' },
   { id: 'email', get label() { return tr('ui.settings.agentEmail'); }, group: 'AGENTS', keywords: 'email mail address inbox imap smtp gmail mailbox reply send' },
@@ -470,6 +473,20 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
         </>
       );
     case 'access': return <AccessSection desktopApp={desktopApp} />;
+    case 'computers':
+      return (
+        <>
+          <SectionHeader title={tr('ui.settings.computers')} description={tr('ui.settings.computersAgentsCanWorkOn')} />
+          <ComputersSettings />
+          {desktopApp && (
+            <>
+              <SubHeading className="mt-7">{tr('ui.settings.thisPc')}</SubHeading>
+              <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.linkThisPcToA')}</p>
+              <ThisPcLink />
+            </>
+          )}
+        </>
+      );
     case 'chat-apps':
       return (
         <>

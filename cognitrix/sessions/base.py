@@ -173,7 +173,11 @@ def _with_folder_block(prompt, folders, sandbox: tuple | None = None) -> Any:
     files are in the sandbox and the folders can be copied in."""
     if not isinstance(prompt, list) or (not folders and sandbox is None):
         return prompt
-    if sandbox is not None:
+    if isinstance(sandbox, dict) and sandbox.get('device'):
+        # A paired PC: its own shared folders, not the chat's.
+        from cognitrix.computer.paired.turn import device_prompt
+        block = device_prompt(sandbox['device'])
+    elif sandbox is not None:
         from cognitrix.common.sandbox_work import sandbox_prompt
         block = sandbox_prompt(folders, *sandbox)
     else:
@@ -234,6 +238,10 @@ class Session(Model):
     run_in_sandbox: bool | None = None
     """Run in sandbox: this chat's shell, files and tests work in the person's
     sandboxed computer. None follows the agent's own setting."""
+
+    computer: str | None = None
+    """A paired PC's id (cognitrix/computer/paired): this chat's shell and
+    file tools run on the person's own PC. None: the usual computer."""
 
     user_id: str | None = None
     """Durable owner of an ordinary web/API chat (None for local/internal sessions)"""
@@ -869,9 +877,39 @@ class Session(Model):
         # Run in sandbox: the shell and file tools work in the sandboxed
         # computer, so the turn gets them (and the sandbox-only tools) even
         # when the agent doesn't have them; nothing there reaches this machine.
-        turn_sandbox = self._turn_sandbox(agent, interface, tool_context)
-        sandbox_for_prompt = (
+        # A paired PC picked for this chat (the computer chip): the shell and
+        # file tools run there instead, so the sandbox sits this turn out.
+        turn_device = None
+        if self.computer and interface in ('web', 'ws', 'task') and not getattr(tool_context, 'restricted', False) \
+                and not getattr(tool_context, 'sandbox', False):
+            try:
+                from cognitrix.computer.paired.turn import chat_device
+                turn_device = await chat_device(self, getattr(tool_context, 'user_id', None) or self.user_id)
+            except Exception:
+                logger.debug('Could not load the paired PC', exc_info=True)
+        elif getattr(tool_context, 'device_read_only', False) and getattr(tool_context, 'device', None):
+            # A helper agent of a chat on a paired PC: it looks at that PC.
+            try:
+                from cognitrix.computer.paired.turn import device_view
+                turn_device = await device_view(getattr(tool_context, 'user_id', None) or self.user_id,
+                                                tool_context.device, read_only=True)
+            except Exception:
+                logger.debug('Could not load the paired PC', exc_info=True)
+        turn_sandbox = False if turn_device else self._turn_sandbox(agent, interface, tool_context)
+        sandbox_for_prompt: Any = (
             (agent.id, getattr(tool_context, 'user_id', None) or self.user_id) if turn_sandbox else None)
+        if turn_device:
+            sandbox_for_prompt = {'device': turn_device}
+            try:
+                from cognitrix.computer.paired.turn import tools_for
+                from cognitrix.tools.base import ToolManager
+                have = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+                extra = [t for t in (ToolManager.get_by_name(n) for n in tools_for(turn_device))
+                         if t is not None and t.name.lower() not in have]
+                if extra:
+                    agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})
+            except Exception:
+                logger.debug('PC tools unavailable', exc_info=True)
         if turn_sandbox:
             try:
                 from cognitrix.tools.base import ToolManager
@@ -1228,6 +1266,9 @@ class Session(Model):
                             if turn_sandbox and not bound_context.sandbox:
                                 import dataclasses as _dc
                                 bound_context = _dc.replace(bound_context, sandbox=True)
+                            if turn_device and not bound_context.device:
+                                import dataclasses as _dc
+                                bound_context = _dc.replace(bound_context, device=turn_device['id'])
                             from cognitrix.common.folders import reset_grant_sink, set_grant_sink
                             grant_token = set_grant_sink(
                                 self._folder_grant_sink(turn_folders)

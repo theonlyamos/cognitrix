@@ -108,6 +108,13 @@ async def lifespan(app: FastAPI):
             import logging
             logging.getLogger('cognitrix.log').exception('Could not update default assistant prompts')
         try:
+            # The desktop app reconnects a PC linked to a web account.
+            from .routes.computer_devices import start_saved_link
+            await start_saved_link()
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Could not reconnect this PC to its web account')
+        try:
             from ..channels.service import start_channels
             await start_channels()
         except Exception:
@@ -122,6 +129,11 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         cleanup_errors = []
+        try:
+            from ..computer.paired.connector import get_connector
+            await get_connector().stop()
+        except BaseException as exc:
+            cleanup_errors.append(exc)
         try:
             from ..channels.service import stop_channels
             await stop_channels()

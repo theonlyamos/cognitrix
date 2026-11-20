@@ -48,6 +48,7 @@ const fr: Messages = {
   'settings.section.voice': 'Voix',
   'settings.section.apps': 'Applications connectées',
   'settings.section.access': 'Accès des agents',
+  'settings.section.computers': 'Ordinateurs',
   'settings.section.chat-apps': 'Applications de messagerie',
   'settings.section.email': 'E-mail des agents',
   'settings.section.people': 'Personnes',
