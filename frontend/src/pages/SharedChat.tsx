@@ -7,6 +7,7 @@ import MarkdownMessage from '@/components/MarkdownMessage';
 import { AgentBadge } from '@/components/StartChat';
 import { ROLE_LABEL, type SharedChat as SharedChatData } from '@/lib/sharedChats';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 interface LiveEvent { type: string; content?: string; name?: string }
 
@@ -38,7 +39,7 @@ export default function SharedChat() {
       }
     } catch (e) {
       setChat(null);
-      setError(errorMessage(e, 'This chat isn’t shared with you any more, or it was deleted.'));
+      setError(errorMessage(e, tr('ui.sharedChat.thisChatIsnTShared')));
     }
   }, [path]);
 
@@ -53,16 +54,16 @@ export default function SharedChat() {
       setLive((cur) => (cur ?? '') + event.content);
       setActivity('');
     } else if (event.type === 'tool') {
-      setActivity(event.name ? `Using ${event.name}…` : 'Working…');
+      setActivity(event.name ? tr('ui.sharedChat.usingName', { name: event.name }) : tr('ui.sharedChat.working'));
     } else if (event.type === 'waiting') {
-      setActivity(`Waiting for ${chat?.owner.name ?? 'the owner'} to approve a step…`);
+      setActivity(tr('ui.sharedChat.waitingForNameToApprove', { name: chat?.owner.name ?? tr('ui.sharedChat.theOwner') }));
     } else if (event.type === 'changed') {
       setLive(null);
       setActivity('');
       void load();
     } else if (event.type === 'gone') {
       setChat(null);
-      setError('This chat isn’t shared with you any more, or it was deleted.');
+      setError(tr('ui.sharedChat.thisChatIsnTShared'));
     }
   }, [load, chat?.owner.name]);
 
@@ -89,7 +90,7 @@ export default function SharedChat() {
       setLive('');
       void load();
     } catch (e) {
-      setSendError(errorMessage(e, 'Could not send that.'));
+      setSendError(errorMessage(e, tr('ui.sharedChat.couldNotSendThat')));
     } finally {
       setSending(false);
     }
@@ -98,14 +99,14 @@ export default function SharedChat() {
   if (error) {
     return (
       <div role="alert" className="mx-auto flex h-full max-w-sm flex-col items-center justify-center px-6 text-center">
-        <h1 className="text-lg font-semibold">This chat isn’t available</h1>
+        <h1 className="text-lg font-semibold">{tr('ui.sharedChat.thisChatIsnTAvailable')}</h1>
         <p className="mt-2 text-sm text-fg-dim">{error}</p>
-        <Link to="/home" className="mt-4 text-[13px] text-accent-ink hover:underline">Back to chats</Link>
+        <Link to="/home" className="mt-4 text-[13px] text-accent-ink hover:underline">{tr('ui.sharedChat.backToChats')}</Link>
       </div>
     );
   }
   if (!chat) {
-    return <div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-fg-dim">loading…</div>;
+    return <div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-fg-dim">{tr('ui.sharedChat.loading')}</div>;
   }
 
   const busy = chat.running || live !== null;
@@ -114,13 +115,13 @@ export default function SharedChat() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg text-fg">
       <header className="flex flex-none items-center gap-2.5 border-b border-line px-3 py-2.5 md:px-5">
-        <Link to="/home" aria-label="Back to chats" className="grid h-9 w-9 flex-none place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg md:hidden"><ArrowLeft size={16} /></Link>
+        <Link to="/home" aria-label={tr('ui.sharedChat.backToChats')} className="grid h-9 w-9 flex-none place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg md:hidden"><ArrowLeft size={16} /></Link>
         <AgentBadge name={chat.agent.name} avatar={chat.agent.avatar} />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[15px] font-semibold">{chat.title}</h1>
           <p className="truncate text-[12px] text-fg-dim">
-            {chat.owner.name}’s chat with {chat.agent.name}
-            {chat.role !== 'owner' && ` · you ${chat.role === 'chat' ? 'can write' : 'can read'}`}
+            {tr('ui.sharedChat.ownerChatWithAgent', { owner: chat.owner.name, agent: chat.agent.name })}
+            {chat.role !== 'owner' && (chat.role === 'chat' ? tr('ui.sharedChat.youCanWrite') : tr('ui.sharedChat.youCanRead'))}
           </p>
         </div>
         {chat.people.length > 0 && (
@@ -133,10 +134,10 @@ export default function SharedChat() {
 
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-6" aria-live="polite">
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
-          {chat.messages.length === 0 && <p className="text-center text-[13px] text-fg-dim">Nothing here yet.</p>}
+          {chat.messages.length === 0 && <p className="text-center text-[13px] text-fg-dim">{tr('ui.sharedChat.nothingHereYet')}</p>}
           {chat.messages.map((m, i) => (
             m.role === 'activity' ? (
-              <p key={i} className="font-mono text-[11.5px] text-fg-dim">used {m.content}</p>
+              <p key={i} className="font-mono text-[11.5px] text-fg-dim">{tr('ui.sharedChat.usedContent', { content: m.content })}</p>
             ) : m.role === 'user' ? (
               <div key={i} className="flex flex-col items-end gap-1">
                 <span className="font-mono text-[11px] text-fg-dim">{m.author}</span>
@@ -158,7 +159,7 @@ export default function SharedChat() {
                 <div className="min-w-0 text-[14px] leading-relaxed"><MarkdownMessage content={stripThinking(live)} /></div>
               ) : null}
               <span role="status" className="inline-flex items-center gap-2 text-[12.5px] text-fg-dim">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" /> {activity || 'Answering…'}
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" /> {activity || tr('ui.sharedChat.answering')}
               </span>
             </div>
           )}
@@ -168,24 +169,24 @@ export default function SharedChat() {
       {canWrite ? (
         <form className="flex-none border-t border-line px-3 py-3 md:px-6" onSubmit={(e) => { e.preventDefault(); void send(); }}>
           <div className="mx-auto flex max-w-3xl items-end gap-2">
-            <label htmlFor="shared-chat-box" className="sr-only">Message</label>
+            <label htmlFor="shared-chat-box" className="sr-only">{tr('ui.sharedChat.message')}</label>
             <textarea id="shared-chat-box" value={draft} rows={1} maxLength={20000}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }}
-              placeholder={busy ? 'Wait for the reply…' : `Ask ${chat.agent.name}…`}
+              placeholder={busy ? tr('ui.sharedChat.waitForTheReply') : tr('ui.sharedChat.askName', { name: chat.agent.name })}
               className="max-h-40 min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-line bg-panel px-3 py-2.5 text-[14px] text-fg placeholder:text-fg-dim focus:border-accent focus:outline-none" />
             <button type="submit" disabled={!draft.trim() || sending || busy}
               className="inline-flex min-h-11 flex-none items-center rounded-xl bg-accent px-4 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-50">
-              Send
+              {tr('ui.sharedChat.send')}
             </button>
           </div>
           <p className="mx-auto mt-1.5 max-w-3xl text-[11.5px] text-fg-dim">
             {sendError ? <span role="alert" className="text-danger-ink">{sendError}</span>
-              : `${chat.agent.name} answers you read-only: it can look things up but won’t change anything.`}
+              : tr('ui.sharedChat.nameAnswersYouReadOnly', { name: chat.agent.name })}
           </p>
         </form>
       ) : chat.role === 'view' ? (
-        <p className="flex-none border-t border-line px-4 py-3 text-center text-[12.5px] text-fg-dim">You can read this chat. Ask {chat.owner.name} for write access to ask the agent here.</p>
+        <p className="flex-none border-t border-line px-4 py-3 text-center text-[12.5px] text-fg-dim">{tr('ui.sharedChat.youCanReadThisChat', { name: chat.owner.name })}</p>
       ) : null}
     </div>
   );

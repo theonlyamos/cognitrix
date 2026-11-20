@@ -1309,13 +1309,13 @@ export default function Home() {
   notifyReplyRef.current = () => {
     if (!notifications || typeof document === 'undefined') return;
     if (!document.hidden && document.hasFocus()) return;
-    const name = agentById.get(agentId)?.name ?? 'The agent';
+    const name = agentById.get(agentId)?.name ?? tr('ui.home.theAgent');
     const last = messages[messages.length - 1];
     const text = last?.role === 'assistant' && typeof last.content === 'string' ? last.content.replace(/\s+/g, ' ').trim() : '';
     notifications.push({
       event: 'chat_reply',
       title: tr('ui.home.nameReplied', { name }),
-      body: text ? (text.length > 140 ? `${text.slice(0, 139)}…` : text) : 'Open the chat to read the reply.',
+      body: text ? (text.length > 140 ? `${text.slice(0, 139)}…` : text) : tr('ui.home.openChatToReadReply'),
       href: '/home',
     });
   };

@@ -1,3 +1,4 @@
+import { tr } from '@/lib/i18n';
 /** Chats shared between people on the same server (backend: sessions/sharing.py). */
 
 export type ShareRole = 'view' | 'chat';
@@ -35,7 +36,10 @@ export interface SharedChat {
   run_id: string | null;
 }
 
-export const ROLE_LABEL: Record<ShareRole, string> = { view: 'Can read', chat: 'Can write' };
+export const ROLE_LABEL: Record<ShareRole, string> = {
+  get view() { return tr('ui.sharedChats.canRead'); },
+  get chat() { return tr('ui.sharedChats.canWrite'); },
+};
 
 // Mirrors sharing._PREFIX_RE: a message someone the chat is shared with wrote.
 const GUEST_PREFIX = /^\[Message from (.{1,80}?) in this shared chat\. [^\]\n]*\]\n\n/s;
