@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   LayoutDashboard as DashboardIcon, Inbox as InboxIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon,
-  Users as UsersIcon, BookOpen as BookOpenIcon, AppWindow as AppWindowIcon, Mic as MicIcon, CreditCard as CardIcon,
+  Users as UsersIcon, BookOpen as BookOpenIcon, AppWindow as AppWindowIcon, Mic as MicIcon, CreditCard as CardIcon, FolderKanban as ProjectsIcon,
   Plus as PlusIcon, Search as SearchIcon, Ellipsis as MoreIcon, PanelLeft as PanelLeftIcon, type LucideIcon,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -22,6 +22,7 @@ const NAV: NavItem[] = [
   { path: '/dashboard', label: 'nav.dashboard', icon: DashboardIcon },
   { path: '/inbox', label: 'nav.inbox', icon: InboxIcon },
   { path: '/agents', label: 'nav.agents', icon: BotIcon },
+  { path: '/projects', label: 'nav.projects', icon: ProjectsIcon },
   { path: '/apps', label: 'nav.apps', icon: AppWindowIcon },
   { path: '/tasks', label: 'nav.tasks', icon: ListChecksIcon },
 ];

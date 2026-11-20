@@ -877,7 +877,8 @@ class Session(Model):
         # Search Knowledge is offered only to agents that were given at least
         # one document collection (their own, or their project's).
         try:
-            from cognitrix.projects.context import get as _turn_project, knowledge_for
+            from cognitrix.projects.context import get as _turn_project
+            from cognitrix.projects.context import knowledge_for
             if _turn_project() is not None:
                 merged = knowledge_for(agent)
                 if merged != list(getattr(agent, 'knowledge', None) or []):
@@ -1799,7 +1800,14 @@ class Session(Model):
         if switched is not None:
             # Switch Computer For Code in the last turn: the chat keeps it.
             self.run_in_sandbox = switched
-        on, chosen = sandbox_choice(self.run_in_sandbox, agent)
+        choice = self.run_in_sandbox
+        if choice is None:
+            # A project set to the shared sandbox: its chats and tasks code there.
+            from cognitrix.projects.context import get as _turn_project
+            project = _turn_project()
+            if project is not None and project.shared_sandbox:
+                choice = True
+        on, chosen = sandbox_choice(choice, agent)
         # The default (nobody chose) only moves the tools the agent already
         # has; it never hands an agent a shell it wasn't given.
         return on and (chosen or bool(_code_tool_names(agent)))

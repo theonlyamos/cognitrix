@@ -53,7 +53,7 @@ _web_request_counter = 0
 
 def resolve_web_approval(request_id: str, approved: bool, user_key: str | None = None,
                          remember: bool = False, remember_shell: bool = False,
-                         remember_app: str | None = None) -> bool:
+                         remember_app: str | None = None, always: bool = False) -> bool:
     """Resolve a pending browser approval. Returns False if unknown or not the owner.
 
     `remember_app` (only for a background action in an app window) is 'chat'
@@ -62,6 +62,9 @@ def resolve_web_approval(request_id: str, approved: bool, user_key: str | None =
 
     `remember_shell` (only for a full-shell command) lets every full-shell
     command in that chat run without asking again until the app restarts.
+
+    `always` saves the card's "Always allow" offer (``entry['always']``): the
+    tool for that agent, or the command's prefix on that computer.
 
     `user_key` scopes the answer to the user who owns the turn — a different
     authenticated user cannot approve someone else's pending tool call.
@@ -79,6 +82,7 @@ def resolve_web_approval(request_id: str, approved: bool, user_key: str | None =
             remember_shell=bool(approved and remember_shell and entry.get('person_only')),
             remember_app=(remember_app if approved and entry.get('app')
                           and remember_app in ('chat', 'always') else None),
+            always=bool(approved and always and entry.get('always')),
         ))
     return True
 
@@ -122,6 +126,7 @@ class ApprovalResult:
     permanent: bool = False  # Remember permanently
     remember_shell: bool = False  # Allow every full-shell command in this chat
     remember_app: str | None = None  # 'chat' or 'always': stop asking about this app
+    always: bool = False  # "Always allow": save the tool or command prefix as allowed
     cached: bool = False  # Result was from cache
     auto: bool = False  # Auto-approved (low risk)
     error: str | None = None
@@ -142,7 +147,7 @@ class ApprovalRequest:
 class ApprovalGate:
     """
     Manages human approval for risky operations.
-    
+
     Supports multiple interfaces (CLI, WebSocket) and
     caches approvals to avoid repeated prompts.
     """
@@ -274,6 +279,14 @@ class ApprovalGate:
         if person_only and shell_key and shell_key in self.session_cache:
             return ApprovalResult(approved=True, cached=True, remember=True)
 
+        # "Always allow" answers: this tool for this agent (until the agent is
+        # reloaded with it set to allow), or a saved command prefix.
+        tool_key = self._tool_allow_key(scope, tool_call)
+        if not person_only and not always_ask and tool_key in self.session_cache:
+            return ApprovalResult(approved=True, cached=True, remember=True)
+        if person_only and not always_ask and await self._command_allowed(tool_call, interface):
+            return ApprovalResult(approved=True, cached=True)
+
         # Web bypass mode approves everything anyway; don't spend a review.
         # A call a person already refused goes back to the person.
         web_ctx = web_turn_ctx.get(None)
@@ -297,7 +310,8 @@ class ApprovalGate:
         if interface == 'cli':
             result = await self._cli_approval(tool_call, risk, timeout)
         elif interface in ('web', 'ws', 'websocket'):
-            result = await self._web_approval(tool_call, risk, timeout, person_only=person_only, must_ask=always_ask)
+            result = await self._web_approval(tool_call, risk, timeout, person_only=person_only, must_ask=always_ask,
+                                              scope=scope)
         elif interface == 'acp':
             approver = acp_approver.get(None)
             if approver is None:
@@ -315,6 +329,11 @@ class ApprovalGate:
         if not result.approved and not result.error:
             # The person said no; the reviewer must not approve it later.
             self.session_denied.add(scoped)
+
+        if result.approved and getattr(result, 'always', False) and not always_ask:
+            await self._save_always(tool_call, scope, interface, person_only)
+            if not person_only:
+                self.session_cache.add(tool_key)
 
         # Cache if approved (scoped). The full shell is only ever remembered
         # for the session, never permanently.
@@ -371,6 +390,77 @@ class ApprovalGate:
             await computer_apps.set_level(owner, app, 'allow')
         except Exception:
             logger.exception("Could not save 'always allow' for %s", app)
+
+    @staticmethod
+    def _tool_allow_key(scope: str | None, tool_call: ToolCall) -> str:
+        return f"tool_allow:{scope or 'global'}:{_normal_name(tool_call.tool_name)}"
+
+    @staticmethod
+    def _command(tool_call: ToolCall) -> str | None:
+        if _normal_name(tool_call.tool_name) != 'bash':
+            return None
+        command = (tool_call.params or {}).get('command')
+        return command if isinstance(command, str) and command.strip() else None
+
+    @staticmethod
+    def _computer() -> str:
+        from cognitrix.safety.command_rules import computer_key
+        try:
+            from cognitrix.tools.utils import current_execution_context
+            return computer_key(getattr(current_execution_context(), 'device', None))
+        except Exception:
+            return computer_key(None)
+
+    async def _command_allowed(self, tool_call: ToolCall, interface: str) -> bool:
+        command = self._command(tool_call)
+        owner = self._app_owner(interface)
+        if not command or not owner or owner == 'local':
+            return False
+        from cognitrix.safety import command_rules
+        return await command_rules.allowed(owner, self._computer(), command)
+
+    def _always_offer(self, tool_call: ToolCall, scope: str | None, person_only: bool,
+                      must_ask: bool) -> dict | None:
+        """What the card's "Always allow" button saves, or None for no button."""
+        if must_ask or tool_call.app:
+            return None  # an app has its own "always allow <app>"
+        if person_only:
+            from cognitrix.safety.command_rules import prefix_for
+            command = self._command(tool_call)
+            prefix = prefix_for(command) if command else None
+            if not prefix:
+                return None
+            computer = self._computer()
+            return {'kind': 'command', 'label': prefix, 'computer': computer}
+        if not scope or ':' in str(tool_call.tool_name) or _normal_name(tool_call.tool_name) in _NEVER_AUTO_APPROVED:
+            return None
+        return {'kind': 'tool', 'label': str(tool_call.tool_name)}
+
+    async def _save_always(self, tool_call: ToolCall, scope: str | None, interface: str,
+                           person_only: bool) -> None:
+        owner = self._app_owner(interface)
+        if not owner or owner == 'local':
+            return
+        try:
+            if person_only:
+                from cognitrix.safety import command_rules
+                command = self._command(tool_call)
+                if command:
+                    await command_rules.add(owner, self._computer(), command)
+                return
+            if not scope:
+                return
+            from cognitrix.models.agent import Agent
+            agent = await Agent.get(str(scope))
+            # Only the agent's owner changes its settings; on someone else's
+            # agent the answer holds for this chat.
+            if agent is None or str(getattr(agent, 'owner_id', '') or '') != str(owner):
+                return
+            perms = dict(getattr(agent, 'tool_permissions', None) or {})
+            perms[str(tool_call.tool_name)] = 'allow'
+            await Agent.update_one({'id': agent.id}, {'tool_permissions': perms})
+        except Exception:
+            logger.exception("Could not save 'always allow' for %s", tool_call.tool_name)
 
     @staticmethod
     def _shell_key(scope: str | None, interface: str) -> str | None:
@@ -482,6 +572,7 @@ class ApprovalGate:
         timeout: float,
         person_only: bool = False,
         must_ask: bool = False,
+        scope: str | None = None,
     ) -> ApprovalResult:
         """Interactive approval over the SSE chat stream.
 
@@ -517,9 +608,10 @@ class ApprovalGate:
         request_id = f"web-approval-{uuid.uuid4().hex}"
         future = asyncio.get_running_loop().create_future()
         session_id = str(ctx.get('session_id') or '')
+        always = self._always_offer(tool_call, scope, person_only, must_ask)
         _WEB_PENDING[request_id] = {
             'future': future, 'user_key': ctx.get('user_key'), 'person_only': person_only,
-            'app': tool_call.app,
+            'app': tool_call.app, 'always': always,
             # What the Inbox, notifications and chat apps show about it.
             'tool_name': tool_call.tool_name,
             'params': tool_call.params,
@@ -555,6 +647,9 @@ class ApprovalGate:
                 # A background action in an app window: the card offers
                 # "allow <app> in this chat" and "always allow <app>".
                 **({'app': {'key': tool_call.app, 'label': _app_label(tool_call.app)}} if tool_call.app else {}),
+                # "Always allow": this tool for this agent, or commands that
+                # start like this one on this computer.
+                **({'always': always} if always else {}),
             })
             return await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError:

@@ -203,7 +203,7 @@ async def delete(row: Project, *, delete_chats: bool = False) -> int:
         if str(session.user_id or '') != str(row.user_id):
             continue
         if delete_chats:
-            await Session.delete_one({'id': session.id})
+            await Session.delete_many({'id': session.id})
         else:
             await Session.update_one({'id': session.id}, {'project_id': None})
     try:
@@ -217,7 +217,7 @@ async def delete(row: Project, *, delete_chats: bool = False) -> int:
         await Memory.delete_many({'user_id': str(row.user_id), 'project_id': str(row.id)})
     except Exception:
         logger.debug('Could not remove project memories', exc_info=True)
-    await Project.delete_one({'id': row.id})
+    await Project.delete_many({'id': row.id})
     return len(sessions)
 
 

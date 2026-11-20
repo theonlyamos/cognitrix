@@ -776,6 +776,8 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                    if data.get('run_in_sandbox') is not None and not data.get('session_id') else {}),
                 **({'computer': str(data.get('computer'))[:64]}
                    if data.get('computer') and not data.get('session_id') else {}),
+                **({'project_id': str(data.get('project_id'))[:64]}
+                   if data.get('project_id') and not data.get('session_id') else {}),
             })
         except BaseException:
             try:
@@ -849,10 +851,26 @@ async def approval_endpoint(request: Request, user=Depends(get_current_user)):
         remember=bool(data.get("remember")),
         remember_shell=bool(data.get("remember_shell")),
         remember_app=data.get("remember_app") if data.get("remember_app") in ("chat", "always") else None,
+        always=bool(data.get("always")),
     )
     if not ok:
         raise HTTPException(status_code=404, detail="Approval request not found or already resolved.")
     return {"status": "resolved"}
+
+
+@agents_api.get("/approval/rules", dependencies=[Depends(jwt_only)])
+async def approval_rules(user=Depends(get_current_user)):
+    """Commands the person chose "Always allow" for, per computer."""
+    from cognitrix.safety import command_rules
+    return {"rules": [command_rules.view(r) for r in await command_rules.rules_of(_user_key(user))]}
+
+
+@agents_api.delete("/approval/rules/{rule_id}", dependencies=[Depends(jwt_only)])
+async def delete_approval_rule(rule_id: str, user=Depends(get_current_user)):
+    from cognitrix.safety import command_rules
+    if not await command_rules.remove(_user_key(user), rule_id):
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"deleted": True}
 
 
 @agents_api.post("/approval/seen", dependencies=[Depends(jwt_only)])

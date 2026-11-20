@@ -54,6 +54,7 @@ import { tr, dateLocale } from '@/lib/i18n';
 import ComputerChip from '@/components/ComputerChip';
 import { PcScreenPanel } from '@/components/PcScreen';
 import { getChatComputer, listDevices, setChatComputer, type PairedDevice } from '@/lib/devices';
+import { getProject, listProjects, projectSwatch, type Project } from '@/lib/projects';
 
 
 interface ConvoSummary {
@@ -95,6 +96,7 @@ interface ChatSummary extends ConvoSummary {
   agent_id: string | null;
   team_id: string | null;
   running?: boolean;
+  project_id?: string | null;
 }
 
 const sessionKey = (agentId: string) => `chatSession:${agentId}`;
@@ -151,6 +153,8 @@ interface ApprovalRequest {
   app?: { key: string; label: string };
   /** Takes over the screen: asked every time, so nothing to remember. */
   always_ask?: boolean;
+  /** "Always allow": the tool for this agent, or commands starting like this one on this computer. */
+  always?: { kind: 'tool' | 'command'; label: string; computer?: string };
 }
 
 export default function Home() {
@@ -301,10 +305,10 @@ export default function Home() {
 
   useApprovalSeen(approvals);
 
-  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always') => {
+  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always', always = false) => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));
     try {
-      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}), ...(rememberApp ? { remember_app: rememberApp } : {}) });
+      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}), ...(rememberApp ? { remember_app: rememberApp } : {}), ...(always ? { always: true } : {}) });
     } catch {
       /* best-effort — the turn times out server-side if this never lands */
     }
@@ -837,6 +841,35 @@ export default function Home() {
     const timer = setInterval(refreshPcs, 20000);
     return () => clearInterval(timer);
   }, [chatPc, refreshPcs]);
+  // ── Project ──
+  // /home?project=<id> starts a new chat in that project: it takes the
+  // project's folders and computer, and the chat box shows the project.
+  const [projectsList, setProjectsList] = useState<Project[]>([]);
+  useEffect(() => { listProjects().then(setProjectsList).catch(() => {}); }, []);
+  const [draftProject, setDraftProject] = useState<string | null>(null);
+  const draftProjectRef = useRef<string | null>(null);
+  draftProjectRef.current = draftProject;
+  const [adoptedProject, setAdoptedProject] = useState<{ sid: string; pid: string } | null>(null);
+  useEffect(() => {
+    if (!activeSessionId || !draftProjectRef.current) return;
+    // A new chat adopting its id keeps the project; opening another chat drops the draft.
+    if (busyRef.current) setAdoptedProject({ sid: activeSessionId, pid: draftProjectRef.current });
+    setDraftProject(null);
+  }, [activeSessionId]);
+  useEffect(() => {
+    if (activeSessionId || !draftProject) return;
+    const p = projectsList.find((x) => x.id === draftProject);
+    if (!p) return;
+    if (p.folders?.length) setDraftFolders(p.folders);
+    if (p.computer === 'sandbox') { setDraftSandbox(true); setDraftComputer(null); }
+    else if (p.computer) setDraftComputer(p.computer);
+  }, [draftProject, projectsList, agentId, activeSessionId]);
+  const chatProjectId = activeSessionId
+    ? (allChatsData?.find((c) => c.id === activeSessionId)?.project_id
+      ?? (adoptedProject?.sid === activeSessionId ? adoptedProject.pid : null))
+    : draftProject;
+  const chatProject = chatProjectId ? projectsList.find((p) => p.id === chatProjectId) ?? null : null;
+
   const changeComputer = useCallback(async (id: string | null) => {
     const sid = activeRef.current;
     if (sid) {
@@ -1510,6 +1543,7 @@ export default function Home() {
           ...(!activeRef.current && incognitoRef.current ? { incognito: true } : {}),
           ...(!activeRef.current && draftSandboxRef.current !== null ? { run_in_sandbox: draftSandboxRef.current } : {}),
           ...(!activeRef.current && draftComputerRef.current ? { computer: draftComputerRef.current } : {}),
+          ...(!activeRef.current && draftProjectRef.current ? { project_id: draftProjectRef.current } : {}),
         };
         if (pending.length) {
           const form = new FormData();
@@ -1785,6 +1819,22 @@ export default function Home() {
     // startChatWith and newConversation change every render; this runs once per link.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedNew, agents.length, agentsLoading]);
+
+  // /home?project=<id> (a project's New chat): after ?new= is handled.
+  const linkedProject = searchParams.get('project');
+  useEffect(() => {
+    if (!linkedProject || linkedNew) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('project');
+      return next;
+    }, { replace: true });
+    getProject(linkedProject).then((p) => {
+      setProjectsList((prev) => [...prev.filter((x) => x.id !== p.id), p]);
+      setDraftProject(p.id);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedProject, linkedNew]);
 
   // Tell the app sidebar which chat is open and which are running.
   const runningList = useMemo(() => (runningKey ? runningKey.split(',') : []), [runningKey]);
@@ -2138,6 +2188,16 @@ export default function Home() {
                 <AgentPickerChip agents={agents} teams={teams} currentAgentId={agentId} onPick={startChatWith} />
               </div>
             )}
+            {chatProject && (
+              <span className="inline-flex h-9 min-w-0 max-w-[180px] flex-none items-center gap-1.5 rounded-lg border border-line px-2 text-[12px] text-fg-dim md:h-7"
+                title={tr('ui.projects.inProject', { name: chatProject.name })}>
+                <span className="h-2 w-2 flex-none rounded-full" style={{ background: projectSwatch(chatProject) }} />
+                <button type="button" onClick={() => navigate(`/projects/${chatProject.id}`)} className="min-w-0 truncate hover:text-fg">{chatProject.name}</button>
+                {!activeSessionId && (
+                  <button type="button" aria-label={tr('ui.projects.notInProject')} onClick={() => setDraftProject(null)} className="flex-none hover:text-fg">✕</button>
+                )}
+              </span>
+            )}
             <ChatModelPicker agentLlm={currentAgent?.llm} value={chatModel} onChange={changeChatModel} />
             {(pcs.length > 0 || chatPc) && (
               <ComputerChip
@@ -2422,6 +2482,12 @@ export default function Home() {
                         <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={tr('ui.home.letAgentsClickAndType', { label: a.app.label })}>{tr('ui.home.allowLabelInThisChat', { label: a.app.label })}</PanelButton>
                         <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={tr('ui.home.neverAskAgainBeforeAgents', { label: a.app.label })}>{tr('ui.home.alwaysAllowLabel', { label: a.app.label })}</PanelButton>
                       </>
+                    )}
+                    {a.always && (
+                      <PanelButton onClick={() => respondApproval(a.request_id, true, true, false, undefined, true)}
+                        title={a.always.kind === 'command' ? tr('ui.approvals.alwaysCommandHint', { label: a.always.label }) : tr('ui.approvals.alwaysToolHint')}>
+                        {a.always.kind === 'command' ? tr('ui.approvals.alwaysAllowCommand', { label: a.always.label }) : tr('ui.approvals.alwaysAllow')}
+                      </PanelButton>
                     )}
                     <span className="grow" />
                     <PanelButton kind="danger" onClick={() => respondApproval(a.request_id, false)}>{tr('ui.home.deny')}</PanelButton>

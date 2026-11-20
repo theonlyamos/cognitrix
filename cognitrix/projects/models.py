@@ -57,7 +57,7 @@ class Project(Model):
                 value = json.loads(value)
             except ValueError:
                 return []
-        return list(value) if isinstance(value, (list, tuple)) else []
+        return list(value) if isinstance(value, list | tuple) else []
 
     @field_validator('use_account_memory', mode='before')
     @classmethod

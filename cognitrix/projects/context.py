@@ -8,6 +8,7 @@ threaded through every call.
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
@@ -140,3 +141,22 @@ def narrow_pc_folders(folders: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _norm(path: str) -> str:
     return path.replace('\\', '/').rstrip('/').lower()
+
+
+@asynccontextmanager
+async def scope_for(session: Any, user_id: Any = None):
+    """Run code outside a turn (an API call about a chat) as if inside it:
+    with the chat's project set, so the shared sandbox resolves the same way."""
+    if get() is not None:
+        yield get()
+        return
+    try:
+        project = await for_session(session, user_id)
+    except Exception:
+        logger.debug('Could not load the chat project', exc_info=True)
+        project = None
+    token = set_project(project)
+    try:
+        yield project
+    finally:
+        reset(token)

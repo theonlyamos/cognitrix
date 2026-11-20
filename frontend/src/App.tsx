@@ -37,6 +37,8 @@ const OpenApp = lazy(() => import('@/pages/OpenApp'));
 const ArtifactPage = lazy(() => import('@/pages/ArtifactPage'));
 const PublicArtifact = lazy(() => import('@/pages/PublicArtifact'));
 const Knowledge = lazy(() => import('@/pages/Knowledge'));
+const Projects = lazy(() => import('@/pages/Projects'));
+const ProjectDetail = lazy(() => import('@/pages/ProjectDetail'));
 const Meetings = lazy(() => import('@/pages/Meetings'));
 const Payments = lazy(() => import('@/pages/Payments'));
 const Notifications = lazy(() => import('@/pages/Notifications'));
@@ -122,6 +124,9 @@ function AppRoutes() {
           <Route path="/artifacts" element={<Navigate to="/apps?tab=pages" replace />} />
           <Route path="/artifacts/:artifactId" element={<ArtifactPage />} />
           <Route path="/knowledge" element={<Knowledge />} />
+          <Route path="/projects" element={<Projects />} />
+          <Route path="/projects/:projectId" element={<ProjectDetail />} />
+          <Route path="/projects/:projectId/:tab" element={<ProjectDetail />} />
           <Route path="/meetings" element={<Meetings />} />
           <Route path="/payments" element={<Payments />} />
           <Route path="/notifications" element={<Notifications />} />
