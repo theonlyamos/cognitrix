@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from cognitrix.computer.paired import (
@@ -189,7 +190,7 @@ async def run_remote(tool: Any, params: dict[str, Any]) -> str | None:
             if str(exc) != 'offline' or not ctx.task_id:
                 raise
             # A task waits for the PC to come back, then tells the person.
-            if not await _wait_for(device_id, ctx, label):
+            if not await _wait_for(device_id, ctx, label, longest=MID_STEP_WAIT_S):
                 raise
             return await go()
     except DeviceUnavailable as exc:
@@ -210,15 +211,43 @@ def offline_wait_s() -> float:
         return OFFLINE_WAIT_S
 
 
-async def _wait_for(device_id: Any, ctx: Any, label: str) -> bool:
-    """A task run's PC is offline: wait up to 30 minutes for it to come back.
-    True when it did; otherwise tell the person and return False."""
+# A PC that drops in the middle of a task step is waited for this long at
+# most, so the wait ends well inside the step's own time limit. The long wait
+# (offline_wait_s) happens before a step starts: see wait_before_step.
+MID_STEP_WAIT_S = 300.0
+
+
+async def wait_before_step(device_id: Any, *, task_id: Any, user_id: Any) -> str | None:
+    """Before a task step on a PC: wait for the PC if it's offline, outside the
+    step's time limit. None when it's online; otherwise why the step can't run."""
+    from cognitrix.computer.paired.hub import status
+
+    live = await status(device_id)
+    if live and live.get('online'):
+        return None
+    label = _names.get(str(device_id)) or 'The PC'
+    try:
+        from cognitrix.computer.paired.store import device_of
+        device = await device_of(str(user_id), str(device_id)) if user_id else None
+        if device is not None:
+            label = device.name or label
+    except Exception:
+        logger.debug('Could not look up the PC', exc_info=True)
+    ctx = SimpleNamespace(task_id=task_id, user_id=user_id)
+    if await _wait_for(device_id, ctx, label):
+        return None
+    return _unavailable('offline', label)
+
+
+async def _wait_for(device_id: Any, ctx: Any, label: str, *, longest: float | None = None) -> bool:
+    """A task run's PC is offline: wait up to 30 minutes (or ``longest``) for it to
+    come back. True when it did; otherwise tell the person and return False."""
     from cognitrix.computer.paired.hub import status
 
     key = (str(ctx.task_id), str(device_id))
     if key in _gave_up:
         return False
-    wait = offline_wait_s()
+    wait = offline_wait_s() if longest is None else min(offline_wait_s(), longest)
     step = max(0.2, min(15.0, wait / 20))
     deadline = time.monotonic() + wait
     logger.info('Task %s is waiting for %s to come online', ctx.task_id, label)

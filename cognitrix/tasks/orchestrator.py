@@ -1124,6 +1124,14 @@ async def _execute_compiled_steps(
             )
             by_index[row.step_index] = row
 
+            pc = getattr(task, 'computer', None)
+            if pc:
+                # An offline PC is waited for here, outside the step's time limit.
+                from cognitrix.computer.paired.turn import wait_before_step
+                why = await wait_before_step(pc, task_id=task.id, user_id=getattr(task, 'owner_id', None))
+                if why:
+                    raise StepFailure(why.removeprefix('Error: '))
+
             executor = TaskStepExecutor(
                 snapshot,
                 tool_resolver=capabilities.resolver_for(snapshot.agent_id),

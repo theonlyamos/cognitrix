@@ -646,3 +646,44 @@ async def test_edits_on_the_pc_can_be_undone_from_the_chat(server, tmp_path, mon
             assert (await http.get('/api/v1/computer/devices/chats/s1/changes')).json()['changes'] == []
     finally:
         await connector.stop()
+
+
+async def test_an_older_database_gets_the_sent_tasks_column(tmp_path):
+    from odbms import DBMS
+
+    from cognitrix.config import _ensure_schema, _patch_odbms_sqlite
+
+    db_file = str(tmp_path / 'old.db')
+    if hasattr(DBMS, 'initialize_async'):
+        await DBMS.initialize_async('sqlite', database=db_file)
+    else:
+        DBMS.initialize('sqlite', database=db_file)
+    _patch_odbms_sqlite()
+    await DBMS.Database.query('CREATE TABLE paireddevices (id TEXT PRIMARY KEY, user_id TEXT, name TEXT)')
+    await _ensure_schema()
+    cursor = await DBMS.Database.query('PRAGMA table_info(paireddevices)')
+    rows = cursor.fetchall() if hasattr(cursor, 'fetchall') else cursor
+    assert 'sent_tasks' in {r[1] for r in rows}
+
+
+async def test_a_task_step_waits_for_its_pc_before_the_step_clock_starts(db, monkeypatch):
+    from cognitrix.computer.paired import turn
+
+    monkeypatch.setenv('COGNITRIX_PAIRED_TASK_WAIT_S', '0.4')
+    turn._gave_up.clear()
+    why = await turn.wait_before_step('pc-gone', task_id='t9', user_id='u1')
+    assert why and 'offline' in why
+
+    online = {'online': False}
+
+    async def status(device_id):
+        return dict(online)
+    monkeypatch.setattr('cognitrix.computer.paired.hub.status', status)
+    turn._gave_up.clear()
+
+    async def come_back():
+        await asyncio.sleep(0.1)
+        online['online'] = True
+    asyncio.get_running_loop().create_task(come_back())
+    monkeypatch.setenv('COGNITRIX_PAIRED_TASK_WAIT_S', '5')
+    assert await turn.wait_before_step('pc-back', task_id='t10', user_id='u1') is None

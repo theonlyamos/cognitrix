@@ -464,6 +464,11 @@ async def _run_app_call(call_id: Any, name: str, args: dict[str, Any], ctx: dict
     norm_token = coords_normalized.set(bool(ctx.get('coords_normalized')))
     try:
         validated = tool.validate_parameters(dict(args)) if hasattr(tool, 'validate_parameters') else dict(args)
+        if 'parent' in set(getattr(tool, 'internal_params', None) or []):
+            # Who is acting, so one agent can't act on another agent's look at a window.
+            from types import SimpleNamespace
+            who = str(ctx.get('agent_id') or ctx.get('session_id') or '') or None
+            validated['parent'] = SimpleNamespace(id=who, name=None) if who else None
         text = _text(await tool.run(**validated))
     except Exception as exc:
         logger.warning('A window call from the server failed here', exc_info=True)
