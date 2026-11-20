@@ -403,6 +403,22 @@ async def _tell_person(task: Any, run: Any, why: str) -> None:
 
 # --- the report text -----------------------------------------------------------
 
+async def _run_artifacts(run_id: str) -> list[Any]:
+    """The artifacts a run published or had its result saved to."""
+    try:
+        from cognitrix.artifact_pages.models import ArtifactPage, ArtifactVersion
+
+        seen: dict[str, Any] = {}
+        for version in await ArtifactVersion.find({'run_id': str(run_id)}) or []:
+            if version.page_id not in seen:
+                page = await ArtifactPage.get(version.page_id)
+                if page is not None:
+                    seen[version.page_id] = page
+        return list(seen.values())[:5]
+    except Exception:
+        return []
+
+
 async def report_text(row: TaskReport, task: Any, *, for_chat: bool) -> str:
     from cognitrix.tasks.context import untrusted_text_block
     from cognitrix.tasks.run import TaskRun
@@ -433,6 +449,11 @@ async def report_text(row: TaskReport, task: Any, *, for_chat: bool) -> str:
             text = _result_text(run)
             lines.append(untrusted_text_block(f'Result of run {run.id}', text, RESULT_CHARS)
                          if text else f'Run {run.id} finished without a written result.')
+            pages = await _run_artifacts(str(run.id))
+            if pages:
+                lines.append('Artifacts from this run: ' + ', '.join(
+                    f'"{p.title}" (artifact_id {p.id}, version {p.version})' for p in pages)
+                    + '. Point the person to the artifact rather than repeating it.')
     lines.append(
         'Decide whether the person needs to know. If they do, tell them with Notify Me in a short summary'
         + (' (or answer here if they are in this chat)' if for_chat else '')

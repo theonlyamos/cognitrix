@@ -22,6 +22,8 @@ export interface AutomationTaskFields {
   report_to?: string | null;
   report_only_on?: string | null;
   report_to_effective?: string;
+  /** Keep each run's result as an artifact: auto (null), always or off. */
+  result_artifact?: string | null;
   notes?: string | null;
   wake_pending?: boolean;
   wake_at?: string | null;
@@ -152,6 +154,26 @@ function ReportingSection({
   );
 }
 
+/** Whether finished runs keep their result as an artifact (artifact_pages/guidance.py). */
+function ResultArtifactSection({ value, busy, onSave }: { value: string; busy: boolean; onSave: (mode: string) => void }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <SectionTitle>{tr('ui.automationPanel.resultsPage')}</SectionTitle>
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="task-result-artifact" className="text-[12.5px]">{tr('ui.automationPanel.saveEachRunSResult')}</label>
+        <select id="task-result-artifact" className={selectClass} value={value} disabled={busy} onChange={(e) => onSave(e.target.value)}>
+          <option value="auto">{tr('ui.automationPanel.whenItSAReport')}</option>
+          <option value="always">{tr('ui.automationPanel.afterEveryRun_0bfb')}</option>
+          <option value="off">{tr('ui.automationPanel.never')}</option>
+        </select>
+      </div>
+      <p className="text-[12px] text-fg-dim">
+        {tr('ui.automationPanel.everyRunAddsAVersion')}
+      </p>
+    </div>
+  );
+}
+
 /** Notes, the agent's next check, and webhook and new-mail triggers for one task. */
 export function AutomationPanel({
   taskId,
@@ -237,6 +259,12 @@ export function AutomationPanel({
       await onChanged();
     }, tr('ui.automationPanel.couldNotSaveWhoGets'));
 
+  const saveResultArtifact = (mode: string) =>
+    act('result-artifact', async () => {
+      await api.put(`/tasks/${taskId}/result-artifact`, { result_artifact: mode });
+      await onChanged();
+    }, tr('ui.automationPanel.couldNotSaveTheResults'));
+
   const cancelWake = () =>
     act('wake', async () => {
       await api.delete(`/tasks/${taskId}/wake`);
@@ -294,6 +322,8 @@ export function AutomationPanel({
   return (
     <section aria-label={tr('ui.automationPanel.automation')} className="flex flex-col gap-5 border-b border-line bg-panel px-6 py-4 max-md:px-4">
       {error && <p role="alert" className="font-mono text-[12px] text-danger-ink">{error}</p>}
+
+      <ResultArtifactSection value={task?.result_artifact || 'auto'} busy={busy === 'result-artifact'} onSave={saveResultArtifact} />
 
       {task?.created_by?.agent_id && (
         <ReportingSection task={task} busy={busy === 'reporting'} onSave={saveReporting} />

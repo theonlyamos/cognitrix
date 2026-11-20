@@ -106,6 +106,25 @@ def _push_completion(task, run) -> None:
         logging.getLogger('cognitrix.log').exception('Could not push a task result')
 
 
+async def _save_result_artifact(run_id: str) -> None:
+    """Keep a finished run's result as an artifact (artifact_pages/guidance.py).
+    Idempotent per run: a run with an artifact version already is skipped."""
+    try:
+        from cognitrix.artifact_pages.guidance import save_task_result
+        from cognitrix.tasks.reports import _result_text
+        from cognitrix.tasks.run import TaskRun
+
+        run = await TaskRun.get(run_id)
+        if run is None or run.status != TaskRunStatus.COMPLETED:
+            return
+        task = await Task.get(run.task_id)
+        if task is None or getattr(task, 'standing_agent_id', None):
+            return  # a standing assistant's check-ins are not documents
+        await save_task_result(task, run, _result_text(run))
+    except Exception:
+        logger.exception('Could not save the result of run %s as an artifact', run_id)
+
+
 async def _queue_creator_report(run_id: str) -> bool:
     """Owe the agent that created the task a report on this run, when it
     asked for one (tasks/reports.py). Runs for every finished run, webhook
@@ -135,6 +154,7 @@ async def deliver_completion_notification(
 ) -> bool:
     """Claim and deliver one terminal notification; safe under concurrency."""
     repository = repository or RunRepository()
+    await _save_result_artifact(run_id)
     agent_only = await _queue_creator_report(run_id)
     owner = owner or f"completion:{uuid.uuid4()}"
     claimed = await repository.claim_completion_notification(

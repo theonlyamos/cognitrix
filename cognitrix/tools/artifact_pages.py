@@ -14,7 +14,8 @@ from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import EntityRef, ToolOutcome, current_execution_context
 
 ARTIFACT_TOOL_CATEGORY = 'artifacts'
-ARTIFACT_TOOL_NAMES = ('publish_artifact', 'read_artifact', 'artifact_comments')
+ARTIFACT_TOOL_NAMES = ('publish_artifact', 'read_artifact', 'artifact_comments', 'list_artifacts')
+LIST_LIMIT = 30
 READ_LIMIT = 60_000
 
 
@@ -63,7 +64,8 @@ async def publish_artifact(title: str, content: str, format: str = 'html', artif
 
     To change a page, publish again with its artifact_id: that adds a new version at the same link and
     anyone looking at it sees the update. Publishing again with the same title from the same chat or
-    task also updates it. The person sees a card in the chat that opens the page.
+    task also updates it. The person sees a card in the chat that opens the page, so after publishing
+    reply in a line or two instead of repeating the page in the chat.
 
     Args:
         title (str): Short name, 2-6 words.
@@ -194,3 +196,50 @@ async def artifact_comments(artifact_id: str, action: str = 'list', thread_id: s
     except store.PageError as exc:
         return _failure(exc)
     return ToolOutcome.failure('bad_action', 'action is "list", "reply" or "resolve"')
+
+
+@tool(category=ARTIFACT_TOOL_CATEGORY, retryable=False, max_attempts=1,
+      supported_interfaces=['web', 'ws', 'task'])
+async def list_artifacts(query: str = '', where: str = 'all', *, parent=None) -> ToolOutcome:
+    """Find artifacts the person can open: pages, sheets and whiteboards made in any chat or task, newest
+    first. Use it to find an earlier report, plan or tracker to read or update instead of making a new one.
+
+    Args:
+        query (str): Words to look for in the title; empty lists the newest.
+        where (str): "all" (default), "chat" (made in this chat) or "task" (made by this task).
+    """
+    user_key = _owner()
+    if not user_key:
+        return ToolOutcome.failure('no_owner', 'Artifacts need a signed-in person.')
+    ctx = current_execution_context()
+    scope = str(where or 'all').strip().lower()
+    words = [w for w in str(query or '').lower().split() if w]
+    rows = []
+    for page, role in await store.visible_pages(user_key):
+        if scope == 'chat' and (not ctx.session_id or page.session_id != str(ctx.session_id)):
+            continue
+        if scope == 'task' and (not ctx.task_id or page.task_id != str(ctx.task_id)):
+            continue
+        title = page.title.lower()
+        if words and not all(w in title for w in words):
+            continue
+        rows.append((page, role))
+    if not rows:
+        return ToolOutcome.success('No artifacts found.' if words or scope != 'all' else 'No artifacts yet.')
+    rows.sort(key=lambda r: r[0].updated or r[0].created or '', reverse=True)
+    people, agents = await store.names()
+    lines = []
+    for page, role in rows[:LIST_LIMIT]:
+        made = []
+        if page.agent_id and agents.get(page.agent_id):
+            made.append(f'by {agents[page.agent_id]}')
+        if page.task_id:
+            made.append('kept fresh by a task')
+        if role != store.ROLE_OWNER:
+            made.append(f'shared by {people.get(page.owner_id, "someone")}, your access: {role}')
+        extra = f'; {", ".join(made)}' if made else ''
+        lines.append(f'- "{page.title}" (artifact_id {page.id}, {page.format}, version {page.version}, '
+                     f'updated {str(page.updated)[:10]}{extra})')
+    if len(rows) > LIST_LIMIT:
+        lines.append(f'...and {len(rows) - LIST_LIMIT} more; narrow it down with query.')
+    return ToolOutcome.success('\n'.join(lines))

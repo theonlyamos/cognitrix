@@ -959,6 +959,13 @@ async def _ensure_schema():
     except Exception:
         log.exception('Could not create the task report claim index')
 
+    try:
+        from cognitrix.artifact_pages.guidance import ensure_schema as ensure_artifact_result_schema
+
+        await ensure_artifact_result_schema()
+    except Exception:
+        log.exception('Could not create the artifact result claim index')
+
     if dbms in ('postgresql', 'mysql'):
         await _migrate_relational_task_schema(DBMS.Database)
         return

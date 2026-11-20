@@ -183,4 +183,16 @@ class ArtifactFile(Model):
         return _text(value)
 
 
-MODELS = (ArtifactPage, ArtifactVersion, ArtifactComment, ArtifactConsent, ArtifactData, ArtifactFile)
+class ArtifactResultClaim(Model):
+    """One row per task run whose result was considered for an artifact.
+
+    A unique index on ``run_id`` (``guidance.ensure_schema``) makes saving a
+    run's result atomic: completion and recovery may both try the same run,
+    and only the caller whose insert succeeds publishes.
+    """
+    run_id: str
+    task_id: str = ''
+
+
+MODELS = (ArtifactPage, ArtifactVersion, ArtifactComment, ArtifactConsent, ArtifactData, ArtifactFile,
+          ArtifactResultClaim)

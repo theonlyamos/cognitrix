@@ -26,6 +26,7 @@ from cognitrix.tasks.repository import (
     TaskDeleted,
     UnsupportedDurableTaskBackend,
 )
+from cognitrix.artifact_pages.guidance import RESULT_ARTIFACT_MODES
 from cognitrix.tasks.results import StepResult, canonical_artifact_ref
 from cognitrix.tasks.run import (
     TaskRun,
@@ -733,6 +734,8 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
     task.created_by = getattr(stored, 'created_by', None) if stored is not None else None
     from cognitrix.tasks.reports import validate_report_fields
     report_error = validate_report_fields(task.report_to, task.report_only_on)
+    if not report_error and task.result_artifact not in RESULT_ARTIFACT_MODES:
+        report_error = 'result_artifact must be auto, always or off'
     if report_error:
         raise HTTPException(status_code=422, detail=report_error)
     automation_error = validate_automation_fields(task)
@@ -751,7 +754,7 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
         # projections) and schedule fields may be omitted by API clients —
         # carry them over instead of silently wiping them.
         for field in ('callback_url', 'callback_key_id', 'notes', 'max_runs_per_day', 'swarm', 'read_memory',
-                      'report_to', 'report_only_on', 'computer'):
+                      'report_to', 'report_only_on', 'result_artifact', 'computer'):
             if field not in task.model_fields_set:
                 setattr(task, field, getattr(stored, field))
         if not respecified:
