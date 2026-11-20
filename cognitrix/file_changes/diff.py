@@ -2,8 +2,10 @@
 
 A hunk is ``{'id', 'old_start', 'new_start', 'lines': [[op, text], ...]}`` with
 ``op`` one of ' ', '-', '+'. Its id comes from the path and the changed lines
-(not their position), so the person's "Accept" stays on a hunk while other
-hunks of the file are put back.
+and its context lines (not their position), so the person's "Accept" stays on
+a hunk while other hunks of the file are put back. Context lines are unchanged
+on both sides, so putting another hunk back never changes them; two hunks
+that are the same down to their context get a running number.
 """
 from __future__ import annotations
 
@@ -16,8 +18,18 @@ MAX_HUNKS_PER_FILE = 200
 
 
 def hunk_id(path: str, lines: list[list[str]]) -> str:
-    changed = '\n'.join(f'{op}{text}' for op, text in lines if op != ' ')
-    return hashlib.sha1(f'{path}\0{changed}'.encode('utf-8', 'replace'), usedforsecurity=False).hexdigest()[:16]
+    body = '\n'.join(f'{op}{text}' for op, text in lines)
+    return hashlib.sha1(f'{path}\0{body}'.encode('utf-8', 'replace'), usedforsecurity=False).hexdigest()[:16]
+
+
+def _set_ids(path: str, hunks: list[dict]) -> list[dict]:
+    seen: dict[str, int] = {}
+    for h in hunks:
+        base = hunk_id(path, h['lines'])
+        n = seen.get(base, 0) + 1
+        seen[base] = n
+        h['id'] = base if n == 1 else f'{base}-{n}'
+    return hunks
 
 
 def split_lines(text: str | None) -> list[str]:
@@ -42,10 +54,10 @@ def hunks_from_texts(path: str, before: str | None, after: str | None, context: 
             if tag in ('replace', 'insert'):
                 lines += [['+', t] for t in b[j1:j2]]
         first = group[0]
-        out.append({'id': hunk_id(path, lines), 'old_start': first[1] + 1, 'new_start': first[3] + 1, 'lines': lines})
+        out.append({'id': '', 'old_start': first[1] + 1, 'new_start': first[3] + 1, 'lines': lines})
         if len(out) >= MAX_HUNKS_PER_FILE:
             break
-    return out
+    return _set_ids(path, out)
 
 
 _FILE_HEAD = re.compile(r'^diff --git a/(.*) b/(.*)$')
@@ -90,8 +102,7 @@ def parse_git_patch(patch: str) -> dict[str, list[dict]]:
             continue
         hunk['lines'].append([op, text])
     for p, hunks in files.items():
-        for h in hunks:
-            h['id'] = hunk_id(p, h['lines'])
+        _set_ids(p, hunks)
     return files
 
 

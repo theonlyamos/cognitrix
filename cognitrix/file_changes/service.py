@@ -169,8 +169,12 @@ def _sandbox_source(ws: Any, name: str, reviews: dict[str, set[str]]) -> dict | 
     for f in changed[:MAX_FILES]:
         path = f['path']
         hunks = by_path.get(path) or []
+        binary = bool(f.get('binary'))
+        # The patch is capped, so a file's hunks can stop part way: only
+        # whole ones can be put back.
+        whole = bool(hunks) and d.counts(hunks) == (int(f.get('added') or 0), int(f.get('removed') or 0))
         files.append(_file_entry(path, path, f.get('status') or 'modified', hunks, reviews.get(f'{key}|{path}', set()),
-                                 binary=bool(f.get('binary')), too_big=not hunks and not f.get('binary')))
+                                 binary=binary, too_big=not binary and not whole))
     return {'key': key, 'kind': SANDBOX, 'project': name, 'label': 'Sandbox copy', 'root': out.get('path') or '',
             'source': out.get('source') or '', 'files': files}
 
@@ -364,12 +368,12 @@ def _revert_sandbox(ws: Any, src: dict, f: dict, hunks: list[dict]) -> None:
         if f['status'] == 'added' and whole:
             ws.run(f'rm -f -- {shlex.quote(f["path"])}', cwd=src['root'], timeout=30)
             return
+        if f['binary'] or f['too_big']:
+            raise ChangeError('too_big', "This file can't be put back from here. Ask the agent to restore it.")
         if f['status'] == 'deleted':
             old_lines = [t for h in f['hunks'] for op, t in h['lines'] if op in (' ', '-')]
             ws.files('write', path=full, content='\n'.join(old_lines) + '\n')
             return
-        if f['binary'] or f['too_big']:
-            raise ChangeError('too_big', "This file can't be put back part by part. Ask the agent to restore it.")
         current = None
         try:
             got = ws.files('read', path=full, numbers=False, limit=2_000_000)

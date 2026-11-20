@@ -212,3 +212,55 @@ async def test_sandbox_changes_listed_and_put_back(db, tmp_path, monkeypatch):
     hunk = src['files'][0]['hunks'][0]
     await service.reject(session, 'sandbox:proj', 'app.py', hunk['id'])
     assert ('edit', {'path': '/home/agent/work/proj/app.py', 'old': 'a\nB\nc', 'new': 'a\nb\nc'}) in calls
+
+
+def test_same_edit_in_two_places_gets_two_ids():
+    before = 'a\nold\nb\nc\nd\ne\nf\ng\nh\ni\nold\nj\n'
+    hunks = d.hunks_from_texts('p.py', before, before.replace('old', 'new'))
+    assert len(hunks) == 2 and hunks[0]['id'] != hunks[1]['id']
+    twins = d.hunks_from_texts('p.py', 'x\n' * 9 + 'old\n' + 'x\n' * 9 + 'old\n' + 'x\n' * 9,
+                               'x\n' * 9 + 'new\n' + 'x\n' * 9 + 'new\n' + 'x\n' * 9)
+    assert len(twins) == 2 and twins[0]['id'] != twins[1]['id']
+
+
+async def test_put_back_restores_a_missing_final_newline(db, tmp_path):
+    folder = tmp_path / 'proj'
+    folder.mkdir()
+    target = folder / 'a.txt'
+    target.write_text('a', encoding='utf-8')
+    await _agent_call(folder, 'Write', file_path=str(target), content='b\n')
+
+    session = _session(folder)
+    [src] = (await service.chat_changes(session))['sources']
+    assert src['files'][0]['hunks']
+    await service.reject(session, 'local', None, None)
+    assert target.read_text(encoding='utf-8') == 'a'
+    assert (await service.chat_changes(session))['sources'] == []
+
+
+async def test_sandbox_file_cut_from_the_patch_is_not_put_back(db, tmp_path, monkeypatch):
+    writes = []
+
+    class FakeWork:
+        def project_for(self, folder, copy=True):
+            return 'proj'
+
+        def changes(self, name, patch=True):
+            # Deleted file with 3 lines, but the capped patch only kept 1.
+            return {'path': '/w/proj', 'source': '/me/proj',
+                    'files': [{'path': 'big.txt', 'status': 'deleted', 'added': 0, 'removed': 3}],
+                    'patch': 'diff --git a/big.txt b/big.txt\n--- a/big.txt\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-one\n'}
+
+        def files(self, op, **body):
+            writes.append(op)
+            return {'ok': True}
+
+    folder = tmp_path / 'proj'
+    folder.mkdir()
+    monkeypatch.setattr(service, '_sandbox_work', lambda session: FakeWork())
+    session = _session(folder)
+    [src] = (await service.chat_changes(session))['sources']
+    assert src['files'][0]['too_big']
+    with pytest.raises(service.ChangeError):
+        await service.reject(session, 'sandbox:proj', 'big.txt', None)
+    assert 'write' not in writes

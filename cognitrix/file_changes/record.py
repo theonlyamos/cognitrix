@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger('cognitrix.log')
@@ -36,7 +36,7 @@ class Snapshot:
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    return datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
 
 
 def tool_text(value: Any) -> str:
@@ -78,9 +78,30 @@ def parse_read(path: str, out: str) -> Snapshot:
     return Snapshot(m.group(1).strip(), body)
 
 
+def _on_pc() -> bool:
+    from cognitrix.tools.utils import current_execution_context
+    return bool(getattr(current_execution_context(), 'device', '') or '')
+
+
+def _whole_local_text(snap: Snapshot) -> Snapshot:
+    """Read's answer drops whether the file ends with a line break, so on
+    this machine the file it found is read again whole."""
+    if snap.text is None:
+        return snap
+    try:
+        with open(snap.path, encoding='utf-8', errors='replace') as fh:
+            text = fh.read(MAX_TEXT + 1)
+    except OSError as exc:
+        raise Unreadable(str(exc)) from None
+    if len(text) > MAX_TEXT:
+        raise Unreadable('too big')
+    return Snapshot(snap.path, text)
+
+
 async def read_file(path: str) -> Snapshot:
     out = await run_file_tool('Read', {'file_path': path, 'show_line_numbers': False})
-    return parse_read(path, out)
+    snap = parse_read(path, out)
+    return snap if _on_pc() else _whole_local_text(snap)
 
 
 @dataclass
