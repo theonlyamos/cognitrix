@@ -497,8 +497,9 @@ turn_llm_override: contextvars.ContextVar['tuple[str, LLM] | None'] = contextvar
     'turn_llm_override', default=None
 )
 
-# Providers a chat can switch to for one turn (not the coding agent CLIs,
-# which run as a different kind of agent).
+# Model providers a chat can switch to for one turn. The coding agent CLIs
+# (harness.HARNESSES) can be picked too; the session then runs the turn on the
+# CLI. An agent that itself runs on a CLI can't switch per chat.
 CHAT_MODEL_PROVIDERS = ('openrouter', 'openai', 'chatgpt', 'anthropic', 'google', 'groq', 'cerebras', 'ollama')
 
 
@@ -514,7 +515,7 @@ def build_turn_llm(base: 'LLM', provider: str, model: str) -> 'LLM':
 
     if is_harness(base.provider):
         raise ValueError('This agent runs on a coding agent CLI; change its model on the agent page.')
-    if provider not in CHAT_MODEL_PROVIDERS:
+    if provider not in CHAT_MODEL_PROVIDERS and not is_harness(provider):
         raise ValueError(f'{provider or "That provider"} can not be picked for a chat.')
     if not model or len(model) > 200:
         raise ValueError('Pick a model.')

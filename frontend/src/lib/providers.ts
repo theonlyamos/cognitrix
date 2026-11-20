@@ -68,34 +68,35 @@ export const PROVIDER_LABELS: Record<string, string> = {
 // Settings.get_default_model in cognitrix/config.py.
 export const MODELS: Record<string, string[]> = {
   openrouter: [
-    'google/gemini-3.6-flash', 'anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol',
-    'anthropic/claude-opus-5.5', 'anthropic/claude-fable-5.2', 'google/gemini-4-hydrogen',
-    'google/gemini-4-carbon', 'openai/gpt-6-astra', 'x-ai/grok-4.7', 'openai/gpt-6.1-terra',
-    'deepseek/deepseek-v4.1-flash', 'moonshotai/kimi-k3.1-pro', 'openai/gpt-oss-120b',
+    'google/gemini-3.6-flash', 'anthropic/claude-sonnet-5.5', 'openai/gpt-6.2-sol',
+    'anthropic/claude-opus-5.5', 'anthropic/claude-fable-5.2', 'google/gemini-4-neon',
+    'google/gemini-4-hydrogen', 'google/gemini-4-carbon', 'openai/gpt-6.2-astra', 'x-ai/grok-4.7',
+    'openai/gpt-6.1-terra', 'qwen/qwen4-max', 'deepseek/deepseek-v4.1-flash', 'moonshotai/kimi-k3.1-pro',
+    'openai/gpt-oss-120b',
   ],
   openai: [
-    'gpt-6.1-sol', 'gpt-6-astra', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra',
-    'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4-mini',
+    'gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-6-luna', 'gpt-6-sol',
+    'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4-mini',
   ],
   // The live list (your plan's models) is added by the model picker.
-  chatgpt: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.5'],
+  chatgpt: ['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.5'],
   anthropic: [
     'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2', 'claude-haiku-5-5', 'claude-fable-5-1',
     'claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-8', 'claude-sonnet-4-6',
   ],
   google: [
-    'gemini-3.6-flash', 'gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-3.8-flash',
-    'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview',
+    'gemini-3.6-flash', 'gemini-4-neon', 'gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-4-argon',
+    'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview',
   ],
   groq: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b'],
   cerebras: ['gpt-oss-120b', 'qwen-3.8-27b'],
   ollama: ['llama3.2', 'gpt-oss:20b', 'qwen3', 'mistral'],
   // Coding agent CLIs: an empty model uses the CLI's own default.
   'claude-code': ['sonnet', 'opus', 'haiku', 'claude-fable-5-2'],
-  codex: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-5.5'],
-  'gemini-cli': ['gemini-3.6-flash', 'gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-3.8-flash'],
-  'copilot-cli': ['auto', 'claude-sonnet-5-5', 'gpt-6.1-sol'],
-  opencode: ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5', 'github-copilot/gpt-5.5'],
+  codex: ['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-5.5'],
+  'gemini-cli': ['gemini-3.6-flash', 'gemini-4-neon', 'gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-3.8-flash'],
+  'copilot-cli': ['auto', 'claude-sonnet-5-5', 'gpt-6.2-sol'],
+  opencode: ['openai/gpt-6.2-sol', 'anthropic/claude-sonnet-5-5', 'github-copilot/gpt-5.5'],
   // `agy models` lists what a signed-in account can use; the slug carries the effort.
   'antigravity-cli': ['gemini-3.8-flash-medium', 'gemini-4-carbon-high', 'gemini-4-hydrogen-high', 'gemini-3.1-pro-high'],
 };

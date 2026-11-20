@@ -1,6 +1,6 @@
 import { useId, useMemo, useState } from 'react';
 import ModelPicker from '@/components/ModelPicker';
-import { MODELS, PROVIDERS, PROVIDER_LABELS } from '@/lib/providers';
+import { HARNESS_PROVIDERS, MODELS, PROVIDERS, PROVIDER_LABELS } from '@/lib/providers';
 import type { AgentLevel, CodingMode, ReviewerMode, TabProps, ToolInfo, ToolLevel } from '@/lib/agentDraft';
 import { Card, Check, Pill, buttonClass, inputClass } from '@/components/agent/ui';
 import { cn } from '@/lib/utils';
@@ -137,7 +137,13 @@ export default function ToolsTab({ draft, update, options, catalog, agent }: Tab
                   onChange={(e) => update({ reviewerProvider: e.target.value, reviewerModel: MODELS[e.target.value]?.[0] || '' })}
                   className={inputClass}>
                   <option value="">{tr('ui.agent.toolsTab.appSettingItemValue', { item: PROVIDER_LABELS[app?.provider || ''] || app?.provider || tr('ui.agent.toolsTab.default'), value: app?.model ? ` · ${app.model}` : '' })}</option>
-                  {PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
+                  <optgroup label={tr('ui.agent.generalTab.modelProviders')}>
+                    {PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
+                  </optgroup>
+                  {/* A CLI reviewer runs read only (safety/action_reviewer.py). */}
+                  <optgroup label={tr('ui.agent.generalTab.codingAgentsOnThisComputer')}>
+                    {HARNESS_PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
+                  </optgroup>
                 </select>
               </label>
               <label htmlFor={ids.max} className="flex flex-col gap-1.5 text-[13px] font-medium">
