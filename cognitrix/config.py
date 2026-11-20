@@ -800,6 +800,35 @@ async def _seal_legacy_secrets(log) -> None:
         log.exception("Could not encrypt older saved secrets")
 
 
+def _with_model_columns(typed):
+    """The hand-typed sqlite columns plus every model field, by table.
+
+    A field added to a model without a hand-typed entry here left existing
+    databases without its column, so every save to that table failed (0.5.8:
+    sessions.token_usage broke all chats). odbms stores fields as TEXT on
+    sqlite, so a missing field is added as TEXT.
+    """
+    from odbms import Model
+
+    merged = {table: list(columns) for table, columns in typed}
+    stack = list(Model.__subclasses__())
+    while stack:
+        cls = stack.pop()
+        stack.extend(cls.__subclasses__())
+        try:
+            table = cls.table_name()
+        except Exception:
+            continue
+        columns = merged.setdefault(table, [])
+        known = {column for column, _ in columns}
+        columns.extend(
+            (field, 'TEXT')
+            for field in getattr(cls, 'model_fields', {})
+            if field not in known and field != 'id'
+        )
+    return merged.items()
+
+
 async def _ensure_schema():
     """Additive schema upkeep odbms can't do itself on sqlite.
 
@@ -997,7 +1026,7 @@ async def _ensure_schema():
     except Exception:
         log.exception("Could not set sqlite pragmas")
 
-    for table, columns in (
+    for table, columns in _with_model_columns((
         ('sessions', _SESSION_MIGRATION_COLUMNS),
         ('agents', _AGENT_MIGRATION_COLUMNS),
         ('artifacts', _ARTIFACT_MIGRATION_COLUMNS),
@@ -1018,7 +1047,7 @@ async def _ensure_schema():
         ('meetingnotes', _MEETING_MIGRATION_COLUMNS),
         ('paireddevices', _PAIRED_DEVICE_MIGRATION_COLUMNS),
         ('chatindexes', _CHAT_INDEX_MIGRATION_COLUMNS),
-    ):
+    )):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')
             rows = cursor.fetchall() if hasattr(cursor, 'fetchall') else (cursor or [])
