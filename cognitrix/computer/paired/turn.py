@@ -123,6 +123,24 @@ def device_prompt(device: dict[str, Any]) -> str:
                      f"the rest) work on {name}'s own screen, in app windows in the background, not on your "
                      "sandboxed computer. Opening an app asks the person first. Don't touch apps they didn't ask "
                      'about, and never enter passwords or payment details.')
+    agents_md = device.get('agents_md') or ('', '')
+    if folders and agents_md[1]:
+        path, text = agents_md
+        skip = ''
+        try:
+            from cognitrix.projects.context import get
+            project = get()
+            skip = project.instructions if project is not None else ''
+        except Exception:
+            pass
+        if ' '.join(text.split()) != ' '.join((skip or '').split()):
+            lines += ['', f'### Instructions from {path}',
+                      'Follow these for work in that folder. Where they disagree with a deeper AGENTS.md, '
+                      'the file closest to the files you change wins, and what the person asks in this chat '
+                      'wins over all of them.', text, '']
+    if folders:
+        lines.append('Folders there may have their own AGENTS.md (or CLAUDE.md) in subfolders. Before you '
+                     'change files under one, read the closest one and follow it.')
     if device.get('read_only'):
         lines.append('You are helping another agent: on this PC you can only look (Read, Glob, Grep). '
                      'Writing, editing and commands are refused.')

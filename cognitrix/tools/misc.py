@@ -579,6 +579,15 @@ def _read_managed_document(
     )
 
 
+def _agents_md_note(path: Path) -> str:
+    """A subfolder's AGENTS.md, the first time this chat touches a file under it."""
+    try:
+        from cognitrix.common.agents_md import note_for_path
+        return note_for_path(path)
+    except Exception:
+        return ''
+
+
 @tool(category='filesystem')
 def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_line_numbers: bool = True, page_range: str | None = None):
     """Read the contents of a file or PDF, optionally with range selection.
@@ -686,7 +695,7 @@ def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_
         return _hard_cap_output(
             value,
             f'[Output truncated; continue with start_line={resume_line or start_line}]',
-        )
+        ) + _agents_md_note(path)
 
     except PermissionError:
         return f"Error: Permission denied reading: {file_path}"
@@ -730,7 +739,7 @@ def Write(file_path: str, content: str, append: bool = False):
             f.write(content)
 
         action = "Appended to" if append else "Written to"
-        return f"{action} file: {path}\nSize: {path.stat().st_size} bytes"
+        return f"{action} file: {path}\nSize: {path.stat().st_size} bytes" + _agents_md_note(path)
 
     except PermissionError:
         return f"Error: Permission denied writing to: {file_path}"
@@ -793,7 +802,7 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
         with open(path, 'w', encoding='utf-8') as f:
             f.write(new_content)
 
-        return f"Replaced {count} occurrence(s) in: {path}"
+        return f"Replaced {count} occurrence(s) in: {path}" + _agents_md_note(path)
 
     except PermissionError:
         return f"Error: Permission denied editing: {file_path}"

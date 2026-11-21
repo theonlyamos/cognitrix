@@ -744,3 +744,21 @@ async def test_a_pairing_code_pc_shows_in_sign_ins_and_unpairing_signs_it_out(db
     await computer_devices.unpair_device(str(device.id), AuthContext(user=user))
     assert (await SignIn.find_one({'sid': device.sign_in_sid})).ended_at
     assert await signins.listing(user) == []
+
+
+async def test_the_pc_folder_s_agents_md_is_read_on_the_pc(server, tmp_path):
+    from cognitrix.common import agents_md
+    from cognitrix.computer.paired.turn import chat_device, device_prompt
+
+    agents_md._pc_cache.clear()
+    view, connector, shared = await _paired_pc(server, tmp_path)
+    try:
+        (shared / 'AGENTS.md').write_text('PC rule: run make test.\n', encoding='utf-8')
+        device = await chat_device(SimpleNamespace(computer=view['device_id']), 'u1')
+        path, text = await agents_md.pc_instructions(device)
+        assert path.endswith('AGENTS.md') and text == 'PC rule: run make test.'
+        assert 'PC rule: run make test.' in device_prompt({**device, 'agents_md': (path, text)})
+        # A PC without file access is never asked.
+        assert await agents_md.pc_instructions({**device, 'powers': ['commands']}) == ('', '')
+    finally:
+        await connector.stop()

@@ -57,6 +57,19 @@ async def check_folder(body: FolderCheck):
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
+@folders_api.get('/instructions')
+async def folder_instructions(path: str):
+    """The AGENTS.md files a chat in this folder follows: the folder's own and
+    its parents' up to the repository root, and how many subfolders have one."""
+    from cognitrix.common.agents_md import summary
+
+    try:
+        folder = validate_folder(path, 'read')
+    except FolderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return await run_in_threadpool(summary, folder.path)
+
+
 class NewFolder(BaseModel):
     parent: str
     name: str

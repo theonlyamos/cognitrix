@@ -29,6 +29,28 @@ export async function checkFolder(path: string, access: WorkFolder['access']): P
   return (await api.post<WorkFolder>('/folders/check', { path, access })).data;
 }
 
+/** The AGENTS.md files a chat in this folder follows (its own and its
+ *  parents' up to the repository root) and how many subfolders have one. */
+export interface FolderInstructions {
+  files: string[];
+  nested: number;
+}
+
+const instructionsCache = new Map<string, Promise<FolderInstructions>>();
+
+export function folderInstructions(path: string): Promise<FolderInstructions> {
+  let hit = instructionsCache.get(path);
+  if (!hit) {
+    hit = api.get<FolderInstructions>('/folders/instructions', { params: { path } })
+      .then((r) => r.data)
+      .catch(() => ({ files: [], nested: 0 }));
+    instructionsCache.set(path, hit);
+    // Re-check after a minute: someone may add or change an AGENTS.md.
+    setTimeout(() => instructionsCache.delete(path), 60_000);
+  }
+  return hit;
+}
+
 export async function getChatFolders(sessionId: string): Promise<WorkFolder[] | null> {
   return (await api.get<{ folders: WorkFolder[] | null }>(`/folders/sessions/${sessionId}`)).data.folders;
 }
