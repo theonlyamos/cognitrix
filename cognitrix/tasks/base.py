@@ -84,6 +84,9 @@ class Task(Model):
     """Recurring schedule: run every N seconds (minimum 60)."""
 
     schedule_cron: str | None = None
+    schedule_tz: str | None = None
+    """IANA time zone the cron line is read in ("Europe/Paris"): the zone of
+    whoever set the schedule. None: the server's own zone, as before."""
     """Recurring schedule: 5-field cron expression, evaluated in server-local time."""
 
     next_run_at: str | None = None

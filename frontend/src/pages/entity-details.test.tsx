@@ -57,7 +57,7 @@ function renderTeamDetail() {
     <MemoryRouter initialEntries={['/teams/team-1']} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
       <Routes>
         <Route path="/teams/:teamId" element={<TeamDetail />} />
-        <Route path="/teams" element={<div>Team list</div>} />
+        <Route path="/agents" element={<div>Team list</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -210,9 +210,9 @@ describe('entity detail routes', () => {
     renderAgentDetail();
 
     expect(screen.getByRole('heading', { name: 'Agent One' })).toBeInTheDocument();
-    expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+    expect(screen.getByText('GPT-4o')).toHaveAttribute('title', 'gpt-4o');
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getAllByRole('tab')).toHaveLength(9);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Overview', 'Setup', 'Access', 'Work', 'Sharing']);
     expect(screen.getByText('1 chat running')).toBeInTheDocument();
     expect(screen.getByText('Weekly report')).toBeInTheDocument();
     expect(screen.getByText('leads Team One')).toBeInTheDocument();
@@ -230,9 +230,9 @@ describe('entity detail routes', () => {
     expect(localStorage.getItem('chatSession:agent-1')).toBe('chat-9');
   });
 
-  it('sends the old edit link to the General tab', () => {
+  it('sends the old edit link to the Setup tab', () => {
     renderAgentDetail('/agents/agent-1/edit');
-    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Setup' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByLabelText('Name')).toHaveValue('Agent One');
   });
 
@@ -245,9 +245,9 @@ describe('entity detail routes', () => {
     await userEvent.type(name, 'Agent Prime');
     expect(screen.getByText('@Agent-Prime')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Teams' }));
+    // Tasks, check-ins and teams share the Work tab.
+    await userEvent.click(screen.getByRole('tab', { name: 'Work' }));
     await userEvent.click(screen.getByRole('checkbox', { name: /Let it create sub-agents/ }));
-    await userEvent.click(screen.getByRole('tab', { name: 'Tasks' }));
     await userEvent.click(screen.getByRole('checkbox', { name: /schedule its own check-ins/ }));
 
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -272,7 +272,7 @@ describe('entity detail routes', () => {
     renderAgentDetail('/agents/agent-1/teams');
     expect(screen.getByText('leader')).toBeInTheDocument();
     expect(screen.getByText('With @Agent-Two')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open group chat' })).toHaveAttribute('href', '/teams/team-1/chat');
+    expect(screen.getByRole('link', { name: 'Open group chat' })).toHaveAttribute('href', '/home?team=team-1');
   });
 
   it('lets a specific sub-agent model switch to a custom name', async () => {
@@ -312,8 +312,7 @@ describe('entity detail routes', () => {
     expect(screen.getByText('Agent One')).toBeInTheDocument();
     expect(screen.getByText('LEAD')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Edit team' })).toHaveAttribute('href', '/teams/team-1/edit');
-    expect(screen.getByRole('link', { name: 'Failed Team Task', description: 'failed' })).toBeInTheDocument();
-    expect(screen.getByText('failed')).toHaveClass('text-danger-ink');
+    expect(screen.getByRole('link', { name: 'Failed Team Task', description: 'Failed' })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
     await userEvent.click(screen.getByRole('button', { name: 'Delete team' }));
@@ -433,6 +432,9 @@ describe('entity detail routes', () => {
     renderAgentNew();
 
     await userEvent.type(screen.getByPlaceholderText('Research Assistant'), 'Claude helper');
+    await userEvent.type(screen.getByLabelText('What is it for?'), 'Answers questions about our docs.');
+    await userEvent.click(screen.getByRole('button', { name: 'Change model' }));
+    await userEvent.click(screen.getByRole('button', { name: /More options/ }));
     const providerSelect = screen.getAllByRole('combobox').find((el) =>
       Array.from((el as HTMLSelectElement).options).some((o) => o.value === 'anthropic'),
     ) as HTMLSelectElement;
@@ -443,14 +445,16 @@ describe('entity detail routes', () => {
       Array.from((el as HTMLSelectElement).options).some((o) => o.value === 'claude-opus-5-5'),
     ) as HTMLSelectElement;
     expect(modelSelect).toHaveValue('claude-sonnet-5-5');
-    expect(screen.getByLabelText('Temperature')).toBeDisabled();
+    expect(screen.getByLabelText('Creativity')).toBeDisabled();
 
     await userEvent.selectOptions(modelSelect, '__custom__');
     await userEvent.type(screen.getByLabelText('Custom model name'), 'claude-haiku-4-5');
-    expect(screen.getByLabelText('Temperature')).toBeEnabled();
+    expect(screen.getByLabelText('Creativity')).toBeEnabled();
 
-    await userEvent.click(screen.getByRole('button', { name: /Save/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Create agent/ }));
     await waitFor(() => expect(harness.apiPost).toHaveBeenCalledWith('/agents', expect.objectContaining({
+      description: 'Answers questions about our docs.',
+      system_prompt: 'You are Claude helper. Answers questions about our docs.',
       llm: expect.objectContaining({ provider: 'anthropic', model: 'claude-haiku-4-5', base_url: 'https://api.anthropic.com/v1' }),
     })));
   });

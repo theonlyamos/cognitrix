@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   EVENT_LABELS,
   useNotifications,
@@ -30,27 +30,16 @@ function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onCh
 
 export { Toggle };
 
-/** Notification center plus where each kind of event reaches you. */
-export default function Notifications() {
-  const { notifications, prefs, setPref, markAllRead, markRead, dismiss } = useNotifications();
-  const navigate = useNavigate();
+/** Where each kind of event reaches you: Settings › Notifications. */
+export function NotificationPrefsCard() {
+  const { prefs, setPref } = useNotifications();
   const desktopApp = isDesktop();
-
-  const open = (n: AppNotification) => {
-    markRead(n.id);
-    if (n.href) navigate(n.href);
-  };
-
   return (
-    <div className="flex h-full min-w-0 flex-1 overflow-y-auto bg-bg text-fg">
-      <div className="mx-auto grid w-full max-w-[1180px] gap-6 px-7 py-6 max-md:px-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-        <section aria-labelledby="prefs-title">
-          <h1 id="prefs-title" className="text-[22px] font-semibold">{tr('ui.notifications.notifications')}</h1>
-          <p className="mt-1 text-[13.5px] text-fg-dim">{tr('ui.notifications.chooseWhereEachEventReaches')}</p>
-          <div className="mt-5 overflow-hidden rounded-[14px] border border-line bg-panel">
+    <div>
+          <div className="overflow-hidden rounded-[14px] border border-line bg-panel">
             <table className="w-full text-[13px]">
               <thead>
-                <tr className="border-b border-line font-mono text-[10.5px] tracking-[0.12em] text-fg-dim">
+                <tr className="border-b border-line text-[12px] text-fg-dim">
                   <th scope="col" className="px-4 py-3 text-left font-normal">{tr('ui.notifications.event')}</th>
                   <th scope="col" className="w-20 px-2 py-3 font-normal">{tr('ui.notifications.inApp')}</th>
                   <th scope="col" className="w-20 px-2 py-3 font-normal">{desktopApp ? tr('ui.notifications.desktop') : tr('ui.notifications.browser')}</th>
@@ -67,7 +56,7 @@ export default function Notifications() {
                       </th>
                       <td className="px-2 py-3 text-center">
                         {meta.alwaysInApp ? (
-                          <span className="font-mono text-[11px] text-fg-dim">{tr('ui.notifications.always')}</span>
+                          <span className="text-[12px] text-fg-dim">{tr('ui.notifications.always')}</span>
                         ) : (
                           <Toggle label={tr('ui.notifications.titleInApp', { title: meta.title })} checked={prefs[event].inApp} onChange={(v) => setPref(event, 'inApp', v)} />
                         )}
@@ -91,34 +80,49 @@ export default function Notifications() {
             </button>
           )}
           {!desktopApp && <PushCard />}
-        </section>
+    </div>
+  );
+}
 
-        <section aria-labelledby="center-title" className="flex min-h-0 flex-col rounded-[14px] border border-line bg-panel">
-          <div className="flex items-center justify-between border-b border-line px-4 py-3">
-            <h2 id="center-title" className="text-[15px] font-semibold">{tr('ui.notifications.recent')}</h2>
-            <button type="button" onClick={markAllRead} className="text-[12.5px] text-fg-dim hover:text-fg">{tr('ui.notifications.markAllRead')}</button>
-          </div>
-          {notifications.length === 0 ? (
-            <p className="px-4 py-10 text-center text-[13px] text-fg-dim">{tr('ui.notifications.noNotificationsYet')}</p>
-          ) : (
-            <ul className="p-1.5">
-              {notifications.map((n) => (
-                <li key={n.id} className="group relative">
-                  <NotificationRow n={n} onOpen={open} />
-                  <button
-                    type="button"
-                    aria-label={tr('ui.notifications.dismissTitle', { title: n.title })}
-                    onClick={() => dismiss(n.id)}
-                    className="absolute right-2 top-2 hidden h-6 w-6 place-items-center rounded bg-panel text-fg-dim hover:text-fg group-hover:grid"
-                  >
-                    <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0 0 10" stroke="currentColor" /></svg>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+/** Everything that happened lately, newest first: the Inbox's "Recent" tab. */
+export function RecentNotifications() {
+  const { notifications, markAllRead, markRead, dismiss } = useNotifications();
+  const navigate = useNavigate();
+  const open = (n: AppNotification) => {
+    markRead(n.id);
+    if (n.href) navigate(n.href);
+  };
+  if (notifications.length === 0) {
+    return (
+      <div className="grid h-full place-items-center px-6 text-center">
+        <div>
+          <div className="text-[15px] font-medium">{tr('ui.notifications.noNotificationsYet')}</div>
+          <p className="mt-1 text-[13px] text-fg-dim">{tr('ui.notifications.finishedTasksRepliesAndAlerts')}</p>
+        </div>
       </div>
+    );
+  }
+  return (
+    <div className="mx-auto w-full max-w-[760px] px-4 py-5 md:px-7">
+      <div className="mb-2 flex items-center justify-end gap-4 text-[12.5px]">
+        <button type="button" onClick={markAllRead} className="text-fg-dim hover:text-fg">{tr('ui.notifications.markAllRead')}</button>
+        <Link to="/settings/notifications" className="text-fg-dim hover:text-fg">{tr('ui.notifications.notificationSettings')}</Link>
+      </div>
+      <ul className="rounded-[14px] border border-line bg-panel p-1.5">
+        {notifications.map((n) => (
+          <li key={n.id} className="group relative">
+            <NotificationRow n={n} onOpen={open} />
+            <button
+              type="button"
+              aria-label={tr('ui.notifications.dismissTitle', { title: n.title })}
+              onClick={() => dismiss(n.id)}
+              className="absolute right-2 top-2 hidden h-6 w-6 place-items-center rounded bg-panel text-fg-dim hover:text-fg group-hover:grid"
+            >
+              <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0 0 10" stroke="currentColor" /></svg>
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

@@ -265,17 +265,17 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
           <Link to={dataFormat ? '/apps?tab=boards' : '/apps?tab=pages'} aria-label={dataFormat ? tr('ui.artifacts.artifactViewer.allSheetsAndWhiteboards') : tr('ui.artifacts.artifactViewer.allPages')} className={iconButton}><ArrowLeft size={16} /></Link>
         )}
         {variant === 'panel' && onBack && !expanded && (
-          <button type="button" onClick={onBack} className="inline-flex h-9 flex-none items-center gap-1 rounded-lg px-2 font-mono text-[11.5px] text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8">
-            <span aria-hidden>‹</span>{' '}{tr('ui.artifacts.artifactViewer.thisChat')}
+          <button type="button" onClick={onBack} title={tr('ui.artifacts.artifactViewer.thisChat')} className="inline-flex h-9 w-8 flex-none items-center justify-center rounded-lg font-mono text-[15px] text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8">
+            <span aria-hidden>‹</span><span className="sr-only">{tr('ui.artifacts.artifactViewer.thisChat')}</span>
           </button>
         )}
-        <FormatIcon size={15} className="ml-1 hidden flex-none text-fg-dim sm:block" aria-hidden />
+        <FormatIcon size={15} className={cn('ml-1 hidden flex-none text-fg-dim', wide && 'sm:block')} aria-hidden />
         <h2 className="min-w-0 flex-shrink truncate text-[14px] font-semibold" title={page.title}>{page.title}</h2>
         {page.live && <LiveBadge />}
         {page.versions.length > 1 ? (
           <select aria-label={tr('ui.artifacts.artifactViewer.version')} value={shownVersion}
             onChange={(e) => { const v = Number(e.target.value); setPinnedVersion(v === page.version ? null : v); }}
-            className="h-8 w-[5.5rem] flex-none truncate rounded-md border border-line bg-panel px-1.5 font-mono text-[12px]" title={tr('ui.artifacts.artifactViewer.versions')}>
+            className="h-8 w-[4.25rem] flex-none truncate rounded-md border border-line bg-panel px-1.5 font-mono text-[12px]" title={tr('ui.artifacts.artifactViewer.versions')}>
             {page.versions.map((v) => (
               <option key={v.number} value={v.number}>v{v.number}{v.number === page.version ? tr('ui.artifacts.artifactViewer.latest') : ''}{v.note ? ` · ${v.note.slice(0, 40)}` : ''}</option>
             ))}
@@ -284,7 +284,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
           <span className="flex-none rounded-md border border-line bg-panel px-1.5 py-1 font-mono text-[12px]">v{shownVersion}</span>
         )}
         <span className="min-w-1 flex-1" />
-        <div role="tablist" aria-label={tr('ui.artifacts.artifactViewer.view')} className="hidden flex-none rounded-lg border border-line bg-panel p-0.5 sm:inline-flex">
+        <div role="tablist" aria-label={tr('ui.artifacts.artifactViewer.view')} className={cn('hidden flex-none rounded-lg border border-line bg-panel p-0.5', wide && 'sm:inline-flex')}>
           {(['preview', 'code'] as const).map((mode) => (
             <button key={mode} type="button" role="tab" aria-selected={view === mode} onClick={() => setView(mode)}
               className={cn('rounded-md px-2.5 py-1 text-[12px] font-medium capitalize', view === mode ? 'bg-fg text-bg' : 'text-fg-dim hover:text-fg')}>
@@ -296,7 +296,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
           title={tr('ui.artifacts.artifactViewer.clickAPlaceOnThe')}
           className={cn('inline-flex h-9 flex-none items-center gap-1.5 rounded-md border px-2.5 text-[12.5px] font-medium md:h-8',
             picking ? 'border-accent-ink bg-accent/15 text-accent-ink' : 'border-line bg-panel hover:bg-panel-2')}>
-          <MessageSquarePlus size={14} /> <span className="hidden sm:inline">{picking ? tr('ui.artifacts.artifactViewer.clickThePage') : tr('ui.artifacts.artifactViewer.comment')}</span>
+          <MessageSquarePlus size={14} /> <span className={cn('hidden', (wide || picking) && 'sm:inline')}>{picking ? tr('ui.artifacts.artifactViewer.clickThePage') : tr('ui.artifacts.artifactViewer.comment')}</span>
         </button>
         <button type="button" onClick={() => { setCommentsOpen((v) => !v); setPicking(false); }} aria-pressed={commentsOpen}
           aria-label={`Comments${openCount ? `, ${openCount} open` : ''}`} title={tr('ui.artifacts.artifactViewer.comments')}
@@ -316,9 +316,12 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
           </button>
           {menuOpen && (
             <div role="menu" className="absolute right-0 top-full z-40 mt-1 w-60 overflow-hidden rounded-[10px] border border-line bg-panel py-1 shadow-xl">
-              <button type="button" role="menuitem" className={cn(menuItem, 'sm:hidden')} onClick={() => { setView(view === 'code' ? 'preview' : 'code'); setMenuOpen(false); }}>
+              <button type="button" role="menuitem" className={cn(menuItem, wide && 'sm:hidden')} onClick={() => { setView(view === 'code' ? 'preview' : 'code'); setMenuOpen(false); }}>
                 {view === 'code' ? tr('ui.artifacts.artifactViewer.showPreview') : tr('ui.artifacts.artifactViewer.showCode')}
               </button>
+              {variant === 'panel' && !wide && (
+                <Link role="menuitem" to={`/artifacts/${page.id}`} className={menuItem}>{tr('ui.artifacts.artifactViewer.openAsAFullPage')}</Link>
+              )}
               {owner && (
                 <button type="button" role="menuitem" className={menuItem}
                   onClick={() => void act(() => api.patch(`/artifact-pages/${page.id}`, { pinned: !page.pinned }), page.pinned ? tr('ui.artifacts.artifactViewer.takenOffTheDashboard') : tr('ui.artifacts.artifactViewer.pinnedToTheDashboard'))}>
@@ -371,7 +374,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
         </div>
         {variant === 'panel' && (
           <>
-            <Link to={`/artifacts/${page.id}`} aria-label={tr('ui.artifacts.artifactViewer.openAsAFullPage')} title={tr('ui.artifacts.artifactViewer.openAsAFullPage')} className={cn(iconButton, 'hidden md:grid')}><ExternalLink size={15} /></Link>
+            {wide && <Link to={`/artifacts/${page.id}`} aria-label={tr('ui.artifacts.artifactViewer.openAsAFullPage')} title={tr('ui.artifacts.artifactViewer.openAsAFullPage')} className={cn(iconButton, 'hidden md:grid')}><ExternalLink size={15} /></Link>}
             {onToggleExpand && (
               <button type="button" onClick={onToggleExpand} aria-label={expanded ? tr('ui.artifacts.artifactViewer.shrinkThePanel') : tr('ui.artifacts.artifactViewer.expandThePanel')} title={expanded ? tr('ui.artifacts.artifactViewer.shrink') : tr('ui.artifacts.artifactViewer.expand')} className={cn(iconButton, 'hidden md:grid')}>
                 {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}

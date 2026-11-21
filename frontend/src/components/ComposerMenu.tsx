@@ -15,6 +15,7 @@ const BoltIcon = ({ size = 15 }: { size?: number }) => svg(<path d="M13 2L3 14h9
 const EyeOffIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M17.94 17.94A10 10 0 0 1 12 20c-7 0-11-8-11-8a18 18 0 0 1 5.06-5.94M9.9 4.24A9 9 0 0 1 12 4c7 0 11 8 11 8a18 18 0 0 1-2.16 3.19" /><path d="M1 1l22 22" /></>, size);
 const BoxIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" /></>, size);
 const SwarmIcon = ({ size = 15 }: { size?: number }) => svg(<><circle cx="12" cy="5" r="2.2" /><circle cx="5" cy="18" r="2.2" /><circle cx="12" cy="18" r="2.2" /><circle cx="19" cy="18" r="2.2" /><path d="M12 7.2v8.6M12 11H5v4.8M12 11h7v4.8" /></>, size);
+const WavesIcon = () => svg(<path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" />);
 const ClockIcon = ({ size = 15 }: { size?: number }) => svg(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>, size);
 
 function Switch({ on, tone }: { on: boolean; tone: 'danger' | 'warn' | 'accent' }) {
@@ -50,8 +51,16 @@ interface Props {
   swarm?: { on: boolean; onToggle: () => void };
   /** Run in sandbox: shown when the sandboxed computer is on (or the chat already uses it). */
   sandbox?: { on: boolean; available: boolean; onToggle: () => void; /** The computer chip already shows it. */ hideTag?: boolean };
-  /** Shown between the + button and the on/off indicators (agent, model, folders). */
+  /** Shown between the + button and the on/off indicators (who the chat is with, its project). */
   children?: ReactNode;
+  /** The chat's settings chips (model, computer, folders). Beside the + button on a
+   *  wide screen; inside the + sheet on a phone, with their names written out. */
+  settings?: ReactNode;
+  /** A phone-width screen: the row keeps only the + button and what is switched on. */
+  phone?: boolean;
+  /** Hands-free talking. On a phone it is offered in the sheet instead of the row. */
+  onLiveVoice?: () => void;
+  liveVoiceDisabled?: boolean;
 }
 
 /**
@@ -110,6 +119,16 @@ export default function ComposerMenu(p: Props) {
               className={cn(composerPopover, 'md:w-80')}
             >
               <div aria-hidden className="mx-auto mb-2 h-1 w-9 rounded-full bg-line md:hidden" />
+              {p.phone && p.settings && (
+                <>
+                  <div className="px-2.5 pb-1 pt-1 text-[12px] text-fg-dim">{tr('ui.composerMenu.thisChat')}</div>
+                  {/* The chips keep their own pickers; here their names are written out. */}
+                  <div data-testid="composer-sheet-settings" className="flex flex-wrap items-center gap-1.5 px-1 pb-1 [&>div>button>span.hidden]:!inline [&>div>button]:border [&>div>button]:border-line [&>div>button]:px-3">
+                    {p.settings}
+                  </div>
+                  <div className="mx-1 my-1 h-px bg-line" />
+                </>
+              )}
               <button type="button" role="menuitem" className={item} onClick={() => { setOpen(false); p.onAttach(); }}>
                 <ClipIcon />
                 <span className="min-w-0 flex-1">{tr('ui.composerMenu.attachFiles')}<span className={sub}>{tr('ui.composerMenu.imagesPdfsTextCode')}</span></span>
@@ -126,6 +145,12 @@ export default function ComposerMenu(p: Props) {
                 <TaskIcon />
                 <span className="min-w-0 flex-1">{tr('ui.composerMenu.runAsTask')}<span className={sub}>{tr('ui.composerMenu.savedTaskWithStepTracking')}</span></span>
               </button>
+              {p.phone && p.onLiveVoice && (
+                <button type="button" role="menuitem" className={item} disabled={p.liveVoiceDisabled} onClick={() => { setOpen(false); p.onLiveVoice?.(); }}>
+                  <WavesIcon />
+                  <span className="min-w-0 flex-1">{tr('ui.composerMenu.talkOutLoud')}<span className={sub}>{tr('ui.composerMenu.handsFreeBackAndForth')}</span></span>
+                </button>
+              )}
               <div className="mx-1 my-1 h-px bg-line" />
               <button
                 type="button"
@@ -220,6 +245,7 @@ export default function ComposerMenu(p: Props) {
         )}
       </div>
       {p.children}
+      {!p.phone && p.settings}
       {p.reasoning && (
         <button type="button" onClick={() => setOpen(true)} title={tr('ui.composerMenu.reasoningReasoninglabelClickToChange', { reasoningLabel: reasoningLabel(p.reasoning).toLowerCase() })} aria-label={tr('ui.composerMenu.reasoningReasoninglabelChange', { reasoningLabel: reasoningLabel(p.reasoning).toLowerCase() })} className={cn(composerBtn)}>
           <ClockIcon size={15} />
@@ -238,7 +264,7 @@ export default function ComposerMenu(p: Props) {
           <span className="hidden sm:inline">{tr('ui.composerMenu.swarm')}</span>
         </button>
       )}
-      {p.sandbox?.on && !p.sandbox.hideTag && (
+      {p.sandbox?.on && !p.sandbox.hideTag && !p.phone && (
         <button
           type="button"
           onClick={p.sandbox.onToggle}

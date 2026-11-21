@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { MODELS } from '@/lib/providers';
 import { cn } from '@/lib/utils';
+import { modelName } from '@/lib/plain';
 import { tr } from '@/lib/i18n';
 
 const CUSTOM = '__custom__';
@@ -92,12 +93,12 @@ export default function ModelPicker({ provider, value, onChange, id, ariaLabel, 
         {!known && !custom && value === '' && leading.length === 0 && <option value="">{tr('ui.modelPicker.chooseAModel')}</option>}
         {recent.length > 0 && (
           <optgroup label={tr('ui.modelPicker.recent')}>
-            {recent.map((m) => <option key={m} value={m}>{m}</option>)}
+            {recent.map((m) => <option key={m} value={m}>{modelName(m) || m}</option>)}
           </optgroup>
         )}
         {more.length > 0 && (
           <optgroup label={tr('ui.modelPicker.fromYourAccount')}>
-            {more.map((m) => <option key={m} value={m}>{m}</option>)}
+            {more.map((m) => <option key={m} value={m}>{modelName(m) || m}</option>)}
           </optgroup>
         )}
         <option value={CUSTOM}>{tr('ui.modelPicker.custom')}</option>

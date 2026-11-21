@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
@@ -17,6 +17,8 @@ import { listMcpServers, type McpServer } from '@/lib/mcp';
 import FolderChips from '@/components/FolderChips';
 import ModelPicker from '@/components/ModelPicker';
 import { folderInfo, type WorkFolder } from '@/lib/folders';
+import { ABILITIES, AGENT_TEMPLATES, abilityState, toolsFor, type Ability, type AgentTemplate } from '@/lib/abilities';
+import { modelName } from '@/lib/plain';
 import { tr } from '@/lib/i18n';
 
 interface Tool { name: string; description?: string; category?: string; default_permission?: 'asks' | 'runs' | 'depends' }
@@ -37,9 +39,15 @@ const TOOL_LEVELS: { value: ToolLevel; label: string }[] = [
 ];
 
 const DEFAULT_NOTE: Record<string, string> = { asks: 'asks', runs: 'runs', depends: 'depends' };
+// Past this many tools an agent looks tools up when it needs them instead of
+// carrying every description in every message.
+const ON_DEMAND_OVER = 25;
+
+interface AgentRow { id: string; name: string; llm?: AgentData['llm']; automation?: { standing?: { primary?: boolean } } }
 interface AgentData {
   id?: string;
   name?: string;
+  description?: string;
   system_prompt?: string;
   llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number; reasoning_effort?: string; harness_mode?: string };
   tools?: Tool[];
@@ -58,9 +66,17 @@ export default function AgentPage() {
 
   const { data: existing, loading: loadingAgent } = useResource<AgentData>(agentId ? `/agents/${agentId}` : null);
   const { data: toolList } = useResource<Tool[]>('/tools');
+  const { data: agentList } = useResource<AgentRow[]>(editing ? null : '/agents');
   const { info: systemInfo } = useSystemInfo();
 
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [template, setTemplate] = useState('');
+  // A new agent thinks with whatever the main assistant uses, until told otherwise.
+  const [modelFrom, setModelFrom] = useState('');
+  const [showModel, setShowModel] = useState(editing);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const modelTouched = useRef(false);
   const [provider, setProvider] = useState('google');
   const [model, setModel] = useState('gemini-3.6-flash');
   const [temperature, setTemperature] = useState(0.4);
@@ -70,7 +86,6 @@ export default function AgentPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [maxTokens, setMaxTokens] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [mcpServers, setMcpServers] = useState<McpServer[] | null>(null);
@@ -93,6 +108,7 @@ export default function AgentPage() {
   useEffect(() => {
     if (!existing) return;
     setName(existing.name || '');
+    setDescription(existing.description || '');
     setProvider(existing.llm?.provider || 'google');
     setModel(existing.llm?.model || '');
     setTemperature(existing.llm?.temperature ?? 0.4);
@@ -109,6 +125,44 @@ export default function AgentPage() {
     setToolPermissions(existing.tool_permissions || {});
   }, [existing]);
 
+  useEffect(() => {
+    if (editing || modelTouched.current || !agentList?.length) return;
+    const usual = agentList.find((a) => a.automation?.standing?.primary) ?? agentList[0];
+    if (!usual?.llm?.provider || !usual.llm.model) return;
+    setProvider(usual.llm.provider);
+    setModel(usual.llm.model);
+    setBaseUrl(usual.llm.base_url || BASE_URLS[usual.llm.provider] || '');
+    setModelFrom(usual.name);
+  }, [agentList, editing]);
+
+  const available = useMemo(() => new Set((toolList || []).map((t) => t.name)), [toolList]);
+
+  // A new agent starts able to search, read files and remember.
+  const startedWith = useRef(false);
+  useEffect(() => {
+    if (editing || startedWith.current || available.size === 0) return;
+    startedWith.current = true;
+    setSelected((cur) => (cur.size ? cur : new Set(toolsFor(['web', 'files', 'recall'], available))));
+  }, [available, editing]);
+
+  const applyTemplate = (t: AgentTemplate | null) => {
+    setTemplate(t?.id ?? '');
+    if (!t) return;
+    setName(t.name);
+    setDescription(t.purpose);
+    setSystemPrompt(t.instructions);
+    setSelected(new Set(toolsFor(t.abilities, available)));
+  };
+
+  const toggleAbility = (ability: Ability) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      const have = ability.tools.filter((n) => available.has(n));
+      if (abilityState(ability, cur, available) === 'all') have.forEach((n) => next.delete(n));
+      else have.forEach((n) => next.add(n));
+      return next;
+    });
+
   const toolsByCategory = useMemo(() => {
     const groups: Record<string, Tool[]> = {};
     for (const t of toolList || []) (groups[t.category || 'general'] ||= []).push(t);
@@ -118,6 +172,8 @@ export default function AgentPage() {
   // Switching provider resets the model and base URL to that provider's
   // defaults — an old model/endpoint won't work against a different provider.
   const changeProvider = (next: string) => {
+    modelTouched.current = true;
+    setModelFrom('');
     setProvider(next);
     setModel(MODELS[next]?.[0] || '');
     setBaseUrl(BASE_URLS[next] || '');
@@ -150,6 +206,7 @@ export default function AgentPage() {
 
   const save = async () => {
     if (!name.trim()) return setError(tr('ui.agentPage.giveTheAgentAName'));
+    if (!editing && !description.trim() && !systemPrompt.trim()) return setError(tr('ui.agentPage.sayWhatItIsFor'));
     if (!model.trim()) return setError(tr('ui.agentPage.chooseAModel'));
     setError('');
     setSaving(true);
@@ -157,7 +214,10 @@ export default function AgentPage() {
       const payload: Record<string, unknown> = {
         ...(agentId ? { id: agentId } : {}),
         name: name.trim(),
-        system_prompt: systemPrompt,
+        description: description.trim().slice(0, 300),
+        // No instructions written: the purpose is the instruction.
+        system_prompt: systemPrompt.trim() || editing ? systemPrompt : `You are ${name.trim()}. ${description.trim()}`,
+        ...(!editing && selected.size > ON_DEMAND_OVER ? { tool_mode: { on_demand: true } } : {}),
         // api_key is intentionally omitted — the backend resolves it from env.
         llm: {
           provider,
@@ -206,67 +266,81 @@ export default function AgentPage() {
   return (
     <PageForm
       eyebrow={editing ? 'EDIT AGENT' : 'NEW AGENT'}
-      title={editing ? name || tr('ui.agentPage.editAgent') : tr('ui.agentPage.newAgent')}
+      trail={editing
+        ? [{ label: tr('ui.agentPage.agents'), to: '/agents' }, { label: name || tr('ui.agentPage.editAgent'), to: backTo }]
+        : [{ label: tr('ui.agentPage.agents'), to: '/agents' }]}
+      title={editing ? tr('ui.agentPage.editAgent') : tr('ui.agentPage.newAgent')}
       backTo={backTo}
       error={error}
       onSave={save}
       saving={saving}
+      saveLabel={editing ? undefined : tr('ui.agentPage.createAgent')}
     >
+      {!editing && (
+        <Field label={tr('ui.agentPage.startFrom')} composite>
+          <div role="group" className="flex flex-wrap gap-2">
+            {[null, ...AGENT_TEMPLATES].map((t) => {
+              const on = (t?.id ?? '') === template;
+              return (
+                <button
+                  key={t?.id ?? 'blank'}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => applyTemplate(t)}
+                  className={cn(
+                    'min-h-11 rounded-full border px-3.5 text-[13px] transition-colors md:min-h-0 md:py-1.5',
+                    on ? 'border-accent bg-accent/10 text-accent-ink' : 'border-line text-fg-dim hover:border-fg-dim hover:text-fg',
+                  )}
+                >
+                  {t ? t.label : tr('ui.agentPage.blank')}
+                </button>
+              );
+            })}
+          </div>
+        </Field>
+      )}
+
       <Field label={tr('ui.agentPage.name')} required>
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('ui.agentPage.researchAssistant')} autoFocus />
       </Field>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label={tr('ui.agentPage.provider')}>
-          <Select value={provider} onChange={(e) => changeProvider(e.target.value)}>
-            <optgroup label={tr('ui.agentPage.modelProviders')}>
-              {PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
-            </optgroup>
-            <optgroup label={tr('ui.agentPage.codingAgentsOnThisComputer')}>
-              {HARNESS_PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
-            </optgroup>
-          </Select>
-        </Field>
-        <Field label={tr('ui.agentPage.model')} required>
-          <ModelPicker provider={provider} value={model} onChange={setModel} />
-        </Field>
-      </div>
-      <PlanNote provider={provider} />
-      <HarnessNote provider={provider} mode={harnessMode} onModeChange={setHarnessMode} selectClass="h-11 w-full rounded border border-line bg-bg px-3 text-sm font-normal text-fg md:h-10" />
+      <Field label={tr('ui.agentPage.whatIsItFor')}>
+        <Textarea rows={2} maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={tr('ui.agentPage.whatIsItForPlaceholder')} />
+      </Field>
+      <p className="-mt-4 text-[12px] text-fg-dim">{tr('ui.agentPage.whatIsItForHint')}</p>
 
-      <Field label={tr('ui.agentPage.temperature')} hint={noTemperature ? tr('ui.agentPage.notUsed') : temperature.toFixed(2)}>
-        <input
-          type="range" min={0} max={1} step={0.05} value={temperature}
-          onChange={(e) => setTemperature(Number(e.target.value))}
-          disabled={noTemperature}
-          aria-label={tr('ui.agentPage.temperature_0a90')}
-          className="h-2 w-full cursor-pointer appearance-none rounded-full bg-panel-2 accent-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
-        />
-        {noTemperature && (
-          <p className="mt-1.5 text-[12px] text-fg-dim">
-            {isHarness(provider)
-              ? tr('ui.agentPage.itemPicksItsOwnSettings', { item: PROVIDER_LABELS[provider] })
-              : provider === 'chatgpt'
-              ? tr('ui.agentPage.theChatgptPlanDoesnT')
-              : tr('ui.agentPage.thisClaudeModelSetsIts')}
-          </p>
-        )}
+      <Field label={tr('ui.agentPage.howShouldItWork')} hint={tr('ui.agentPage.howShouldItWorkHint')}>
+        <Textarea rows={editing ? 8 : 4} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder={tr('ui.agentPage.howShouldItWorkPlaceholder')} />
       </Field>
 
-      <Field label={tr('ui.agentPage.reasoning')} hint={tr('ui.agentPage.sentAsReasoningEffort')}>
-        <Select aria-label={tr('ui.agentPage.reasoningLevel')} value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
-          <option value="">{tr('ui.agentPage.providerDefault')}</option>
-          {REASONING_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
-        </Select>
-        <p className="mt-1.5 text-[12px] text-fg-dim">
-          {tr('ui.agentPage.howHardTheModelThinks')}
-        </p>
+      <Field label={tr('ui.agentPage.whatCanItDo')} composite>
+        <div role="group" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {ABILITIES.map((ability) => {
+            const state = abilityState(ability, selected, available);
+            return (
+              <label
+                key={ability.id}
+                className={cn(
+                  'flex cursor-pointer items-start gap-2.5 rounded border px-3 py-2.5 transition-colors',
+                  state === 'none' ? 'border-line hover:border-fg-dim' : 'border-accent bg-accent/5',
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={state === 'all'}
+                  ref={(el) => { if (el) el.indeterminate = state === 'some'; }}
+                  onChange={() => toggleAbility(ability)}
+                  className="mt-0.5 accent-[var(--accent)]"
+                />
+                <span className="min-w-0">
+                  <span className="block text-[13.5px] font-medium">{ability.label}</span>
+                  <span className="block text-[12.5px] text-fg-dim">{ability.help}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
       </Field>
-
-      <Field label={tr('ui.agentPage.systemPrompt')}>
-        <Textarea rows={6} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder={tr('ui.agentPage.youAreAHelpfulAssistant')} />
-      </Field>
-
       {selected.has('Bash') && (
         <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
           {tr('ui.agentPage.shellCommandsStartInThe', { value: systemInfo && !systemInfo.desktop && tr('ui.agentPage.onASharedServerThe') })}
@@ -281,7 +355,80 @@ export default function AgentPage() {
             : tr('ui.agentPage.noneInstalledYetInstallClaude'))}
         </p>
       )}
-      <Field label={tr('ui.agentPage.toolsSizeSelected', { size: selected.size })} composite>
+
+      {!showModel ? (
+        <p className="text-[13px] text-fg-dim">
+          {tr('ui.agentPage.thinksWith')}{' '}
+          <span className="font-medium text-fg" title={model}>{modelName(model)}</span>
+          {modelFrom && <>{', '}{tr('ui.agentPage.sameAsAssistant', { name: modelFrom })}</>}{'. '}
+          <button type="button" onClick={() => setShowModel(true)} className="text-accent-ink hover:underline">
+            {tr('ui.agentPage.changeModel')}
+          </button>
+        </p>
+      ) : (
+      <>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label={tr('ui.agentPage.provider')}>
+          <Select value={provider} onChange={(e) => changeProvider(e.target.value)}>
+            <optgroup label={tr('ui.agentPage.modelProviders')}>
+              {PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
+            </optgroup>
+            <optgroup label={tr('ui.agentPage.codingAgentsOnThisComputer')}>
+              {HARNESS_PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
+            </optgroup>
+          </Select>
+        </Field>
+        <Field label={tr('ui.agentPage.model')} required>
+          <ModelPicker provider={provider} value={model} onChange={(next) => { modelTouched.current = true; setModelFrom(''); setModel(next); }} />
+        </Field>
+      </div>
+      <PlanNote provider={provider} />
+      <HarnessNote provider={provider} mode={harnessMode} onModeChange={setHarnessMode} selectClass="h-11 w-full rounded border border-line bg-bg px-3 text-sm font-normal text-fg md:h-10" />
+      </>
+      )}
+
+      <button
+        type="button"
+        aria-expanded={moreOpen}
+        onClick={() => setMoreOpen((v) => !v)}
+        className="flex min-h-11 w-full items-baseline gap-2 border-t border-line pt-4 text-left text-[13px] font-medium text-fg md:min-h-0"
+      >
+        <span className={cn('text-fg-dim transition-transform', moreOpen && 'rotate-90')}>▸</span>
+        {tr('ui.agentPage.moreOptions')}
+        <span className="font-normal text-fg-dim">{tr('ui.agentPage.moreOptionsHint')}</span>
+      </button>
+      {moreOpen && (
+      <>
+      <Field label={tr('ui.agentPage.creativity')} hint={noTemperature ? tr('ui.agentPage.notUsed') : temperature.toFixed(2)}>
+        <input
+          type="range" min={0} max={1} step={0.05} value={temperature}
+          onChange={(e) => setTemperature(Number(e.target.value))}
+          disabled={noTemperature}
+          aria-label={tr('ui.agentPage.creativity')}
+          className="h-2 w-full cursor-pointer appearance-none rounded-full bg-panel-2 accent-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
+        />
+        {noTemperature && (
+          <p className="mt-1.5 text-[12px] text-fg-dim">
+            {isHarness(provider)
+              ? tr('ui.agentPage.itemPicksItsOwnSettings', { item: PROVIDER_LABELS[provider] })
+              : provider === 'chatgpt'
+              ? tr('ui.agentPage.theChatgptPlanDoesnT')
+              : tr('ui.agentPage.thisClaudeModelSetsIts')}
+          </p>
+        )}
+      </Field>
+
+      <Field label={tr('ui.agentPage.thinkingEffort')}>
+        <Select aria-label={tr('ui.agentPage.reasoningLevel')} value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
+          <option value="">{tr('ui.agentPage.providerDefault')}</option>
+          {REASONING_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+        </Select>
+        <p className="mt-1.5 text-[12px] text-fg-dim">
+          {tr('ui.agentPage.howHardTheModelThinks')}
+        </p>
+      </Field>
+
+      <Field label={tr('ui.agentPage.individualTools', { size: selected.size })} composite>
         <div role="group" className="max-h-72 overflow-y-auto rounded border border-line">
           {toolsByCategory.length === 0 ? (
             <div className="px-3 py-4 font-mono text-[11px] text-fg-dim">{tr('ui.agentPage.noToolsAvailable')}</div>
@@ -329,7 +476,7 @@ export default function AgentPage() {
         </div>
       </Field>
 
-      <Field label={tr('ui.agentPage.permissions')}>
+      <Field label={tr('ui.agentPage.approvals')}>
         <Select aria-label={tr('ui.agentPage.permissionLevel')} value={permissionLevel} onChange={(e) => setPermissionLevel(e.target.value as AgentLevel)}>
           {AGENT_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
         </Select>
@@ -338,7 +485,7 @@ export default function AgentPage() {
         </p>
       </Field>
 
-      <Field label={tr('ui.agentPage.mcpServersLengthSelected', { length: selectedServers.length })} composite>
+      <Field label={tr('ui.agentPage.connectedServers', { length: selectedServers.length })} composite>
         <div role="group" className="rounded border border-line">
           {mcpServers === null ? (
             <div className="px-3 py-3 font-mono text-[11px] text-fg-dim">{tr('ui.agentPage.loading')}</div>
@@ -426,19 +573,11 @@ export default function AgentPage() {
         </p>
       </Field>
 
-      <button
-        type="button"
-        onClick={() => setShowAdvanced((v) => !v)}
-        className="flex min-h-11 items-center gap-2 font-mono text-[11px] tracking-[0.06em] text-fg-dim transition-colors hover:text-fg md:min-h-0"
-      >
-        <span className={cn('transition-transform', showAdvanced && 'rotate-90')}>▸</span>{' '}{tr('ui.agentPage.advanced')}
-      </button>
-      {showAdvanced && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label={tr('ui.agentPage.maxTokens')} hint={tr('ui.agentPage.blankProviderDefault')}>
+          <Field label={tr('ui.agentPage.replyLengthLimit')} hint={tr('ui.agentPage.blankProviderDefault')}>
             <Input type="number" value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder="8192" />
           </Field>
-          <Field label={tr('ui.agentPage.baseUrl')} hint={tr('ui.agentPage.overrideEndpointEGLocal')}>
+          <Field label={tr('ui.agentPage.customAddress')} hint={tr('ui.agentPage.overrideEndpointEGLocal')}>
             <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://…" />
             {baseUrl.trim() && (
               <p className="mt-1.5 text-[12px] leading-relaxed text-fg-dim">
@@ -447,6 +586,7 @@ export default function AgentPage() {
             )}
           </Field>
         </div>
+      </>
       )}
     </PageForm>
   );

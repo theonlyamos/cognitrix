@@ -504,7 +504,14 @@ async def origin_info(page: ArtifactPage) -> dict[str, Any] | None:
         except Exception:
             chat = None
         if chat is not None:
-            title = str(getattr(chat, 'title', '') or getattr(chat, 'name', '') or '').strip()
+            title = str(getattr(chat, 'title', '') or getattr(chat, 'auto_title', '') or getattr(chat, 'name', '') or '').strip()
+            if not title:
+                # The same title the chat list shows: its first message.
+                for message in getattr(chat, 'chat', None) or []:
+                    if str(message.get('role', '')).lower() == 'user' and message.get('content'):
+                        line = str(message['content']).strip().splitlines()[0]
+                        title = line[:60] + ('…' if len(line) > 60 else '')
+                        break
             return {'kind': 'chat', 'id': str(chat.id), 'title': title or 'Untitled chat'}
     rows = await ArtifactVersion.find({'page_id': str(page.id)}) or []
     for row in sorted(rows, key=lambda r: r.number):

@@ -5,14 +5,15 @@ import { useResource } from '@/hooks/useResource';
 import { Input } from '@/lib/components/ui/input';
 import { Textarea } from '@/lib/components/ui/textarea';
 import { Select } from '@/lib/components/ui/select';
-import { LoadingState } from '@/components/list-ui';
+import { LoadingState, FilterChips } from '@/components/list-ui';
 import { Field, PageForm, CheckList } from '@/components/form';
 import { getPcLink, listDevices, remoteAgents, sendTaskToWeb, type PairedDevice } from '@/lib/devices';
 import { isDesktop } from '@/lib/desktop';
-import { tr } from '@/lib/i18n';
+import { modelName } from '@/lib/plain';
+import { tr, dateLocale } from '@/lib/i18n';
 
 interface Step { step: string; done: boolean }
-interface Agent { id: string; name: string; llm?: { provider?: string; model?: string } }
+interface Agent { id: string; name: string; description?: string; llm?: { provider?: string; model?: string }; automation?: { standing?: { primary?: boolean } } }
 interface Team { id: string; name: string; assigned_agents?: string[] }
 interface TaskData {
   id?: string;
@@ -27,12 +28,40 @@ interface TaskData {
   schedule_interval?: number | null;
   schedule_cron?: string | null;
   schedule_enabled?: boolean;
+  schedule_tz?: string | null;
   swarm?: boolean;
   read_memory?: boolean;
   computer?: string | null;
 }
 
 type ScheduleMode = 'none' | 'once' | 'interval' | 'cron';
+/** When the task runs, as the person picks it. */
+type When = 'now' | 'later' | 'repeat' | 'manual';
+type Repeat = 'daily' | 'weekdays' | 'weekly' | 'hours' | 'custom';
+
+const browserZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+};
+
+/** "0 9 * * 1-5" -> weekdays at 09:00, when the line is one of the simple shapes. */
+function readCron(cron: string): { repeat: Repeat; time: string; weekday: string } | null {
+  const m = /^(\d{1,2}) (\d{1,2}) \* \* (\*|1-5|[0-7])$/.exec(cron.trim());
+  if (!m) return null;
+  const time = `${m[2].padStart(2, '0')}:${m[1].padStart(2, '0')}`;
+  if (m[3] === '*') return { repeat: 'daily', time, weekday: '1' };
+  if (m[3] === '1-5') return { repeat: 'weekdays', time, weekday: '1' };
+  return { repeat: 'weekly', time, weekday: m[3] === '7' ? '0' : m[3] };
+}
+
+/** A title from the first line of what was asked, for a task saved without one. */
+function titleFrom(text: string): string {
+  const line = text.trim().split(/\n|(?<=[.!?])\s/)[0].trim().replace(/[.!?]+$/, '');
+  return line.length > 70 ? `${line.slice(0, 67).trimEnd()}…` : line;
+}
 
 const UNIT_SECONDS: Record<string, number> = { seconds: 1, minutes: 60, hours: 3600, days: 86400 };
 
@@ -68,7 +97,6 @@ export default function TaskPage() {
   const [steps, setSteps] = useState<Step[]>([]);
   const [assigned, setAssigned] = useState<Set<string>>(new Set());
   const [teamId, setTeamId] = useState('');
-  const [autostart, setAutostart] = useState(false);
   const [swarm, setSwarm] = useState(false);
   const [readMemory, setReadMemory] = useState(false);
   const [computer, setComputer] = useState('');
@@ -90,12 +118,18 @@ export default function TaskPage() {
       })
       .catch(() => {});
   }, [taskId]);
-  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('none');
   const [scheduleAt, setScheduleAt] = useState('');
   const [intervalN, setIntervalN] = useState('30');
   const [intervalUnit, setIntervalUnit] = useState('minutes');
   const [cronExpr, setCronExpr] = useState('');
   const [scheduleEnabled, setScheduleEnabled] = useState(true);
+  const [when, setWhen] = useState<When>(searchParams.get('repeat') ? 'repeat' : 'now');
+  const [repeat, setRepeat] = useState<Repeat>('daily');
+  const [atTime, setAtTime] = useState('09:00');
+  const [weekday, setWeekday] = useState('1');
+  // The zone a stored cron line is read in; a schedule picked here uses this browser's.
+  const [cronZone, setCronZone] = useState<string | null>(null);
+  const [showMore, setShowMore] = useState(editing);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const prefillApplied = useRef(false);
@@ -112,15 +146,13 @@ export default function TaskPage() {
     );
     setAssigned(new Set(existing.assigned_agents || []));
     setTeamId(existing.team_id || '');
-    setAutostart(!!existing.autostart);
-    setSwarm(!!existing.swarm);
-    setReadMemory(!!existing.read_memory);
-    setComputer(existing.computer || '');
+    setCronZone(existing.schedule_tz ?? null);
     if (existing.schedule_at) {
-      setScheduleMode('once');
+      setWhen('later');
       setScheduleAt(utcToLocalInput(existing.schedule_at));
     } else if (existing.schedule_interval) {
-      setScheduleMode('interval');
+      setWhen('repeat');
+      setRepeat('hours');
       const secs = existing.schedule_interval;
       // Pick the coarsest unit that represents the value exactly — no rounding
       // (a 90s interval hydrates as "90 seconds", not "2 minutes").
@@ -128,10 +160,19 @@ export default function TaskPage() {
       setIntervalUnit(unit);
       setIntervalN(String(secs / UNIT_SECONDS[unit]));
     } else if (existing.schedule_cron) {
-      setScheduleMode('cron');
+      setWhen('repeat');
       setCronExpr(existing.schedule_cron);
+      // Only a line written for this time zone can be shown as a clock time here.
+      const simple = (existing.schedule_tz ?? null) === browserZone() ? readCron(existing.schedule_cron) : null;
+      if (simple) {
+        setRepeat(simple.repeat);
+        setAtTime(simple.time);
+        setWeekday(simple.weekday);
+      } else {
+        setRepeat('custom');
+      }
     } else {
-      setScheduleMode('none');
+      setWhen('manual');
     }
     if (existing.schedule_at || existing.schedule_interval || existing.schedule_cron) {
       setScheduleEnabled(!!existing.schedule_enabled);
@@ -153,21 +194,27 @@ export default function TaskPage() {
       }
     }
 
+    if (!agentList && !agentLoadError) return;
     const requestedAgent = searchParams.get('agentId');
-    if (requestedAgent) {
-      if (!agentList && !agentLoadError) return;
-      if (agentList?.some((agent) => agent.id === requestedAgent)) {
-        setAssigned(new Set([requestedAgent]));
-      }
+    if (requestedAgent && agentList?.some((agent) => agent.id === requestedAgent)) {
+      setAssigned(new Set([requestedAgent]));
+    } else {
+      // Nobody asked for: the main assistant, which hands parts on when it needs to.
+      const usual = agentList?.find((a) => a.automation?.standing?.primary) ?? agentList?.[0];
+      if (usual?.id) setAssigned(new Set([usual.id]));
     }
     prefillApplied.current = true;
   }, [agentList, agentLoadError, editing, searchParams, teamList, teamLoadError]);
 
-  const changeScheduleMode = (mode: ScheduleMode) => {
-    // Picking a schedule on an unscheduled task should arm it by default.
-    if (mode !== 'none' && scheduleMode === 'none') setScheduleEnabled(true);
-    setScheduleMode(mode);
-  };
+  // What the server stores for the picked "when".
+  const scheduleMode: ScheduleMode = when === 'later' ? 'once'
+    : when !== 'repeat' ? 'none'
+    : repeat === 'hours' ? 'interval' : 'cron';
+  const [hour, minute] = atTime.split(':').map((part) => Number(part) || 0);
+  const cronLine = repeat === 'custom' ? cronExpr.trim()
+    : repeat === 'daily' ? `${minute} ${hour} * * *`
+    : repeat === 'weekdays' ? `${minute} ${hour} * * 1-5`
+    : `${minute} ${hour} * * ${weekday}`;
 
   const toggleAgent = (id: string) =>
     setAssigned((s) => {
@@ -187,16 +234,17 @@ export default function TaskPage() {
   };
 
   const save = async () => {
-    if (!title.trim()) return setError(tr('ui.taskPage.giveTheTaskATitle'));
     if (!description.trim()) return setError(tr('ui.taskPage.describeTheTask'));
+    const finalTitle = title.trim() || titleFrom(description);
+    if (!finalTitle) return setError(tr('ui.taskPage.giveTheTaskATitle'));
     if (scheduleMode === 'once' && !scheduleAt) return setError(tr('ui.taskPage.pickATimeForThe'));
     if (scheduleMode === 'interval' && (!intervalN || Number(intervalN) < 1)) return setError(tr('ui.taskPage.intervalMustBeAtLeast'));
-    if (scheduleMode === 'cron' && !cronExpr.trim()) return setError(tr('ui.taskPage.enterACronExpression'));
+    if (scheduleMode === 'cron' && !cronLine) return setError(tr('ui.taskPage.enterACronExpression'));
     setError('');
     setSaving(true);
     if (onWeb) {
       try {
-        await sendTaskToWeb({ title: title.trim(), description: description.trim(), steps: steps.map((s) => s.step.trim()).filter(Boolean), agent_id: webAgent || null });
+        await sendTaskToWeb({ title: finalTitle, description: description.trim(), steps: steps.map((s) => s.step.trim()).filter(Boolean), agent_id: webAgent || null });
         navigate('/settings/computers');
       } catch (err) {
         setError(errorMessage(err, tr('ui.taskPage.couldNotSendTheTask')));
@@ -210,12 +258,12 @@ export default function TaskPage() {
       steps.filter((s) => s.step.trim()).forEach((s, i) => (step_instructions[i] = { step: s.step.trim(), done: s.done }));
       const res = await api.post('/tasks', {
         ...(taskId ? { id: taskId } : {}),
-        title: title.trim(),
+        title: finalTitle,
         description: description.trim(),
         step_instructions,
         assigned_agents: [...assigned],
         team_id: teamId || null,
-        autostart,
+        autostart: !editing && when === 'now',
         swarm,
         read_memory: readMemory,
         computer: computer || null,
@@ -225,7 +273,9 @@ export default function TaskPage() {
         // server treats their presence as a full respecification).
         schedule_at: scheduleMode === 'once' && scheduleAt ? new Date(scheduleAt).toISOString() : null,
         schedule_interval: scheduleMode === 'interval' ? Number(intervalN) * UNIT_SECONDS[intervalUnit] : null,
-        schedule_cron: scheduleMode === 'cron' ? cronExpr.trim() : null,
+        schedule_cron: scheduleMode === 'cron' ? cronLine : null,
+        // A clock time picked here is in this person's time zone; a custom line keeps the zone it had.
+        schedule_tz: scheduleMode === 'cron' ? (repeat === 'custom' ? cronZone : browserZone()) : null,
         schedule_enabled: scheduleMode !== 'none' && scheduleEnabled,
         ...(existing?.status ? { status: existing.status } : {}),
       });
@@ -253,14 +303,39 @@ export default function TaskPage() {
     return <div className="flex-1 flex flex-col h-full min-w-0 bg-bg"><LoadingState label={tr('ui.taskPage.loadingTask')} /></div>;
   }
 
+  const agents = (agentList || []).filter((a) => a.id);
+  const teams = (teamList || []).filter((t) => t.id);
+  // The one-line "who": a team, a single agent, or several picked under More options.
+  const who = teamId ? `team:${teamId}` : assigned.size === 1 ? `agent:${[...assigned][0]}` : assigned.size > 1 ? 'several' : '';
+  const changeWho = (value: string) => {
+    if (value.startsWith('team:')) return changeTeam(value.slice(5));
+    setTeamId('');
+    setAssigned(value.startsWith('agent:') ? new Set([value.slice(6)]) : new Set());
+  };
+  const weekdays = [1, 2, 3, 4, 5, 6, 0].map((day) => ({
+    value: String(day),
+    // 2023-01-01 was a Sunday.
+    label: new Date(2023, 0, 1 + day).toLocaleDateString(dateLocale(), { weekday: 'long' }),
+  }));
+  const whenWords: Record<When, string> = {
+    now: tr('ui.taskPage.whenNowHint'),
+    later: tr('ui.taskPage.whenLaterHint'),
+    repeat: tr('ui.taskPage.whenRepeatHint'),
+    manual: tr('ui.taskPage.whenManualHint'),
+  };
+
   return (
     <PageForm
       eyebrow={editing ? 'EDIT TASK' : 'NEW TASK'}
-      title={editing ? title || tr('ui.taskPage.editTask') : tr('ui.taskPage.newTask')}
+      trail={editing
+        ? [{ label: tr('ui.tasks.tasks'), to: '/tasks' }, { label: title || tr('ui.taskPage.editTask'), to: backTo }]
+        : [{ label: tr('ui.tasks.tasks'), to: '/tasks' }]}
+      title={editing ? tr('ui.taskPage.editTask') : tr('ui.taskPage.newTask')}
       backTo={backTo}
       error={error || agentLoadError || teamLoadError || ''}
       onSave={save}
       saving={saving}
+      saveLabel={editing ? undefined : when === 'now' ? tr('ui.taskPage.startTask') : tr('ui.taskPage.createTask')}
       onDelete={editing ? remove : undefined}
     >
       {webAccount && (
@@ -272,12 +347,114 @@ export default function TaskPage() {
         </Field>
       )}
 
-      <Field label={tr('ui.taskPage.title')} required>
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={tr('ui.taskPage.researchCompetitorPricing')} autoFocus />
+      <Field label={tr('ui.taskPage.whatShouldGetDone')} required>
+        <Textarea rows={5} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={tr('ui.taskPage.whatShouldGetDonePlaceholder')} autoFocus />
       </Field>
 
-      <Field label={tr('ui.taskPage.description')} required>
-        <Textarea rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={tr('ui.taskPage.whatShouldBeDoneAnd')} />
+      {onWeb && (
+        <Field label={tr('ui.taskPage.agentOnTheWeb')}>
+          <Select value={webAgent} onChange={(e) => setWebAgent(e.target.value)}>
+            {webAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </Select>
+        </Field>
+      )}
+
+      {!onWeb && (<>
+      <Field label={tr('ui.taskPage.whoDoesIt')} hint={who === 'several' ? tr('ui.taskPage.pickedBelow') : undefined}>
+        <Select value={who} onChange={(e) => changeWho(e.target.value)} disabled={agents.length === 0}>
+          {who === '' && <option value="">{agents.length ? tr('ui.taskPage.chooseAnAgent') : tr('ui.taskPage.noAgentsCreateOneFirst')}</option>}
+          {who === 'several' && <option value="several">{tr('ui.taskPage.severalAgents', { count: assigned.size })}</option>}
+          <optgroup label={tr('ui.taskPage.agents')}>
+            {agents.map((a) => <option key={a.id} value={`agent:${a.id}`}>{a.name}</option>)}
+          </optgroup>
+          {teams.length > 0 && (
+            <optgroup label={tr('ui.taskPage.teams')}>
+              {teams.map((t) => <option key={t.id} value={`team:${t.id}`}>{t.name}</option>)}
+            </optgroup>
+          )}
+        </Select>
+      </Field>
+
+      <Field label={tr('ui.taskPage.when')} composite>
+        <div role="group" className="space-y-3">
+          <FilterChips<When>
+            label={tr('ui.taskPage.when')}
+            value={when}
+            onChange={(next) => { if (next !== 'manual' && when === 'manual') setScheduleEnabled(true); setWhen(next); }}
+            options={[
+              ...(editing ? [] : [{ id: 'now' as const, label: tr('ui.taskPage.whenNow') }]),
+              { id: 'later', label: tr('ui.taskPage.whenLater') },
+              { id: 'repeat', label: tr('ui.taskPage.whenRepeat') },
+              { id: 'manual', label: editing ? tr('ui.taskPage.notScheduled') : tr('ui.taskPage.whenManual') },
+            ]}
+          />
+          <p className="text-[12.5px] text-fg-dim">{whenWords[when]}</p>
+          {when === 'later' && (
+            <Input aria-label={tr('ui.taskPage.scheduleTime')} type="datetime-local" min={localNowMin()} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+          )}
+          {when === 'repeat' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Select aria-label={tr('ui.taskPage.howOften')} value={repeat} onChange={(e) => setRepeat(e.target.value as Repeat)} className="w-auto min-w-[11rem]">
+                <option value="daily">{tr('ui.taskPage.everyDay')}</option>
+                <option value="weekdays">{tr('ui.taskPage.everyWeekday')}</option>
+                <option value="weekly">{tr('ui.taskPage.everyWeek')}</option>
+                <option value="hours">{tr('ui.taskPage.everyFew')}</option>
+                <option value="custom">{tr('ui.taskPage.customSchedule')}</option>
+              </Select>
+              {repeat === 'weekly' && (
+                <Select aria-label={tr('ui.taskPage.dayOfTheWeek')} value={weekday} onChange={(e) => setWeekday(e.target.value)} className="w-auto">
+                  {weekdays.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+                </Select>
+              )}
+              {(repeat === 'daily' || repeat === 'weekdays' || repeat === 'weekly') && (
+                <>
+                  <span className="text-[13px] text-fg-dim">{tr('ui.taskPage.at')}</span>
+                  <Input aria-label={tr('ui.taskPage.timeOfDay')} type="time" value={atTime} onChange={(e) => setAtTime(e.target.value || '09:00')} className="w-32" />
+                </>
+              )}
+              {repeat === 'hours' && (
+                <>
+                  <Input aria-label={tr('ui.taskPage.intervalValue')} type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(e.target.value)} className="w-24" />
+                  <Select aria-label={tr('ui.taskPage.intervalUnit')} value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)} className="w-auto">
+                    {intervalUnit === 'seconds' && <option value="seconds">{tr('ui.taskPage.seconds')}</option>}
+                    <option value="minutes">{tr('ui.taskPage.minutes')}</option>
+                    <option value="hours">{tr('ui.taskPage.hours')}</option>
+                    <option value="days">{tr('ui.taskPage.days')}</option>
+                  </Select>
+                </>
+              )}
+              {repeat === 'custom' && (
+                <div className="w-full">
+                  <Input aria-label={tr('ui.taskPage.cronExpression')} value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 9 * * 1-5" className="font-mono" />
+                  <p className="mt-1 text-[12px] text-fg-dim">
+                    {tr('ui.taskPage.customScheduleHint', { zone: cronZone || tr('ui.taskPage.theServersTimeZone') })}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          {editing && scheduleMode !== 'none' && (
+            <label className="flex min-h-11 cursor-pointer items-center gap-2.5 md:min-h-0">
+              <input type="checkbox" checked={scheduleEnabled} onChange={(e) => setScheduleEnabled(e.target.checked)} className="accent-[var(--accent)]" />
+              <span className="text-sm">{tr('ui.taskPage.scheduleEnabled')}</span>
+            </label>
+          )}
+        </div>
+      </Field>
+      </>)}
+
+      <button
+        type="button"
+        aria-expanded={showMore}
+        onClick={() => setShowMore((v) => !v)}
+        className="flex min-h-11 items-center gap-2 text-[13px] text-fg-dim transition-colors hover:text-fg md:min-h-0"
+      >
+        <span aria-hidden className={showMore ? 'rotate-90 transition-transform' : 'transition-transform'}>▸</span>{' '}{tr('ui.taskPage.moreOptions')}
+      </button>
+
+      {showMore && (<>
+      <Field label={tr('ui.taskPage.title')} hint={tr('ui.taskPage.titleHint')}>
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={titleFrom(description) || tr('ui.taskPage.researchCompetitorPricing')} />
       </Field>
 
       <Field label={tr('ui.taskPage.stepsLength', { length: steps.length })} hint={tr('ui.taskPage.optionalPlanTheTaskExplicitly')} composite>
@@ -293,26 +470,18 @@ export default function TaskPage() {
               <button type="button" onClick={() => setSteps((arr) => arr.filter((_, j) => j !== i))} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8" aria-label={tr('ui.taskPage.removeStepValue', { value: i + 1 })}>✕</button>
             </div>
           ))}
-          <button type="button" onClick={() => setSteps((arr) => [...arr, { step: '', done: false }])} className="min-h-11 rounded border border-line px-3 py-1.5 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.taskPage.addStep')}</button>
+          <button type="button" onClick={() => setSteps((arr) => [...arr, { step: '', done: false }])} className="min-h-11 rounded border border-line px-3 py-1.5 text-[12.5px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.taskPage.addStep')}</button>
         </div>
       </Field>
 
-      {onWeb && (
-        <Field label={tr('ui.taskPage.agentOnTheWeb')}>
-          <Select value={webAgent} onChange={(e) => setWebAgent(e.target.value)}>
-            {webAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </Select>
-        </Field>
-      )}
-
       {!onWeb && (<>
-      <Field label={tr('ui.taskPage.team')} hint={tr('ui.taskPage.optionalAssignTheTaskTo')}>
-        <Select value={teamId} onChange={(e) => changeTeam(e.target.value)} disabled={(teamList || []).length === 0}>
-          <option value="">{tr('ui.taskPage.noTeam')}</option>
-          {(teamList || []).filter((t) => t.id).map((t) => (
-            <option key={t.id} value={t.id}>{t.name}</option>
-          ))}
-        </Select>
+      <Field label={tr('ui.taskPage.assignedAgentsSize', { size: assigned.size })} hint={teamId ? tr('ui.taskPage.fromTheSelectedTeamEditable') : undefined} composite>
+        <CheckList
+          options={agents.map((a) => ({ value: a.id, label: a.name, sub: a.description || modelName(a.llm?.model) }))}
+          selected={assigned}
+          onToggle={toggleAgent}
+          empty={tr('ui.taskPage.noAgentsCreateOneFirst')}
+        />
       </Field>
 
       {(pcs.length > 0 || computer) && (
@@ -325,52 +494,6 @@ export default function TaskPage() {
           </Select>
         </Field>
       )}
-
-      <Field label={tr('ui.taskPage.assignedAgentsSize', { size: assigned.size })} hint={teamId ? tr('ui.taskPage.fromTheSelectedTeamEditable') : undefined} composite>
-        <CheckList
-          options={(agentList || []).filter((a) => a.id).map((a) => ({ value: a.id, label: a.name, sub: `${a.llm?.provider || '—'} · ${a.llm?.model || '—'}` }))}
-          selected={assigned}
-          onToggle={toggleAgent}
-          empty={tr('ui.taskPage.noAgentsCreateOneFirst')}
-        />
-      </Field>
-
-      <Field label={tr('ui.taskPage.schedule')} hint={tr('ui.taskPage.runThisTaskAutomatically')} composite>
-        <div role="group" className="space-y-3">
-          <Select aria-label={tr('ui.taskPage.scheduleType')} value={scheduleMode} onChange={(e) => changeScheduleMode(e.target.value as ScheduleMode)}>
-            <option value="none">{tr('ui.taskPage.notScheduled')}</option>
-            <option value="once">{tr('ui.taskPage.onceAtATime')}</option>
-            <option value="interval">{tr('ui.taskPage.repeatEvery')}</option>
-            <option value="cron">{tr('ui.taskPage.cronExpression_2348')}</option>
-          </Select>
-          {scheduleMode === 'once' && (
-            <Input aria-label={tr('ui.taskPage.scheduleTime')} type="datetime-local" min={localNowMin()} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
-          )}
-          {scheduleMode === 'interval' && (
-            <div className="flex gap-2">
-              <Input aria-label={tr('ui.taskPage.intervalValue')} type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(e.target.value)} className="w-28" />
-              <Select aria-label={tr('ui.taskPage.intervalUnit')} value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
-                <option value="seconds">{tr('ui.taskPage.seconds')}</option>
-                <option value="minutes">{tr('ui.taskPage.minutes')}</option>
-                <option value="hours">{tr('ui.taskPage.hours')}</option>
-                <option value="days">{tr('ui.taskPage.days')}</option>
-              </Select>
-            </div>
-          )}
-          {scheduleMode === 'cron' && (
-            <div>
-              <Input aria-label={tr('ui.taskPage.cronExpression')} value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 9 * * 1-5" className="font-mono" />
-              <p className="mt-1 font-mono text-[11px] text-fg-dim">5-field cron, evaluated in the server's local time</p>
-            </div>
-          )}
-          {scheduleMode !== 'none' && (
-            <label className="flex min-h-11 cursor-pointer items-center gap-2.5 md:min-h-0">
-              <input type="checkbox" checked={scheduleEnabled} onChange={(e) => setScheduleEnabled(e.target.checked)} className="accent-[var(--accent)]" />
-              <span className="text-sm">{tr('ui.taskPage.scheduleEnabled')}</span>
-            </label>
-          )}
-        </div>
-      </Field>
 
       <label className="flex min-h-11 cursor-pointer items-start gap-2.5 md:min-h-0">
         <input type="checkbox" checked={swarm} onChange={(e) => setSwarm(e.target.checked)} className="mt-1 accent-[var(--accent)]" />
@@ -387,11 +510,7 @@ export default function TaskPage() {
           <span className="block text-[12px] text-fg-dim">{tr('ui.taskPage.runsSeeWhatYourAgents')}</span>
         </span>
       </label>
-
-      <label className="flex min-h-11 cursor-pointer items-center gap-2.5 md:min-h-0">
-        <input type="checkbox" checked={autostart} onChange={(e) => setAutostart(e.target.checked)} className="accent-[var(--accent)]" />
-        <span className="text-sm">{tr('ui.taskPage.autoStartWhenCreated')}</span>
-      </label>
+      </>)}
       </>)}
     </PageForm>
   );

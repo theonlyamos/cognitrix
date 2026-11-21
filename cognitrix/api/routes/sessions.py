@@ -144,7 +144,7 @@ def _session_summary(session: Session) -> dict:
     data = session.json()
     return {
         'id': session.id,
-        'title': (getattr(session, 'title', None) or '').strip() or _session_title(session.chat),
+        'title': (getattr(session, 'title', None) or '').strip() or (getattr(session, 'auto_title', None) or '').strip() or _session_title(session.chat),
         'renamed': bool((getattr(session, 'title', None) or '').strip()),
         'pinned': bool(getattr(session, 'pinned', False)),
         'archived': bool(getattr(session, 'archived', False)),

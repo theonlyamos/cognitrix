@@ -33,6 +33,7 @@ from cognitrix.payments.models import (
     DENIED,
     EXPIRED,
     FAILED,
+    NO_AGENTS,
     PAID,
     PAYING,
     PENDING,
@@ -115,7 +116,8 @@ def same_site(host: str, site: str) -> bool:
 
 async def get_settings(user_id: str) -> PaymentSettings:
     row = await PaymentSettings.find_one({'user_id': str(user_id)})
-    return row or PaymentSettings(user_id=str(user_id))
+    # Someone who has never opened Payments starts with no agent allowed to ask.
+    return row or PaymentSettings(user_id=str(user_id), agent_ids=[NO_AGENTS])
 
 
 async def save_settings(user_id: str, **fields: Any) -> PaymentSettings:
@@ -123,6 +125,7 @@ async def save_settings(user_id: str, **fields: Any) -> PaymentSettings:
     if 'currency' in fields and str(fields['currency']).upper() not in CURRENCIES:
         raise PaymentError('Pick one of the listed currencies.')
     if row is None:
+        fields.setdefault('agent_ids', [NO_AGENTS])
         row = PaymentSettings(user_id=str(user_id), **fields)
         await row.save()
         return row

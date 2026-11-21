@@ -1,9 +1,10 @@
 import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useNotifications, type InboxApproval, type InboxItem, type InboxNotification, type InboxOffer, type InboxQuestion, type InboxSkillDraft } from '@/context/NotificationsContext';
-import { LoadingState } from '@/components/list-ui';
+import { LoadingState, PageHeader, ListToolbar, FilterChips } from '@/components/list-ui';
+import { RecentNotifications } from '@/pages/Notifications';
 import { cn } from '@/lib/utils';
 import { answerApproval } from '@/lib/approvals';
 import { tr } from '@/lib/i18n';
@@ -31,7 +32,7 @@ function Badge({ kind }: { kind: InboxItem['kind'] }) {
   return (
     <span
       className={cn(
-        'rounded px-1.5 py-0.5 font-mono text-[10px] tracking-[0.1em]',
+        'rounded-full px-2 py-0.5 text-[11px] font-medium',
         kind === 'approval' && 'bg-warn/15 text-warn-ink',
         kind === 'question' && 'bg-info/15 text-info-ink',
         kind === 'notification' && 'bg-accent/15 text-accent-ink',
@@ -39,7 +40,7 @@ function Badge({ kind }: { kind: InboxItem['kind'] }) {
         kind === 'skill_draft' && 'bg-violet/15 text-violet-ink',
       )}
     >
-      {{ approval: 'APPROVAL', notification: 'ALERT', question: 'QUESTION', offer: 'OFFER', skill_draft: 'SKILL' }[kind]}
+      {{ approval: { label: tr('ui.inbox.approval') }, notification: { label: tr('ui.inbox.alert') }, question: { label: tr('ui.inbox.question') }, offer: { label: tr('ui.inbox.offer') }, skill_draft: { label: tr('ui.inbox.skill') } }[kind].label}
     </span>
   );
 }
@@ -398,14 +399,17 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
   );
 }
 
-/** Everything waiting on you: approvals from paused task runs, questions from chats, and agent alerts. */
+type InboxTab = 'needs' | 'recent';
+
+/** One place for what agents send you: what is waiting on an answer, and what happened lately. */
 export default function Inbox() {
-  const { inbox, inboxLoaded, refreshInbox } = useNotifications();
+  const { inbox, inboxLoaded, refreshInbox, unread } = useNotifications();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const tab: InboxTab = params.get('tab') === 'recent' ? 'recent' : 'needs';
+  const setTab = (next: InboxTab) => setParams(next === 'recent' ? { tab: 'recent' } : {}, { replace: true });
 
   const selected = useMemo(() => inbox.find((i) => i.id === selectedId) ?? inbox[0] ?? null, [inbox, selectedId]);
-  const approvals = inbox.filter((i) => i.kind === 'approval').length;
-  const waitingWord = approvals === 1 ? 'approval' : 'approvals';
 
   const done = () => {
     setSelectedId(null);
@@ -413,71 +417,79 @@ export default function Inbox() {
   };
 
   return (
-    <div className="flex h-full min-w-0 flex-1 overflow-hidden bg-bg text-fg">
-      <aside
-        aria-label={tr('ui.inbox.waitingOnYou')}
-        className={cn('flex w-[320px] flex-none flex-col border-r border-line bg-panel max-md:w-full max-md:border-r-0', selectedId && 'max-md:hidden')}
-      >
-        <div className="border-b border-line px-4 py-4">
-          <h1 className="text-[17px] font-semibold">{tr('ui.inbox.inbox')}</h1>
-          <p className="mt-1 text-[12.5px] text-fg-dim">
-            {inbox.length === 0
-              ? tr('ui.inbox.nothingIsWaitingOnYou')
-              : `${inbox.length} waiting${approvals ? ` · ${approvals} ${waitingWord}` : ''}`}
-          </p>
-        </div>
-        <ul className="flex-1 overflow-y-auto p-2">
-          {!inboxLoaded && <LoadingState label={tr('ui.inbox.loadingInbox')} />}
-          {inbox.map((item) => (
-            <li key={item.id}>
-              <button
-                type="button"
-                onClick={() => setSelectedId(item.id)}
-                aria-current={selected?.id === item.id ? 'true' : undefined}
-                className={cn(
-                  'mb-1 w-full rounded-[10px] border px-3 py-3 text-left transition-colors',
-                  selected?.id === item.id ? 'border-line bg-panel-2' : 'border-transparent hover:bg-panel-2',
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <Badge kind={item.kind} />
-                  <span className="truncate text-[12px] text-fg-dim">{itemSource(item)}</span>
-                </div>
-                <div className="mt-1.5 line-clamp-2 text-[13.5px] font-medium">{itemTitle(item)}</div>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </aside>
-      <section className={cn('min-w-0 flex-1 overflow-y-auto px-7 py-6 max-md:px-4', selectedId ? 'block' : 'hidden md:block')}>
-        {selected ? (
-          <div className="mx-auto max-w-[760px]">
-            <button type="button" onClick={() => setSelectedId(null)} className="mb-4 text-[13px] text-fg-dim hover:text-fg md:hidden">
-              {tr('ui.inbox.allItems')}
-            </button>
-            {selected.kind === 'approval' ? (
-              <ApprovalDetail key={selected.id} item={selected} onDone={done} />
-            ) : selected.kind === 'notification' ? (
-              <NotificationDetail key={selected.id} item={selected} onDone={done} />
-            ) : selected.kind === 'offer' ? (
-              <OfferDetail key={selected.id} item={selected} onDone={done} />
-            ) : selected.kind === 'skill_draft' ? (
-              <SkillDraftDetail key={selected.id} item={selected} onDone={done} />
-            ) : (
-              <QuestionDetail key={selected.id} item={selected} onDone={done} />
-            )}
+    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
+      <PageHeader title={tr('ui.inbox.inbox')} subtitle={tr('ui.inbox.questionsAndApprovalsWaitingOn')} />
+      <ListToolbar>
+        <FilterChips<InboxTab>
+          label={tr('ui.inbox.show')}
+          value={tab}
+          onChange={setTab}
+          options={[
+            { id: 'needs', label: tr('ui.inbox.needsYou'), count: inbox.length },
+            { id: 'recent', label: tr('ui.inbox.recent'), count: unread },
+          ]}
+        />
+      </ListToolbar>
+      {tab === 'recent' ? (
+        <div className="min-h-0 flex-1 overflow-y-auto"><RecentNotifications /></div>
+      ) : inboxLoaded && inbox.length === 0 ? (
+        <div className="grid min-h-0 flex-1 place-items-center px-6 text-center">
+          <div>
+            <div className="text-[15px] font-medium">{tr('ui.inbox.youReAllCaughtUp')}</div>
+            <p className="mt-1 text-[13px] text-fg-dim">{tr('ui.inbox.whenATaskPausesOn')}</p>
           </div>
-        ) : (
-          inboxLoaded && (
-            <div className="grid h-full place-items-center text-center">
-              <div>
-                <div className="text-[15px] font-medium">{tr('ui.inbox.youReAllCaughtUp')}</div>
-                <p className="mt-1 text-[13px] text-fg-dim">{tr('ui.inbox.whenATaskPausesOn')}</p>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <aside
+            aria-label={tr('ui.inbox.waitingOnYou')}
+            className={cn('flex w-[320px] flex-none flex-col border-r border-line bg-panel max-md:w-full max-md:border-r-0', selectedId && 'max-md:hidden')}
+          >
+            <ul className="flex-1 overflow-y-auto p-2">
+              {!inboxLoaded && <LoadingState label={tr('ui.inbox.loadingInbox')} />}
+              {inbox.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(item.id)}
+                    aria-current={selected?.id === item.id ? 'true' : undefined}
+                    className={cn(
+                      'mb-1 w-full rounded-[10px] border px-3 py-3 text-left transition-colors',
+                      selected?.id === item.id ? 'border-line bg-panel-2' : 'border-transparent hover:bg-panel-2',
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge kind={item.kind} />
+                      <span className="truncate text-[12px] text-fg-dim">{itemSource(item)}</span>
+                    </div>
+                    <div className="mt-1.5 line-clamp-2 text-[13.5px] font-medium">{itemTitle(item)}</div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </aside>
+          <section className={cn('min-w-0 flex-1 overflow-y-auto px-7 py-6 max-md:px-4', selectedId ? 'block' : 'hidden md:block')}>
+            {selected && (
+              <div className="mx-auto max-w-[760px]">
+                <button type="button" onClick={() => setSelectedId(null)} className="mb-4 text-[13px] text-fg-dim hover:text-fg md:hidden">
+                  {tr('ui.inbox.allItems')}
+                </button>
+                {selected.kind === 'approval' ? (
+                  <ApprovalDetail key={selected.id} item={selected} onDone={done} />
+                ) : selected.kind === 'notification' ? (
+                  <NotificationDetail key={selected.id} item={selected} onDone={done} />
+                ) : selected.kind === 'offer' ? (
+                  <OfferDetail key={selected.id} item={selected} onDone={done} />
+                ) : selected.kind === 'skill_draft' ? (
+                  <SkillDraftDetail key={selected.id} item={selected} onDone={done} />
+                ) : (
+                  <QuestionDetail key={selected.id} item={selected} onDone={done} />
+                )}
               </div>
-            </div>
-          )
-        )}
-      </section>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }

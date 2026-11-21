@@ -374,6 +374,7 @@ _TASK_MIGRATION_COLUMNS = (
     ('created_by', 'TEXT'), ('report_to', 'TEXT'), ('report_only_on', 'TEXT'),
     ('project_id', 'TEXT'),
     ('computer', 'TEXT'),
+    ('schedule_tz', 'TEXT'),
 )
 
 _USER_MIGRATION_COLUMNS = (
@@ -479,6 +480,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('public_link_id', 'TEXT'), ('visitor_key', 'TEXT'),
     ('loaded_tools', 'TEXT'),
     ('project_id', 'TEXT'),
+    ('auto_title', 'TEXT'),
 )
 
 _CHAT_INDEX_MIGRATION_COLUMNS = (

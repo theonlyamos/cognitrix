@@ -46,10 +46,12 @@ import { useOptionalUser } from '@/context/AppContext';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 import { takeChatAutoSend, takeChatDraft } from '@/lib/chatDraft';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { CHATS_EDITED, chatsStale, setChatNav, type ChatsEditedDetail } from '@/lib/chatNav';
+import { CHATS_EDITED, chatHref, chatsStale, newChatHref, setChatNav, type ChatsEditedDetail } from '@/lib/chatNav';
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 import { setViewingChat } from '@/lib/chatPresence';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
+import { useIsPhone } from '@/hooks/useIsPhone';
+import { ACCEPT_ATTR, DOC_EXT, MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES, type Attachment } from '@/lib/chatAttachments';
 import { tr, dateLocale } from '@/lib/i18n';
 import ComputerChip from '@/components/ComputerChip';
 import { PcScreenPanel } from '@/components/PcScreen';
@@ -105,26 +107,8 @@ const isWideScreen = () => typeof window === 'undefined' || !window.matchMedia |
 const STOP_RECONCILE_DELAY_MS = 4_000;
 
 // ── Attachments ──
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
-const MAX_FILES = 20;
 /** Id prefix for messages held on the page until a new chat has its id. */
 const HELD_PREFIX = 'held-';
-
-// Accepted attachments: images + common document types. Keep DOC_EXT and
-// ACCEPT_ATTR in sync — `accept` filters the file picker; addFiles re-checks so
-// drag-drop/paste can't slip other types in.
-const DOC_EXT = /\.(pdf|txt|md|markdown|csv|tsv|docx?|xlsx?|pptx?|rtf|odt|ods|odp|json|log)$/i;
-const ACCEPT_ATTR = 'image/*,.pdf,.txt,.md,.markdown,.csv,.tsv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.rtf,.odt,.ods,.odp,.json,.log';
-
-interface Attachment {
-  id: string;
-  kind: 'image' | 'file';
-  name: string;
-  mime: string;
-  file: File;
-  previewUrl?: string;
-}
 
 type EditSource =
   | { type: 'artifact'; artifact: ToolArtifact }
@@ -181,6 +165,7 @@ export default function Home() {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isPhone = useIsPhone();
 
   // Voice input: the transcript goes in at the cursor, ready to edit.
   const voice = useVoiceInput({
@@ -1749,7 +1734,7 @@ export default function Home() {
   const openChat = (chat: ChatSummary) => {
     if (chat.kind === 'team') {
       leaveRunningTurn();
-      navigate(`/teams/${chat.team_id}/chat?chat=${encodeURIComponent(chat.id)}`);
+      navigate(chatHref(chat));
       return;
     }
     if (!chat.agent_id || chat.agent_id === agentId) {
@@ -1768,28 +1753,60 @@ export default function Home() {
     openChat({ id: chatId, kind: 'agent', agent_id: worker?.agent_id || agentId } as ChatSummary);
   };
 
-  // /home?chat=<id> (from an Inbox alert) opens that chat once the list has it.
+  // The address names the chat on screen: /home?chat=<id>. A link, a bookmark
+  // or the back button opens that chat; opening a chat here updates the address.
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedChat = searchParams.get('chat');
+  // The chat id this page last wrote to (or read from) the address.
+  const addressChatRef = useRef<string | null>(null);
+  // A chat id in the address that has not been opened yet (first load, back button).
+  const pendingLinkRef = useRef<string | null>(linkedChat);
+  if (linkedChat !== addressChatRef.current && linkedChat) pendingLinkRef.current = linkedChat;
   useEffect(() => {
-    if (!linkedChat || !allChatsData) return;
+    if (!linkedChat || linkedChat === addressChatRef.current || !allChatsData) return;
     const chat = allChatsData.find((c) => c.id === linkedChat);
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.delete('chat');
-      return next;
-    }, { replace: true });
-    if (chat) openChat(chat);
+    addressChatRef.current = linkedChat;
+    pendingLinkRef.current = null;
+    if (chat) {
+      if (chat.id !== activeRef.current) openChat(chat);
+    } else {
+      // A link to a chat that is gone: drop it.
+      addressChatRef.current = null;
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('chat');
+        return next;
+      }, { replace: true });
+    }
     // openChat changes every render; this runs once per link.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedChat, allChatsData]);
+  const shownChatId = incognito ? null : activeSessionId;
+  useEffect(() => {
+    // Wait a moment: switching agents passes through "no chat" on the way.
+    const timer = window.setTimeout(() => {
+      if (pendingLinkRef.current) return;
+      const inAddress = new URLSearchParams(window.location.search).get('chat');
+      if (shownChatId === inAddress) { addressChatRef.current = inAddress; return; }
+      addressChatRef.current = shownChatId;
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (shownChatId) next.set('chat', shownChatId);
+        else next.delete('chat');
+        return next;
+        // Chat to chat is a step back can undo; a new chat getting its id is not.
+      }, { replace: !inAddress });
+    }, 200);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownChatId]);
 
   // Start a fresh chat with an agent, or open a team's group chat.
   const startChatWith = (target: PickTarget) => {
     setPicking(false);
     if (target.kind === 'team') {
       leaveRunningTurn();
-      navigate(`/teams/${target.id}/chat`);
+      navigate(newChatHref(target));
       return;
     }
     if (target.id === agentId) {
@@ -1872,6 +1889,22 @@ export default function Home() {
   const acceptNextStep = useCallback((step: string) => {
     void sendRef.current(tr('ui.home.yesGoAheadStep', { step }), 'chat', null, { keepComposer: true });
   }, []);
+  // A page published twice in one turn shows one card: the newest version's.
+  const supersededCards = useMemo(() => {
+    const hidden = new Map<string, string>();
+    let latest = new Map<string, { messageId: string; toolId: string }>();
+    for (const message of messages) {
+      if (message.role === 'user') { latest = new Map(); continue; }
+      (message.tools ?? []).forEach((tool, index) => {
+        const published = tool.status === 'done' ? publishedFrom(tool.name, tool.result ?? undefined) : null;
+        if (!published) return;
+        const before = latest.get(published.id);
+        if (before) hidden.set(before.messageId, [hidden.get(before.messageId), before.toolId].filter(Boolean).join(','));
+        latest.set(published.id, { messageId: message.id, toolId: tool.id || String(index) });
+      });
+    }
+    return hidden;
+  }, [messages]);
   let lastReplyIndex = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i].role === 'assistant' && messages[i].content.trim()) {
@@ -2182,6 +2215,35 @@ export default function Home() {
               onToggle: () => void toggleSandbox(),
               hideTag: pcs.length > 0,
             } : undefined}
+            phone={isPhone}
+            onLiveVoice={() => setLiveVoice(true)}
+            liveVoiceDisabled={!isConnected}
+            settings={(
+              <>
+                <ChatModelPicker agentLlm={currentAgent?.llm} value={chatModel} onChange={changeChatModel} />
+                {(pcs.length > 0 || chatPc) && (
+                  <ComputerChip
+                    devices={pcs}
+                    value={chatPc}
+                    onChange={(id) => void changeComputer(id)}
+                    usualIsSandbox={runInSandbox}
+                    onPair={() => navigate('/settings/computers')}
+                    onOpen={refreshPcs}
+                    disabled={busy}
+                  />
+                )}
+                {!chatPc && (
+                  <FolderChips
+                    variant="button"
+                    className="min-w-0"
+                    folders={shownFolders}
+                    onChange={changeFolders}
+                    emptyLabel={tr('ui.home.scratchFolder')}
+                    disabled={busy}
+                  />
+                )}
+              </>
+            )}
           >
             {empty && (
               <div className="min-w-0 flex-none">
@@ -2198,37 +2260,15 @@ export default function Home() {
                 )}
               </span>
             )}
-            <ChatModelPicker agentLlm={currentAgent?.llm} value={chatModel} onChange={changeChatModel} />
-            {(pcs.length > 0 || chatPc) && (
-              <ComputerChip
-                devices={pcs}
-                value={chatPc}
-                onChange={(id) => void changeComputer(id)}
-                usualIsSandbox={runInSandbox}
-                onPair={() => navigate('/settings/computers')}
-                onOpen={refreshPcs}
-                disabled={busy}
-              />
-            )}
-            {!chatPc && (
-              <FolderChips
-                variant="button"
-                className="min-w-0"
-                folders={shownFolders}
-                onChange={changeFolders}
-                emptyLabel={tr('ui.home.scratchFolder')}
-                disabled={busy}
-              />
-            )}
           </ComposerMenu>
           </div>
           <span className="flex-1" />
           {!voice.active && !liveVoice && !(busy && input.trim()) && (
             <>
               {activeSessionId && (
-                <SideQuestionButton onClick={() => setSideOpen((v) => !v)} active={sideOpen} className="rounded-lg" />
+                <SideQuestionButton onClick={() => setSideOpen((v) => !v)} active={sideOpen} className="rounded-lg max-sm:hidden" />
               )}
-              <LiveVoiceButton onClick={() => setLiveVoice(true)} disabled={!isConnected} className="rounded-lg" />
+              {!isPhone && <LiveVoiceButton onClick={() => setLiveVoice(true)} disabled={!isConnected} className="rounded-lg" />}
               <MicButton voice={voice} className="rounded-lg" />
             </>
           )}
@@ -2282,9 +2322,12 @@ export default function Home() {
         <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{steerError}</div>
       )}
       <VoiceNotice voice={voice} />
-      <div className="mt-1.5 hidden items-center gap-x-4 px-2 text-[11px] text-fg-dim md:flex">
-        <SendKeyHint />
-      </div>
+      {/* Key hints: only before the first message, and never over the theme's drawing. */}
+      {empty && (
+        <div className="mt-1.5 hidden items-center gap-x-4 px-2 text-[11px] text-fg-dim md:flex">
+          <SendKeyHint />
+        </div>
+      )}
     </div>
   );
 
@@ -2310,11 +2353,6 @@ export default function Home() {
             </h1>
           </div>
           <div className="flex flex-none items-center gap-1">
-            {(chatModel || agentModel(currentAgent)) && (
-              <span className="hidden max-w-[220px] truncate rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-dim lg:inline" title={tr('ui.home.model')}>
-                {chatModel ? `${chatModel.provider} · ${chatModel.model}` : agentModel(currentAgent)}
-              </span>
-            )}
             {isConnected ? (
               <span className="sr-only">{tr('ui.home.connectionStatusConnected')}</span>
             ) : (
@@ -2395,6 +2433,7 @@ export default function Home() {
                   onEdit={canRework && isUserTurn(message) ? startRework : undefined}
                   onRegenerate={canRework && index === lastReplyIndex && canRegenerate ? regenerate : undefined}
                   onNextStep={index === messages.length - 1 && index === lastReplyIndex && !busy ? acceptNextStep : undefined}
+                  supersededCards={supersededCards.get(message.id)}
                 />
               ))}
 

@@ -3,10 +3,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useResource } from '@/hooks/useResource';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
-import { LoadingState, ErrorState, Chevron } from '@/components/list-ui';
-import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
-import { cn } from '@/lib/utils';
+import { LoadingState, ErrorState, Chevron, StatusPill, Trail } from '@/components/list-ui';
+import { DesktopMoreMenu, MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
 import { TaskAssignmentPanel, type TaskRecord } from '@/components/TaskAssignmentPanel';
+import { modelName } from '@/lib/plain';
 import { tr } from '@/lib/i18n';
 
 interface Agent { id: string; name: string; llm?: { provider?: string; model?: string } }
@@ -47,7 +47,7 @@ export default function TeamDetail() {
     setActionError('');
     try {
       await api.delete(`/teams/${team.id}`);
-      navigate('/teams');
+      navigate('/agents?tab=teams');
     } catch (deleteError) {
       setActionError(errorMessage(deleteError, tr('ui.teamDetail.couldNotDeleteTheTeam')));
     }
@@ -64,18 +64,18 @@ export default function TeamDetail() {
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
       <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
-          <Link to="/teams" aria-label={tr('ui.teamDetail.backToTeams')} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
+          <Link to="/agents?tab=teams" aria-label={tr('ui.teamDetail.backToTeams')} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
           <div className="min-w-0">
-            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">{tr('ui.teamDetail.team')}</p>
+            <div className="hidden md:block"><Trail steps={[{ label: tr('ui.teamDetail.agents'), to: '/agents' }, { label: tr('ui.teamDetail.teams'), to: '/agents?tab=teams' }]} /></div>
             <h1 className="truncate text-lg font-semibold tracking-tight">{team.name}</h1>
           </div>
         </div>
         <div className="flex flex-none items-center gap-1 md:gap-2">
           {members.length > 0 && (
             <Button asChild size="sm" className="w-11 px-0 md:w-auto md:px-3">
-              <Link to={`/teams/${team.id}/chat`} aria-label={tr('ui.teamDetail.openGroupChat')}>
+              <Link to={`/home?team=${team.id}`} aria-label={tr('ui.teamDetail.openGroupChat')}>
                 <svg className="h-4 w-4 md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
                 <span className="sr-only md:not-sr-only">{tr('ui.teamDetail.groupChat')}</span>
               </Link>
@@ -87,9 +87,7 @@ export default function TeamDetail() {
               <span className="sr-only md:not-sr-only">{tr('ui.teamDetail.edit')}</span>
             </Link>
           </Button>
-          <div className="hidden items-center gap-2 md:flex">
-            <Button variant="ghost" size="sm" onClick={remove} className="hover:text-danger-ink">{tr('ui.teamDetail.delete')}</Button>
-          </div>
+          <DesktopMoreMenu actions={mobileActions} />
           <MobileHeaderActions id={`team-${team.id}-actions`} actions={mobileActions} />
         </div>
       </header>
@@ -98,7 +96,7 @@ export default function TeamDetail() {
         <div className="mx-auto max-w-3xl space-y-8 px-6 py-8">
           {actionError && <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{actionError}</p>}
           {team.description && <p className="max-w-2xl text-fg-dim">{team.description}</p>}
-          <div className="font-mono text-[11px] text-fg-dim">{tr('ui.teamDetail.teamSliceLengthMembersValue', { slice: team.id.slice(0, 8), length: members.length, value: taskList ? tasks.length : '—' })}</div>
+          <div className="text-[13px] text-fg-dim">{tr('ui.teamDetail.membersAndTasks', { length: members.length, value: taskList ? tasks.length : '—' })}</div>
 
           <section>
             <h2 className="mb-3 font-mono text-[11px] tracking-[0.16em] text-fg-dim">{tr('ui.teamDetail.members')}</h2>
@@ -112,7 +110,7 @@ export default function TeamDetail() {
                       <span className="grid h-7 w-7 flex-none place-items-center rounded-sm border border-line bg-panel-2 text-[11px] font-bold text-accent-ink">{agent.name[0]?.toUpperCase()}</span>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-[14px] font-medium group-hover:text-accent-ink">{agent.name}{team.leader_id === agent.id && <span className="ml-2 rounded border border-accent/40 px-1.5 py-px font-mono text-[10px] text-accent-ink">{tr('ui.teamDetail.lead')}</span>}</div>
-                        <div className="truncate font-mono text-[10.5px] text-fg-dim">{agent.llm?.provider || '—'} · {agent.llm?.model || '—'}</div>
+                        <div className="truncate text-[12.5px] text-fg-dim">{agent.llm?.model ? modelName(agent.llm.model) : '—'}</div>
                       </div>
                       <Chevron />
                     </Link>
@@ -144,14 +142,7 @@ export default function TeamDetail() {
                 {tasks.map((task) => (
                   <li key={task.id}><Link aria-label={task.title} aria-describedby={`team-task-status-${task.id}`} to={`/tasks/${task.id}`} className="group flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 hover:bg-panel-2">
                     <div className="min-w-0 flex-1 truncate text-[14px] font-medium group-hover:text-accent-ink">{task.title}</div>
-                    <span id={`team-task-status-${task.id}`} className={cn(
-                      'rounded border px-2 py-0.5 font-mono text-[10.5px]',
-                      task.status === 'completed' ? 'border-ok/40 text-ok'
-                        : task.status === 'in_progress' ? 'border-accent/40 text-accent-ink'
-                          : task.status === 'failed' ? 'border-danger/40 text-danger-ink'
-                            : task.status === 'cancelled' ? 'border-danger/30 text-fg-dim'
-                              : 'border-line text-fg-dim',
-                    )}>{task.status || tr('ui.teamDetail.pending')}</span>
+                    <span id={`team-task-status-${task.id}`}><StatusPill status={task.status} /></span>
                     <Chevron />
                   </Link></li>
                 ))}

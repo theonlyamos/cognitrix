@@ -34,6 +34,7 @@ import { api } from '@/lib/api';
 import { ArtifactFrame } from '@/components/artifacts/ArtifactFrame';
 import { LiveBadge } from '@/components/artifacts/ArtifactViewer';
 import type { PagePower, PageSummary } from '@/lib/artifactPages';
+import { modelName, scheduleInWords, statusLabel } from '@/lib/plain';
 import { tr, dateLocale, trn } from '@/lib/i18n';
 
 interface Agent {
@@ -62,6 +63,8 @@ interface TaskRow {
   run_status?: string | null;
   run_started_at?: string | null;
   run_completed_at?: string | null;
+  /** Set on the task behind an agent's check-ins. */
+  standing_agent_id?: string | null;
 }
 
 interface AutomationRow {
@@ -114,23 +117,13 @@ function nextAt(a: AutomationRow): string | null {
   return times.sort((x, y) => (parseUtc(x) ?? 0) - (parseUtc(y) ?? 0))[0];
 }
 
-function every(seconds: number): string {
-  if (seconds === 86400) return 'daily';
-  if (seconds === 3600) return 'hourly';
-  if (seconds === 604800) return 'weekly';
-  if (seconds % 86400 === 0) return `every ${seconds / 86400} d`;
-  if (seconds % 3600 === 0) return `every ${seconds / 3600} h`;
-  if (seconds % 60 === 0) return `every ${seconds / 60} min`;
-  return `every ${seconds} s`;
-}
-
 function howItRuns(a: AutomationRow): string {
-  if (a.schedule_cron) return `cron ${a.schedule_cron}`;
-  if (a.schedule_interval) return every(a.schedule_interval);
-  if (a.schedule_at) return 'runs once';
-  if (a.wake_pending) return 'agent checks back';
-  if (a.triggers.some((t) => t.enabled)) return 'on webhook';
-  return 'paused';
+  const words = { once: { label: tr('ui.dashboard.runsOnce') }, checks: { label: tr('ui.dashboard.theAgentChecksBack') }, event: { label: tr('ui.dashboard.whenSomethingHappens') }, paused: { label: tr('ui.dashboard.paused') } };
+  const schedule = scheduleInWords(a);
+  if (schedule) return schedule;
+  if (a.wake_pending) return words.checks.label;
+  if (a.triggers.some((t) => t.enabled)) return words.event.label;
+  return words.paused.label;
 }
 
 function inboxTitle(item: InboxItem): string {
@@ -154,11 +147,11 @@ function inboxHref(item: InboxItem): string {
 }
 
 const KIND_STYLE: Record<InboxItem['kind'], { label: string; className: string }> = {
-  approval: { label: 'APPROVAL', className: 'bg-warn/15 text-warn-ink' },
-  question: { label: 'QUESTION', className: 'bg-info/15 text-info-ink' },
-  notification: { label: 'ALERT', className: 'bg-accent/15 text-accent-ink' },
-  offer: { label: 'OFFER', className: 'bg-ok/15 text-ok' },
-  skill_draft: { label: 'SKILL', className: 'bg-violet/15 text-violet-ink' },
+  approval: { get label() { return tr('ui.dashboard.approval'); }, className: 'bg-warn/15 text-warn-ink' },
+  question: { get label() { return tr('ui.dashboard.question'); }, className: 'bg-info/15 text-info-ink' },
+  notification: { get label() { return tr('ui.dashboard.alert'); }, className: 'bg-accent/15 text-accent-ink' },
+  offer: { get label() { return tr('ui.dashboard.offer'); }, className: 'bg-ok/15 text-ok' },
+  skill_draft: { get label() { return tr('ui.dashboard.skill'); }, className: 'bg-violet/15 text-violet-ink' },
 };
 
 /* ------------------------------------------------------------------ pieces */
@@ -306,6 +299,60 @@ function StatTile({
   );
 }
 
+const TRY_NEXT_KEY = 'home.tryNext.hidden';
+
+/** A short list of first things to do; it goes away once they are done or dismissed. */
+function TryNext({ ready, hasChat, hasTask, hasSchedule, className }: {
+  ready: boolean; hasChat: boolean; hasTask: boolean; hasSchedule: boolean; className?: string;
+}) {
+  const [apps, setApps] = useState<boolean | null>(null);
+  const [hidden, setHidden] = useState(() => {
+    try { return localStorage.getItem(TRY_NEXT_KEY) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    if (hidden) return;
+    let alive = true;
+    api.get<{ apps?: { connection?: unknown }[]; custom?: unknown[] }>('/mcp/apps')
+      .then(({ data }) => { if (alive) setApps((data.apps ?? []).some((a) => a.connection) || (data.custom ?? []).length > 0); })
+      .catch(() => { if (alive) setApps(true); });
+    return () => { alive = false; };
+  }, [hidden]);
+  const steps = [
+    { done: hasChat, to: '/home', label: tr('ui.dashboard.askYourAssistantSomething'), detail: tr('ui.dashboard.startWithAQuestionOr') },
+    { done: apps === true, to: '/settings/apps', label: tr('ui.dashboard.connectAnApp'), detail: tr('ui.dashboard.mailCalendarOrFilesSo') },
+    { done: hasTask, to: '/tasks/new', label: tr('ui.dashboard.handOverATask'), detail: tr('ui.dashboard.describeAPieceOfWork') },
+    { done: hasSchedule, to: '/tasks/new?repeat=1', label: tr('ui.dashboard.makeSomethingRepeat'), detail: tr('ui.dashboard.aDigestEveryMondayA') },
+  ];
+  if (hidden || !ready || apps === null || steps.every((s) => s.done)) return null;
+  const hide = () => {
+    setHidden(true);
+    try { localStorage.setItem(TRY_NEXT_KEY, '1'); } catch { /* storage off */ }
+  };
+  return (
+    <section aria-labelledby="try-next" className={cn('rounded-[14px] border border-line bg-panel', className)}>
+      <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+        <h2 id="try-next" className="text-[14px] font-semibold">{tr('ui.dashboard.tryNext')}</h2>
+        <button type="button" onClick={hide} className="text-[12.5px] text-fg-dim hover:text-fg">{tr('ui.dashboard.hide')}</button>
+      </div>
+      <ul className="grid gap-px sm:grid-cols-2">
+        {steps.map((step) => (
+          <li key={step.to}>
+            <Link to={step.to} className="group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-panel-2/60">
+              <span aria-hidden="true" className={cn('mt-0.5 grid h-[18px] w-[18px] flex-none place-items-center rounded-full border', step.done ? 'border-ok/50 bg-ok/10 text-ok' : 'border-line text-transparent')}>
+                <CheckCircle2 className="h-3 w-3" />
+              </span>
+              <span className="min-w-0">
+                <span className={cn('block text-[13.5px] font-medium group-hover:text-accent-ink', step.done && 'text-fg-dim line-through')}>{step.label}</span>
+                <span className="block text-[12.5px] text-fg-dim">{step.detail}</span>
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /* ------------------------------------------------------------------- page */
 
 export default function Dashboard() {
@@ -343,7 +390,9 @@ export default function Dashboard() {
   const agentById = useMemo(() => new Map(agentList.map((a) => [a.id, a])), [agentList]);
   const chatList = (chats.data ?? []).filter((c) => !c.archived);
   const taskList = tasks.data ?? [];
-  const automationList = automations.data ?? [];
+  // Check-ins belong to their agent's page, like on the Tasks list.
+  const checkIns = new Set(taskList.filter((t) => t.standing_agent_id).map((t) => t.id));
+  const automationList = (automations.data ?? []).filter((a) => !checkIns.has(a.id));
   const activeChatRuns = runs.data?.runs ?? [];
 
   const runningTasks = taskList.filter((t) => t.run_status && ACTIVE_RUN.has(t.run_status));
@@ -417,7 +466,6 @@ export default function Dashboard() {
   const today = new Date().toLocaleDateString(dateLocale(), { weekday: 'long', month: 'long', day: 'numeric' });
 
   const summary: string[] = [];
-  if (inboxLoaded) summary.push(inbox.length ? tr('ui.dashboard.pluralWaitingOnYou', { plural: plural(inbox.length, 'thing') }) : tr('ui.dashboard.nothingWaitingOnYou'));
   const working = workingAgents.size + runningTasks.length;
   if (working) summary.push(tr('ui.dashboard.workingWorkingRightNow', { working }));
   if (nextRun) summary.push(tr('ui.dashboard.nextAutomationTimeuntil', { timeUntil: timeUntil(nextRun, now) }));
@@ -525,7 +573,7 @@ export default function Dashboard() {
               detail={working ? [workingAgents.size && plural(activeChatRuns.length, 'chat'), runningTasks.length && plural(runningTasks.length, 'task')].filter(Boolean).join(' · ') : tr('ui.dashboard.agentsAreIdle')}
             />
             <StatTile
-              to="/automations"
+              to="/tasks?show=scheduled"
               label={tr('ui.dashboard.automations')}
               icon={Zap}
               value={automations.data ? automationList.length : '–'}
@@ -557,6 +605,14 @@ export default function Dashboard() {
             />
           </section>
 
+          <TryNext
+            className="mt-6"
+            ready={Boolean(chats.data && tasks.data && automations.data)}
+            hasChat={chatList.length > 0}
+            hasTask={taskList.some((t) => !t.standing_agent_id)}
+            hasSchedule={automationList.length > 0}
+          />
+
           <BriefCard className="mt-6" />
 
           {/* Main grid */}
@@ -571,19 +627,14 @@ export default function Dashboard() {
                 </Card>
               ))}
               {/* Needs you */}
+              {inbox.length > 0 && (
               <Card title={tr('ui.dashboard.needsYou')} icon={InboxIcon} action={inbox.length > 0 ? <CardLink to="/inbox">{tr('ui.dashboard.openInbox')}</CardLink> : undefined}>
-                {!inboxLoaded ? (
-                  <Skeleton rows={2} />
-                ) : inbox.length === 0 ? (
-                  <Quiet icon={CheckCircle2}>
-                    <span className="font-medium text-fg">{tr('ui.dashboard.youReAllCaughtUp')}</span>{' '}{tr('ui.dashboard.approvalsQuestionsAndAlertsFrom')}
-                  </Quiet>
-                ) : (
+                {(
                   <ul className="divide-y divide-line">
                     {inbox.slice(0, 4).map((item) => (
                       <li key={`${item.kind}:${item.id}`}>
                         <Link to={inboxHref(item)} className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-panel-2/60">
-                          <span className={cn('w-[74px] flex-none rounded px-1.5 py-0.5 text-center font-mono text-[9.5px] tracking-[0.1em]', KIND_STYLE[item.kind].className)}>
+                          <span className={cn('w-[74px] flex-none rounded-full px-1.5 py-0.5 text-center text-[11px] font-medium', KIND_STYLE[item.kind].className)}>
                             {KIND_STYLE[item.kind].label}
                           </span>
                           <span className="min-w-0 flex-1">
@@ -600,6 +651,7 @@ export default function Dashboard() {
                   <div className="border-t border-line px-4 py-2 font-mono text-[11px] text-fg-dim">{tr('ui.dashboard.valueMoreInYourInbox', { value: inbox.length - 4 })}</div>
                 )}
               </Card>
+              )}
 
               {/* Recent chats */}
               <Card title={tr('ui.dashboard.recentChats')} icon={MessageSquare} action={<CardLink to="/home">{tr('ui.dashboard.allChats')}</CardLink>}>
@@ -612,7 +664,7 @@ export default function Dashboard() {
                     {chatList.slice(0, 6).map((c) => {
                       const agent = c.agent_id ? agentById.get(c.agent_id) : undefined;
                       const name = c.kind === 'team' ? tr('ui.dashboard.teamChat') : agent?.name || tr('ui.dashboard.agent');
-                      const href = c.kind === 'team' && c.team_id ? `/teams/${c.team_id}/chat?chat=${encodeURIComponent(c.id)}` : `/home?chat=${encodeURIComponent(c.id)}`;
+                      const href = c.kind === 'team' && c.team_id ? `/home?team=${c.team_id}&chat=${encodeURIComponent(c.id)}` : `/home?chat=${encodeURIComponent(c.id)}`;
                       return (
                         <li key={c.id}>
                           <Link to={href} className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-panel-2/60">
@@ -673,8 +725,8 @@ export default function Dashboard() {
                             </span>
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-[13.5px] font-medium group-hover:text-accent-ink">{t.title}</span>
-                              <span className={cn('block truncate font-mono text-[11px]', failed ? 'text-danger-ink' : active ? 'text-accent-ink' : 'text-fg-dim')}>
-                                {t.run_status}
+                              <span className={cn('block truncate text-[12px]', failed ? 'text-danger-ink' : active ? 'text-accent-ink' : 'text-fg-dim')}>
+                                {statusLabel(t.run_status)}
                               </span>
                             </span>
                             {when && <span className="flex-none font-mono text-[10.5px] text-fg-dim">{when}</span>}
@@ -703,7 +755,7 @@ export default function Dashboard() {
                 ) : (
                   <ul className="p-1.5">
                     {topAgents.map((a) => {
-                      const model = a.llm?.model || a.llm?.provider || '';
+                      const model = modelName(a.llm?.model) || a.llm?.provider || '';
                       const count = chatsPerAgent.get(a.id) ?? 0;
                       return (
                         <li key={a.id}>
@@ -714,7 +766,7 @@ export default function Dashboard() {
                                 <span className="truncate text-[13.5px] font-medium group-hover:text-accent-ink">{a.name}</span>
                                 {workingAgents.has(a.id) && <LiveDot />}
                               </span>
-                              {model && <span className="block truncate font-mono text-[10.5px] text-fg-dim">{model}</span>}
+                              {model && <span className="block truncate text-[12px] text-fg-dim">{model}</span>}
                             </span>
                             <span className="flex-none font-mono text-[10.5px] text-fg-dim">{plural(count, 'chat')}</span>
                           </Link>
@@ -726,7 +778,7 @@ export default function Dashboard() {
               </Card>
 
               {/* Coming up */}
-              <Card title={tr('ui.dashboard.comingUp')} icon={Clock3} action={<CardLink to="/automations">{tr('ui.dashboard.automations_8254')}</CardLink>}>
+              <Card title={tr('ui.dashboard.comingUp')} icon={Clock3} action={<CardLink to="/tasks?show=scheduled">{tr('ui.dashboard.automations_8254')}</CardLink>}>
                 {automations.loading && !automations.data ? (
                   <Skeleton rows={2} />
                 ) : upcoming.length === 0 ? (
@@ -736,14 +788,14 @@ export default function Dashboard() {
                     <span aria-hidden="true" className="absolute bottom-5 left-[23px] top-5 w-px bg-line" />
                     {upcoming.slice(0, 4).map(({ a, at }) => (
                       <li key={a.id}>
-                        <Link to={`/tasks/${a.id}?automation=1`} className="group relative flex items-start gap-3 py-2">
+                        <Link to={`/tasks/${a.id}`} className="group relative flex items-start gap-3 py-2">
                           <span
                             aria-hidden="true"
                             className={cn('relative mt-1 h-[9px] w-[9px] flex-none rounded-full border-2 bg-panel', at ? 'border-accent-ink' : 'border-line')}
                           />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-[13px] font-medium group-hover:text-accent-ink">{a.title}</span>
-                            <span className="block truncate font-mono text-[10.5px] text-fg-dim">{howItRuns(a)}</span>
+                            <span className="block truncate text-[12px] text-fg-dim">{howItRuns(a)}</span>
                           </span>
                           <span className={cn('flex-none font-mono text-[10.5px]', at ? 'text-fg' : 'text-fg-dim')}>{at ? timeUntil(at, now) : '—'}</span>
                         </Link>
@@ -789,7 +841,7 @@ export default function Dashboard() {
                           return (
                             <li key={`${m.provider}:${m.model}`}>
                               <div className="flex items-center justify-between gap-2 text-[12px]">
-                                <span className="truncate font-mono text-fg">{m.model}</span>
+                                <span className="truncate text-fg">{modelName(m.model)}</span>
                                 <span className="flex-none font-mono text-fg-dim">{Math.round(share * 100)}%</span>
                               </div>
                               <div className="mt-1 h-1 overflow-hidden rounded-full bg-panel-2">

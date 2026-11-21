@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { AppWindow, LayoutGrid, Pin, Plus, Rows3, Search } from 'lucide-react';
+import { AppWindow, LayoutGrid, Pin, Rows3, Search } from 'lucide-react';
 import { AccessLabel, AppStatusBadge, AppThumbnail, Sparkline } from '@/components/hosted-apps/parts';
 import { EmptyState, ErrorState, LoadingState } from '@/components/list-ui';
 import { api, errorMessage } from '@/lib/api';
@@ -8,9 +8,11 @@ import { ago } from '@/lib/artifactPages';
 import { saveAppsView, savedAppsView, type AppList, type AppSummary, type AppsView } from '@/lib/hostedApps';
 import { cn } from '@/lib/utils';
 import Artifacts, { type ArtifactKind } from '@/pages/Artifacts';
+import Knowledge from '@/pages/Knowledge';
+import { PageHeader, NewButton } from '@/components/list-ui';
 import { tr } from '@/lib/i18n';
 
-type Tab = 'apps' | ArtifactKind;
+type Tab = 'apps' | 'knowledge' | ArtifactKind;
 type Filter = 'all' | 'online' | 'asleep' | 'pinned' | 'mine';
 
 const TABS: { id: Tab; label: string }[] = [
@@ -19,6 +21,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'boards', get label() { return tr('ui.apps.sheetsBoards'); } },
   { id: 'images', get label() { return tr('ui.apps.images'); } },
   { id: 'documents', get label() { return tr('ui.apps.docs'); } },
+  { id: 'knowledge', get label() { return tr('ui.apps.knowledge'); } },
   { id: 'shared', get label() { return tr('ui.apps.sharedWithMe'); } },
 ];
 const FILTERS: { id: Filter; label: string }[] = [
@@ -63,9 +66,9 @@ function AppTable({ apps }: { apps: AppSummary[] }) {
     <div className="overflow-x-auto">
       <table className="w-full min-w-[760px] border-collapse text-[13px]">
         <thead>
-          <tr className="text-left font-mono text-[10px] uppercase tracking-[0.14em] text-fg-dim">
-            {['Name', 'Status', 'Who can open', 'Visits · 7 days', 'Built by', 'Updated'].map((h) => (
-              <th key={h} className="border-b border-line px-3 py-2 font-medium">{h}</th>
+          <tr className="text-left text-[12px] text-fg-dim">
+            {[{ label: tr('ui.apps.name') }, { label: tr('ui.apps.status') }, { label: tr('ui.apps.whoCanOpen') }, { label: tr('ui.apps.visitsLast7Days') }, { label: tr('ui.apps.builtBy') }, { label: tr('ui.apps.updated') }].map((h) => (
+              <th key={h.label} className="border-b border-line px-3 py-2 font-medium">{h.label}</th>
             ))}
           </tr>
         </thead>
@@ -208,24 +211,15 @@ function AppsTab() {
   );
 }
 
-/** Apps: live tools agents built, plus the pages, images and documents they made (the old Artifacts page). */
+/** The Library: live apps agents built, the pages, images and documents they made, and the knowledge they read. */
 export default function Apps() {
   const [params, setParams] = useSearchParams();
   const tab = (TABS.find((t) => t.id === params.get('tab'))?.id ?? 'apps') as Tab;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="app-page-header flex items-end gap-3 border-b border-line pb-3 pl-16 pr-4 pt-4 md:px-6 md:pt-5">
-        <div className="min-w-0">
-          <h1 className="text-[20px] font-semibold md:text-[22px]">{tr('ui.apps.apps')}</h1>
-          <p className="mt-1 truncate font-mono text-[11.5px] text-fg-dim">
-            <span className="hidden md:inline">{tr('ui.apps.liveToolsYourAgentsBuilt')}</span>
-            <span className="md:hidden">{tr('ui.apps.toolsYourAgentsBuilt')}</span>
-          </p>
-        </div>
-        <Link to="/apps/new" className="ml-auto inline-flex h-9 flex-none items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-semibold text-accent-foreground">
-          <Plus size={15} aria-hidden /><span className="hidden sm:inline">{tr('ui.apps.createApp')}</span><span className="sm:hidden">{tr('ui.apps.new')}</span>
-        </Link>
-      </header>
+      <PageHeader title={tr('ui.apps.library')} subtitle={tr('ui.apps.whatYourAgentsMadeAnd')}>
+        <NewButton to="/apps/new" label={tr('ui.apps.newApp')} />
+      </PageHeader>
       <nav role="tablist" aria-label={tr('ui.apps.whatToShow')} className="flex flex-none gap-1 overflow-x-auto border-b border-line px-2 md:px-5">
         {TABS.map((t) => (
           <button key={t.id} type="button" role="tab" aria-selected={tab === t.id}
@@ -236,7 +230,7 @@ export default function Apps() {
           </button>
         ))}
       </nav>
-      {tab === 'apps' ? <AppsTab /> : <div className="min-h-0 flex-1"><Artifacts kind={tab} /></div>}
+      {tab === 'apps' ? <AppsTab /> : tab === 'knowledge' ? <div className="min-h-0 flex-1"><Knowledge embedded /></div> : <div className="min-h-0 flex-1"><Artifacts kind={tab} /></div>}
     </div>
   );
 }

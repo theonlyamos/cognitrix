@@ -33,7 +33,7 @@ describe('AccountMenu', () => {
     expect(screen.queryByRole('menu')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     expect(screen.getByRole('menuitem', { name: 'Settings' })).toHaveAttribute('href', '/settings');
-    expect(screen.getByRole('menuitem', { name: 'API Keys' })).toHaveAttribute('href', '/api-keys');
+    expect(screen.getByRole('menuitem', { name: 'Developer keys' })).toHaveAttribute('href', '/api-keys');
   });
 
   it("opens the What's new window", async () => {

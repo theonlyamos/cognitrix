@@ -16,6 +16,7 @@ import { AgentBadge } from '@/components/StartChat';
 import { SwarmCard } from '@/components/SwarmCard';
 import type { Swarm } from '@/lib/swarms';
 import type { AppViewSummary } from '@/lib/appViews';
+import { modelName, statusLabel } from '@/lib/plain';
 import { tr } from '@/lib/i18n';
 import { ChatTokenStats, tokenSummary, useChatTokenUsage } from '@/components/ChatTokenStats';
 import type { ChangeSource } from '@/lib/fileChanges';
@@ -178,8 +179,9 @@ export function ChatSidebar(props: ChatSidebarProps) {
     return next;
   });
 
-  const section = (id: SidebarSection, aside: ReactNode, body: ReactNode) => {
-    if (hidden.has(id)) return null;
+  // A section with nothing in it stays out of the way until it has something.
+  const section = (id: SidebarSection, aside: ReactNode, body: ReactNode, has = true) => {
+    if (hidden.has(id) || !has) return null;
     const label = SIDEBAR_SECTIONS.find((s) => s.id === id)!.label;
     const open = !closed.has(id);
     return (
@@ -191,8 +193,8 @@ export function ChatSidebar(props: ChatSidebarProps) {
           className="flex min-h-11 w-full items-center gap-2 text-left md:min-h-0"
         >
           <span aria-hidden className={cn('w-3 flex-none text-center text-[8px] text-fg-dim transition-transform', !open && '-rotate-90')}>▼</span>
-          <span className="flex-1 font-mono text-[10px] uppercase tracking-[0.16em] text-fg-dim">{label}</span>
-          <span className="font-mono text-[10.5px] text-fg-dim">{aside}</span>
+          <span className="flex-1 text-[12.5px] font-medium text-fg-dim">{label}</span>
+          <span className="text-[12px] text-fg-dim">{aside}</span>
         </button>
         {open && <div className="mt-2.5">{body}</div>}
       </section>
@@ -221,7 +223,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
           </button>
           {customizing && (
             <div role="menu" aria-label={tr('ui.chatSidebar.sections')} className="absolute right-0 top-full z-30 mt-1 w-52 rounded-lg border border-line bg-panel p-1.5 shadow-lg">
-              <div className="px-2 pb-1 pt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-fg-dim">{tr('ui.chatSidebar.showSections')}</div>
+              <div className="px-2 pb-1 pt-1 text-[12px] font-medium text-fg-dim">{tr('ui.chatSidebar.showSections')}</div>
               {SIDEBAR_SECTIONS.map((s) => (
                 <label key={s.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded px-2 text-[13px] hover:bg-panel-2 md:min-h-8">
                   <input type="checkbox" checked={!hidden.has(s.id)} onChange={() => toggleHidden(s.id)} className="accent-[var(--accent)]" />
@@ -237,9 +239,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
       </header>
 
       <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto">
-        {section('swarm', swarmsRunning ? 'running' : swarms.length || '', swarms.length === 0
-          ? empty(tr('ui.chatSidebar.whenTheAgentSplitsA'))
-          : (
+        {section('swarm', swarmsRunning ? statusLabel('running') : swarms.length || '', (
             <div className="flex flex-col gap-2">
               {swarms.slice(0, 5).map((swarm) => (
                 <SwarmCard
@@ -253,9 +253,9 @@ export function ChatSidebar(props: ChatSidebarProps) {
                 />
               ))}
             </div>
-          ))}
+          ), swarms.length > 0)}
 
-        {props.pc ? section('computer', props.pc.online && !props.pc.paused ? 'pc' : 'off', (
+        {props.pc ? section('computer', '', (
           <>
             {props.pc.powers.includes('apps') && <button type="button" onClick={props.onOpenComputer} className="block w-full text-left" aria-label={tr('ui.chatSidebar.openNameSScreen', { name: props.pc.name })}><PcScreen device={props.pc} every={4000} /></button>}
             <div className="mt-2 flex items-center gap-2 text-[12.5px]">
@@ -264,7 +264,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
             </div>
             {props.sessionId && props.pc.online && <PcChanges sessionId={props.sessionId} busy={props.busy} />}
           </>
-        )) : section('computer', desktop ? 'live' : sandboxOn ? 'idle' : 'off', desktop ? (
+        )) : section('computer', '', desktop ? (
           <>
             <ComputerPreview desktop={desktop} label={about.agentName} onOpen={props.onOpenComputer} />
             <div className="mt-2 flex items-center gap-2 text-[12.5px]">
@@ -280,11 +280,9 @@ export function ChatSidebar(props: ChatSidebarProps) {
             {empty(tr('ui.chatSidebar.agentnameIsnTUsingIts', { agentName: about.agentName }))}
             <button type="button" onClick={props.onOpenComputer} className={cn(smallButton, 'mt-2')}>{tr('ui.chatSidebar.openTheComputerPanel')}</button>
           </>
-        ) : empty(tr('ui.chatSidebar.theSandboxedComputerIsOff')))}
+        ) : empty(tr('ui.chatSidebar.theSandboxedComputerIsOff')), Boolean(desktop))}
 
-        {props.onOpenChanges && section('changes', (props.changes ?? []).reduce((n, s) => n + s.files.length, 0) || '', (props.changes ?? []).length === 0
-          ? empty(tr('ui.fileChanges.sidebarEmpty'))
-          : (
+        {props.onOpenChanges && section('changes', (props.changes ?? []).reduce((n, s) => n + s.files.length, 0) || '', (
             <div className="flex flex-col gap-3">
               {(props.changes ?? []).map((src) => (
                 <div key={src.key}>
@@ -311,8 +309,8 @@ export function ChatSidebar(props: ChatSidebarProps) {
                 {tr('ui.fileChanges.reviewAll')}
               </button>
             </div>
-          ))}
-        {section('waiting', waiting.length || '', waiting.length === 0 ? empty(tr('ui.chatSidebar.nothingIsWaitingOnYou')) : (
+          ), (props.changes ?? []).length > 0)}
+        {section('waiting', waiting.length || '', (
           <ul className="flex flex-col gap-2">
             {waiting.map((item) => (
               <li key={item.id} className="rounded-lg border border-[#ffb86b]/50 bg-[#ffb86b]/10 px-2.5 py-2 text-[12.5px]">
@@ -330,9 +328,9 @@ export function ChatSidebar(props: ChatSidebarProps) {
               </li>
             ))}
           </ul>
-        ))}
+        ), waiting.length > 0)}
 
-        {section('artifacts', pages.length || '', pages.length === 0 ? empty(tr('ui.chatSidebar.pagesThisChatPublishesShow')) : (
+        {section('artifacts', pages.length || '', (
           <ul className="-mx-1.5 flex flex-col">
             {pages.map((page) => (
               <li key={page.id}>
@@ -347,7 +345,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-medium">{page.title}</span>
                     <span className="block truncate font-mono text-[10.5px] text-fg-dim">
-                      v{page.version} · {ago(page.updated)}
+                      {ago(page.updated)}
                       {page.live && tr('ui.chatSidebar.live')}
                       {props.newPageIds?.has(page.id) && <span className="ml-1.5 rounded-[3px] bg-accent px-1 text-[9.5px] text-accent-foreground">{tr('ui.chatSidebar.new')}</span>}
                     </span>
@@ -356,7 +354,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
               </li>
             ))}
           </ul>
-        ))}
+        ), pages.length > 0)}
 
         {(props.appViews?.length ?? 0) > 0 && section('apps', props.appViews!.length, (
           <ul className="-mx-1.5 flex flex-col">
@@ -380,7 +378,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
           </ul>
         ))}
 
-        {section('files', images.length + files.length || '', images.length + files.length === 0 ? empty(tr('ui.chatSidebar.imagesAndDocumentsFromThis')) : (
+        {section('files', images.length + files.length || '', (
           <div className="flex flex-col gap-2.5">
             {images.length > 0 && (
               <div className="grid grid-cols-3 gap-1.5 [&_img]:aspect-square [&_img]:w-full [&_img]:object-cover">
@@ -397,9 +395,9 @@ export function ChatSidebar(props: ChatSidebarProps) {
               </ul>
             )}
           </div>
-        ))}
+        ), images.length + files.length > 0)}
 
-        {section('activity', props.busy ? 'working' : activity.length ? `${activity.length} steps` : '', activity.length === 0
+        {section('activity', props.busy ? statusLabel('running') : activity.length || '', activity.length === 0
           ? empty(props.busy ? tr('ui.chatSidebar.thinking') : tr('ui.chatSidebar.stepsTheAgentTakesIn'))
           : (
             <ol className="flex flex-col gap-1.5 text-[12.5px]">
@@ -413,11 +411,11 @@ export function ChatSidebar(props: ChatSidebarProps) {
                 </li>
               ))}
             </ol>
-          ))}
+          ), props.busy || activity.length > 0)}
 
         {section('folders', props.folders.length || '', (
           <FolderChips folders={props.folders} onChange={props.onChangeFolders} emptyLabel={tr('ui.chatSidebar.privateScratchFolder')} disabled={props.foldersDisabled} />
-        ))}
+        ), props.folders.length > 0)}
 
         {props.sessionId && section('tokens', tokenSummary(tokenUsage), <ChatTokenStats usage={tokenUsage} />)}
 
@@ -427,7 +425,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
             <dd className="min-w-0 truncate">
               <Link to={`/agents/${about.agentId}`} className="hover:underline">{about.agentName}</Link>
             </dd>
-            {about.model && (<><dt className={term}>{tr('ui.chatSidebar.model')}</dt><dd className="min-w-0 truncate" title={about.model}>{about.model}</dd></>)}
+            {about.model && (<><dt className={term}>{tr('ui.chatSidebar.model')}</dt><dd className="min-w-0 truncate" title={about.model}>{modelName(about.model.split(' · ').pop()) || about.model}</dd></>)}
             {about.reasoning && (<><dt className={term}>{tr('ui.chatSidebar.reasoning')}</dt><dd className="min-w-0 truncate">{about.reasoning}</dd></>)}
             <dt className={term}>{tr('ui.chatSidebar.messages')}</dt><dd>{about.messages}</dd>
             {about.started && (<><dt className={term}>{tr('ui.chatSidebar.started')}</dt><dd className="min-w-0 truncate">{about.started}</dd></>)}
@@ -484,4 +482,4 @@ function FileRow({ file }: { file: FileItem }) {
 
 const iconButton = 'inline-flex h-11 w-11 flex-none items-center justify-center rounded-lg text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8 md:w-8';
 const smallButton = 'inline-flex min-h-11 items-center rounded-md border border-line px-2.5 text-[12px] hover:bg-panel-2 md:min-h-7';
-const term = 'pt-px font-mono text-[10.5px] text-fg-dim';
+const term = 'pt-px text-[12px] text-fg-dim';

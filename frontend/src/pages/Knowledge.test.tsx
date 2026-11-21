@@ -45,6 +45,7 @@ describe('Knowledge web pages', () => {
 
   it('adds a page or a site section', async () => {
     render(<MemoryRouter><Knowledge /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a link' }));
     fireEvent.change(await screen.findByLabelText('Web page address'), { target: { value: 'https://example.com/docs/' } });
     fireEvent.change(screen.getByLabelText('How much of the site to read'), { target: { value: '10' } });
     fireEvent.change(screen.getByLabelText('How often to read it again'), { target: { value: '1' } });
@@ -52,5 +53,19 @@ describe('Knowledge web pages', () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/knowledge/c1/urls', {
       url: 'https://example.com/docs/', max_pages: 10, refresh_days: 1,
     }));
+  });
+
+  it('says which agents and projects use a collection', async () => {
+    api.get.mockImplementation((path: string) => Promise.resolve({
+      data: path === '/agents' ? [{ id: 'a1', name: 'Helper', knowledge: ['c1'] }, { id: 'a2', name: 'Writer', knowledge: [] }]
+        : path === '/projects' ? { projects: [{ id: 'p1', name: 'Launch', knowledge: ['c1'] }] }
+        : [docs, { ...docs, id: 'c2', name: 'Unused notes', documents: [] }],
+    }));
+    render(<MemoryRouter><Knowledge /></MemoryRouter>);
+    const used = await screen.findByTestId('readers-c1');
+    expect(used).toHaveTextContent('Used by Helper, the Launch project');
+    expect(screen.getByRole('link', { name: 'Helper' })).toHaveAttribute('href', '/agents/a1/connections');
+    expect(screen.getByRole('link', { name: 'the Launch project' })).toHaveAttribute('href', '/projects/p1');
+    expect(screen.getByTestId('readers-c2')).toHaveTextContent('No agent uses this yet');
   });
 });

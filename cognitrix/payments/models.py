@@ -12,6 +12,10 @@ COUNTED = (PENDING, APPROVED, PAYING, PAID, UNCONFIRMED)
 """Requests whose amounts count against the monthly limit."""
 
 
+NO_AGENTS = 'none'
+"""Stands in the list of agents for "nobody yet": no agent has this id."""
+
+
 class PaymentSettings(Model):
     user_id: str
     enabled: bool = False
@@ -22,7 +26,8 @@ class PaymentSettings(Model):
     monthly_cents: int = 20_000
     """The most all approved payments in a calendar month (UTC) may add up to."""
     agent_ids: list[str] = []
-    """The agents that may ask; empty means all of the person's agents."""
+    """The agents that may ask. Empty means all of the person's agents (how
+    older settings were saved); ``[NO_AGENTS]`` means none of them."""
 
     @validator('enabled', pre=True)
     def _bool(cls, value):

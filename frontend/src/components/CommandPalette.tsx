@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { chatHref, newChatHref } from '@/lib/chatNav';
+import { modelName, statusLabel } from '@/lib/plain';
 import { tr } from '@/lib/i18n';
 
 interface AgentLite {
@@ -39,7 +40,7 @@ interface ChatHit {
 
 interface Item {
   id: string;
-  group: 'Actions' | 'Chats' | 'Agents' | 'Tasks' | 'Teams';
+  group: 'Actions' | 'Chats' | 'Agents' | 'Tasks' | 'Teams' | 'Projects' | 'Library' | 'Memory' | 'Settings';
   label: string;
   hint?: string;
   shortcut?: string;
@@ -47,7 +48,16 @@ interface Item {
   run: () => void;
 }
 
-/** Ctrl K: search actions, chats, agents, tasks and teams in one list. */
+const GROUP_WORDS: Record<Item['group'], { label: string }> = {
+  Actions: { get label() { return tr('ui.commandPalette.actions'); } }, Chats: { get label() { return tr('ui.commandPalette.chats'); } }, Agents: { get label() { return tr('ui.commandPalette.agents'); } }, Tasks: { get label() { return tr('ui.commandPalette.tasks'); } }, Teams: { get label() { return tr('ui.commandPalette.teams'); } },
+  Projects: { get label() { return tr('ui.commandPalette.projects'); } }, Library: { get label() { return tr('ui.commandPalette.library'); } }, Memory: { get label() { return tr('ui.commandPalette.memory'); } }, Settings: { get label() { return tr('ui.commandPalette.settings'); } },
+};
+
+interface Named { id: string; name: string; description?: string }
+interface PageLite { id: string; title: string }
+interface MemoryLite { id: string; content: string }
+
+/** Ctrl K: one search over everything: chats, agents, tasks, teams, projects, the library, memories and settings. */
 export default function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -56,6 +66,11 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
   const [tasks, setTasks] = useState<TaskLite[]>([]);
   const [teams, setTeams] = useState<TeamLite[]>([]);
   const [chats, setChats] = useState<ChatLite[]>([]);
+  const [projects, setProjects] = useState<Named[]>([]);
+  const [pages, setPages] = useState<PageLite[]>([]);
+  const [apps, setApps] = useState<PageLite[]>([]);
+  const [collections, setCollections] = useState<Named[]>([]);
+  const [memories, setMemories] = useState<MemoryLite[]>([]);
   const [hits, setHits] = useState<ChatHit[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -70,6 +85,13 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
     api.get<TaskLite[]>('/tasks').then((r) => setTasks(r.data ?? [])).catch(() => {});
     api.get<TeamLite[]>('/teams').then((r) => setTeams(r.data ?? [])).catch(() => {});
     api.get<ChatLite[]>('/sessions/chats').then((r) => setChats(r.data ?? [])).catch(() => {});
+    api.get<{ projects: Named[] }>('/projects').then((r) => setProjects(r.data?.projects ?? [])).catch(() => {});
+    api.get<{ pages: PageLite[] }>('/artifact-pages').then((r) => setPages(r.data?.pages ?? [])).catch(() => {});
+    api.get<{ apps: PageLite[] }>('/hosted-apps').then((r) => setApps(r.data?.apps ?? [])).catch(() => {});
+    api.get<Named[] | { collections: Named[] }>('/knowledge')
+      .then((r) => setCollections(Array.isArray(r.data) ? r.data : r.data?.collections ?? []))
+      .catch(() => {});
+    api.get<{ memories: MemoryLite[] }>('/memories').then((r) => setMemories(r.data?.memories ?? [])).catch(() => {});
   }, [open]);
 
   // Words in a chat's messages, not just its title (three letters or more).
@@ -97,35 +119,50 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
       { id: 'new-chat', group: 'Actions', label: tr('ui.commandPalette.newChat'), hint: tr('ui.commandPalette.talkToYourSelectedAgent'), shortcut: 'Ctrl N', run: go(newChatHref()) },
       { id: 'run-task', group: 'Actions', label: tr('ui.commandPalette.runTask'), hint: tr('ui.commandPalette.planAndExecuteWithAn'), run: go('/tasks/new') },
       { id: 'inbox', group: 'Actions', label: tr('ui.commandPalette.openInbox'), hint: tr('ui.commandPalette.approvalsQuestionsAndAgentAlerts'), run: go('/inbox') },
-      { id: 'automations', group: 'Actions', label: tr('ui.commandPalette.openAutomations'), hint: tr('ui.commandPalette.scheduledSelfCheckingAndWebhook'), run: go('/automations') },
+      { id: 'scheduled', group: 'Actions', label: tr('ui.commandPalette.scheduledTasks'), hint: tr('ui.commandPalette.tasksThatRunOnTheir'), keywords: 'automations schedule recurring webhooks', run: go('/tasks?show=scheduled') },
       { id: 'new-agent', group: 'Actions', label: tr('ui.commandPalette.newAgent'), run: go('/agents/new') },
       { id: 'new-team', group: 'Actions', label: tr('ui.commandPalette.newTeam'), run: go('/teams/new') },
-      { id: 'notifications', group: 'Actions', label: tr('ui.commandPalette.notifications'), keywords: 'alerts bell', run: go('/notifications') },
-      { id: 'settings', group: 'Actions', label: tr('ui.commandPalette.settings'), keywords: 'engine providers keys sign out preferences', run: go('/settings') },
-      { id: 'settings-models', group: 'Actions', label: tr('ui.commandPalette.settingsModelsAndKeys'), keywords: 'provider api key openai anthropic gemini groq', run: go('/settings/models') },
-      { id: 'settings-appearance', group: 'Actions', label: tr('ui.commandPalette.settingsAppearance'), keywords: 'theme dark light', run: go('/settings/appearance') },
-      { id: 'settings-access', group: 'Actions', label: tr('ui.commandPalette.settingsAgentAccess'), keywords: 'working folder mcp servers saved sign-ins', run: go('/settings/access') },
-      { id: 'settings-chat-apps', group: 'Actions', label: tr('ui.commandPalette.settingsChatApps'), keywords: 'telegram slack', run: go('/settings/chat-apps') },
-      { id: 'api-keys', group: 'Actions', label: tr('ui.commandPalette.apiKeys'), keywords: 'tokens access', run: go('/api-keys') },
+      { id: 'library', group: 'Actions', label: tr('ui.commandPalette.openTheLibrary'), hint: tr('ui.commandPalette.appsPagesImagesDocumentsAnd'), keywords: 'artifacts apps knowledge', run: go('/apps') },
+    ];
+    const settings: Item[] = [
+      { id: 'settings', group: 'Settings', label: tr('ui.commandPalette.settings'), keywords: 'preferences', run: go('/settings') },
+      { id: 'settings-account', group: 'Settings', label: tr('ui.commandPalette.accountAndDevices'), keywords: 'password sign out export profile signed in sessions', run: go('/settings/account') },
+      { id: 'settings-appearance', group: 'Settings', label: tr('ui.commandPalette.appearance'), keywords: 'theme dark light language', run: go('/settings/appearance') },
+      { id: 'settings-notifications', group: 'Settings', label: tr('ui.commandPalette.notifications'), keywords: 'alerts bell push', run: go('/settings/notifications') },
+      { id: 'settings-models', group: 'Settings', label: tr('ui.commandPalette.modelsAndKeys'), keywords: 'provider api key openai anthropic gemini groq chatgpt', run: go('/settings/models') },
+      { id: 'settings-usage', group: 'Settings', label: tr('ui.commandPalette.usageAndLimits'), keywords: 'cost spend tokens money helpers swarm', run: go('/settings/usage') },
+      { id: 'settings-assistant', group: 'Settings', label: tr('ui.commandPalette.assistant'), keywords: 'check in morning brief quiet hours proactive', run: go('/settings/assistant') },
+      { id: 'settings-memory', group: 'Settings', label: tr('ui.commandPalette.memoryAndSkills'), keywords: 'remember forget tidy instructions', run: go('/settings/memory') },
+      { id: 'settings-voice', group: 'Settings', label: tr('ui.commandPalette.voice'), keywords: 'microphone dictation spoken replies', run: go('/settings/voice') },
+      { id: 'settings-connections', group: 'Settings', label: tr('ui.commandPalette.connections'), keywords: 'connected apps github gmail google mcp passwords telegram slack email', run: go('/settings/apps') },
+      { id: 'settings-computers', group: 'Settings', label: tr('ui.commandPalette.computers'), keywords: 'pc pair sandbox working folder', run: go('/settings/computers') },
+      { id: 'api-keys', group: 'Settings', label: tr('ui.commandPalette.developerKeys'), keywords: 'api tokens access scripts', run: go('/api-keys') },
     ];
     const agentItems: Item[] = agents.map((a) => ({
       id: `agent-${a.id}`,
       group: 'Agents',
       label: tr('ui.commandPalette.newChatWithName', { name: a.name }),
-      hint: [a.llm?.provider, a.llm?.model].filter(Boolean).join(' · '),
+      hint: modelName(a.llm?.model),
       run: go(newChatHref({ kind: 'agent', id: a.id })),
     }));
     const taskItems: Item[] = tasks.map((t) => ({
       id: `task-${t.id}`,
       group: 'Tasks',
       label: t.title,
-      hint: t.status?.replace('_', ' '),
+      hint: statusLabel(t.status),
       run: go(`/tasks/${t.id}`),
     }));
     const teamItems: Item[] = teams.flatMap((t) => [
       { id: `team-${t.id}`, group: 'Teams' as const, label: t.name, run: go(`/teams/${t.id}`) },
-      { id: `team-chat-${t.id}`, group: 'Teams' as const, label: tr('ui.commandPalette.groupChatName', { name: t.name }), run: go(`/teams/${t.id}/chat`) },
+      { id: `team-chat-${t.id}`, group: 'Teams' as const, label: tr('ui.commandPalette.groupChatName', { name: t.name }), run: go(`/home?team=${t.id}`) },
     ]);
+    const projectItems: Item[] = projects.map((p) => ({ id: `project-${p.id}`, group: 'Projects', label: p.name, hint: p.description, run: go(`/projects/${p.id}`) }));
+    const libraryItems: Item[] = [
+      ...apps.map((a) => ({ id: `app-${a.id}`, group: 'Library' as const, label: a.title, hint: tr('ui.commandPalette.app'), run: go(`/apps/${a.id}`) })),
+      ...pages.map((a) => ({ id: `page-${a.id}`, group: 'Library' as const, label: a.title, hint: tr('ui.commandPalette.page'), run: go(`/artifacts/${a.id}`) })),
+      ...collections.map((c) => ({ id: `knowledge-${c.id}`, group: 'Library' as const, label: c.name, hint: tr('ui.commandPalette.knowledge'), run: go('/apps?tab=knowledge') })),
+    ];
+    const memoryItems: Item[] = memories.map((m) => ({ id: `memory-${m.id}`, group: 'Memory', label: m.content, run: go('/settings/memory') }));
     const byId = new Map(chats.map((c) => [c.id, c]));
     const chatItems: Item[] = chats.filter((c) => !c.archived).map((c) => ({
       id: `chat-${c.id}`,
@@ -145,9 +182,11 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
     return [
       ...actions.filter(matches),
       ...[...titled, ...found].slice(0, 8),
-      ...[...agentItems, ...taskItems, ...teamItems].filter(matches),
-    ].slice(0, 30);
-  }, [agents, tasks, teams, chats, hits, query, navigate]);
+      ...[...agentItems, ...taskItems, ...teamItems, ...projectItems, ...libraryItems].filter(matches),
+      ...memoryItems.filter(matches).slice(0, 4),
+      ...settings.filter(matches),
+    ].slice(0, 40);
+  }, [agents, tasks, teams, chats, hits, projects, pages, apps, collections, memories, query, navigate]);
 
   useEffect(() => setActive(0), [query]);
 
@@ -213,7 +252,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
             return (
               <div key={item.id}>
                 {header && (
-                  <div className="px-2.5 pb-1 pt-3 font-mono text-[10px] tracking-[0.14em] text-fg-dim first:pt-1.5">{header.toUpperCase()}</div>
+                  <div className="px-2.5 pb-1 pt-3 text-[12px] font-medium text-fg-dim first:pt-1.5">{GROUP_WORDS[header].label}</div>
                 )}
                 <div
                   id={`palette-${item.id}`}

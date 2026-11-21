@@ -307,7 +307,11 @@ class Session(Model):
     deleted when the person leaves it (or after a day)."""
 
     title: str | None = None
-    """A name the person gave this chat. None: the list shows its first message."""
+    """A name the person gave this chat. None: the list shows ``auto_title``,
+    or the first message until there is one."""
+
+    auto_title: str | None = None
+    """A short title the model wrote after the first reply (sessions/titles.py)."""
 
     pinned: bool | None = None
     """Kept at the top of the chat list."""
@@ -1669,6 +1673,10 @@ class Session(Model):
 
             if persist_history:
                 await self.save()
+                if interface in ('web', 'ws'):
+                    # Name the chat once its first reply is in (one short call, in the background).
+                    from cognitrix.sessions import titles as chat_titles
+                    chat_titles.schedule(self, agent)
             if compact_history:
                 try:
                     await self._maybe_compact(agent)

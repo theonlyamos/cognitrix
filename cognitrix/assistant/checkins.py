@@ -81,6 +81,24 @@ async def change_marker(owner: str, agent: Any, settings: Any, now: datetime | N
     return signals.fingerprint(sit, extra)
 
 
+async def has_something_to_watch(owner: str) -> bool:
+    """Whether this person connected anything a check-in could look at: an app
+    of their own (mail, calendar, files...) or mail the assistant receives.
+    When it can't tell, it says yes, so check-ins are never held back by a fault."""
+    try:
+        from cognitrix.mcp import registry
+
+        for config in await registry.visible_servers(owner):
+            if registry._owner(config.owner_id) == registry._owner(owner) and getattr(config, 'enabled', True):
+                return True
+        from cognitrix.assistant import mail
+
+        return bool(await mail.recent(owner, include_skipped=True))
+    except Exception:
+        logger.debug('Could not tell whether anything is connected', exc_info=True)
+        return True
+
+
 async def gate_checkin(task: Any, now: datetime | None = None) -> tuple[bool, str]:
     """Whether a scheduled check-in may start a run. (allowed, reason when not)."""
     from cognitrix.assistant import proactivity as p
@@ -99,6 +117,10 @@ async def gate_checkin(task: Any, now: datetime | None = None) -> tuple[bool, st
         await _note_limit(owner)
         return False, "today's token limit for proactive work is used up"
     state = _state(agent)
+    if not state.get('last_run_at') and not await has_something_to_watch(owner):
+        # Nothing has ever run and there is nothing to look at yet: wait, and
+        # spend no tokens, until the person connects a first app or mailbox.
+        return False, 'waiting for a first connected app'
     every = standing.settings_of(agent)['every_minutes']
     backoff = settings.backoff or 1
     last = state.get('last_run_at')

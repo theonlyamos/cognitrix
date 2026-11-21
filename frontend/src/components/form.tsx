@@ -2,6 +2,7 @@ import { useId, isValidElement, cloneElement, Fragment, type ReactNode, type Rea
 import { Link } from 'react-router-dom';
 import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
 import { Button } from '@/lib/components/ui/button';
+import { Trail } from '@/components/list-ui';
 import { tr } from '@/lib/i18n';
 
 export function Field({
@@ -32,11 +33,11 @@ export function Field({
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-3">
-        <label id={labelId} htmlFor={controlId} className="font-mono text-[11px] tracking-[0.12em] text-fg-dim">
+        <label id={labelId} htmlFor={controlId} className="text-[13px] font-medium text-fg">
           {label}
           {required && <span className="text-accent-ink"> *</span>}
         </label>
-        {hint && <span className="font-mono text-[10.5px] text-fg-dim/70">{hint}</span>}
+        {hint && <span className="text-[12px] text-fg-dim">{hint}</span>}
       </div>
       {control}
     </div>
@@ -81,35 +82,32 @@ export function CheckList({
 
 export function PageForm({
   eyebrow,
+  trail,
   title,
   backTo,
   error,
   onSave,
   saving,
+  saveLabel,
   onDelete,
   extraActions,
   children,
 }: {
   eyebrow: string;
+  /** Where this page hangs, e.g. [{ label: 'Agents', to: '/agents' }]. */
+  trail?: { label: string; to: string }[];
   title: string;
   backTo: string;
   error?: string;
   onSave: () => void;
   saving?: boolean;
+  /** The main button's words when "Save" would undersell it ("Start task"). */
+  saveLabel?: string;
   onDelete?: () => void;
   extraActions?: ReactNode;
   children: ReactNode;
 }) {
   const entityLabel = eyebrow.toLowerCase().replace(/^(edit|new)\s+/, '');
-  // Known headings shown in the app's language; anything else as given.
-  const EYEBROWS: Record<string, string> = {
-    'NEW AGENT': tr('ui.form.eyebrow.newAgent'),
-    'EDIT AGENT': tr('ui.form.eyebrow.editAgent'),
-    'NEW TEAM': tr('ui.form.eyebrow.newTeam'),
-    'EDIT TEAM': tr('ui.form.eyebrow.editTeam'),
-    'NEW TASK': tr('ui.form.eyebrow.newTask'),
-    'EDIT TASK': tr('ui.form.eyebrow.editTask'),
-  };
   const ENTITIES: Record<string, string> = {
     agent: tr('ui.form.entity.agent'),
     team: tr('ui.form.entity.team'),
@@ -124,15 +122,8 @@ export function PageForm({
     <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
       <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-          <Link
-            to={backTo}
-            aria-label={tr('ui.form.backToList')}
-            className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
-          </Link>
           <div className="min-w-0 overflow-hidden">
-            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">{EYEBROWS[eyebrow] ?? eyebrow}</p>
+            <Trail steps={trail ?? [{ label: tr('ui.form.backToList'), to: backTo }]} />
             <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
           </div>
         </div>
@@ -152,12 +143,12 @@ export function PageForm({
           <Button
             size="sm"
             className="w-11 px-0 md:w-auto md:px-3"
-            aria-label={saving ? tr('ui.form.saving') : tr('ui.form.saveChanges')}
+            aria-label={saving ? tr('ui.form.saving') : saveLabel ?? tr('ui.form.saveChanges')}
             onClick={onSave}
             disabled={saving}
           >
             <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l4 4L19 6" /></svg>
-            <span className="sr-only md:not-sr-only">{saving ? tr('ui.form.saving') : tr('ui.form.save')}</span>
+            <span className="sr-only md:not-sr-only">{saving ? tr('ui.form.saving') : saveLabel ?? tr('ui.form.save')}</span>
           </Button>
           {saving && <span role="status" className="sr-only">{tr('ui.form.saving')}</span>}
         </div>

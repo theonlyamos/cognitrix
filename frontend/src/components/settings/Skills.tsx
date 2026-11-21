@@ -5,7 +5,7 @@ import { Group, SettingRow, SubHeading, buttonClass, primaryButtonClass, quietBu
 import { tr } from '@/lib/i18n';
 
 interface MySkill { id: string; name: string; description: string; body: string; author: string; created_at: string | null }
-interface ListedSkill { name: string; description: string; scope?: 'mine' | 'everyone' }
+interface ListedSkill { name: string; description: string; category?: string; scope?: 'mine' | 'everyone' }
 
 const field = 'w-full rounded-lg border border-line bg-bg px-3 text-[13px] outline-none focus:border-accent';
 
@@ -57,6 +57,7 @@ export function SkillsSettings() {
   const [editing, setEditing] = useState<string | 'new' | null>(null);
   const [confirm, setConfirm] = useState<{ id: string; action: 'delete' | 'share' } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showActions, setShowActions] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -74,6 +75,11 @@ export function SkillsSettings() {
     }
   };
   useEffect(() => { void load(); }, []);
+
+  // Real skills first. One-step helpers such as "mouse-click" are things agents
+  // do on their own, not commands anyone types, so they stay folded.
+  const skills = shared.filter((s) => s.category !== 'system');
+  const actions = shared.filter((s) => s.category === 'system');
 
   const run = async (fn: () => Promise<unknown>, fallback: string) => {
     setBusy(true);
@@ -151,10 +157,26 @@ export function SkillsSettings() {
       <SubHeading className="mt-7">{tr('ui.settings.skills.sharedWithEveryone')}</SubHeading>
       <Group>
         {shared.length === 0 && <p className="px-3.5 py-4 text-[13px] text-fg-dim">{tr('ui.settings.skills.noSharedSkillsOnThis')}</p>}
-        {shared.map((skill) => (
+        {skills.map((skill) => (
           <SettingRow key={skill.name} label={<span className="font-mono text-[13px]">/{skill.name}</span>} detail={skill.description} />
         ))}
       </Group>
+      {actions.length > 0 && (
+        <>
+          <button type="button" aria-expanded={showActions} onClick={() => setShowActions((v) => !v)}
+            className="mt-3 flex items-center gap-2 text-[13px] text-fg-dim hover:text-fg">
+            <span aria-hidden className={cn('transition-transform', showActions && 'rotate-90')}>▸</span>
+            {tr('ui.settings.skills.singleActions', { count: actions.length })}
+          </button>
+          {showActions && (
+            <Group className="mt-2">
+              {actions.map((skill) => (
+                <SettingRow key={skill.name} label={<span className="font-mono text-[13px]">/{skill.name}</span>} detail={skill.description} />
+              ))}
+            </Group>
+          )}
+        </>
+      )}
       <p className="mt-2 text-[12px] leading-relaxed text-fg-dim">
         {tr('ui.settings.skills.sharedSkillsAreTheSame')}{canShare ? tr('ui.settings.skills.asAnAdminYouCan') : tr('ui.settings.skills.andAreAddedByAn')}
       </p>

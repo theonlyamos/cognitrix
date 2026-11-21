@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
 import { Button } from '@/lib/components/ui/button';
@@ -29,6 +30,8 @@ export interface KnowledgeCollection {
   description: string;
   documents: KnowledgeDocument[];
 }
+/** An agent or project that reads a collection. */
+interface Reader { id: string; name: string; href: string }
 interface Hit { text: string; name: string; position: number; score: number; url?: string | null }
 
 const PAGE_CHOICES = [
@@ -95,12 +98,13 @@ const ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.log,.r
 
 const size = (bytes: number) => (bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
-function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollection; onChanged: () => void }) {
+function CollectionCard({ collection, readers, onChanged }: { collection: KnowledgeCollection; readers: Reader[] | null; onChanged: () => void }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Hit[] | null>(null);
+  const [addingLink, setAddingLink] = useState(false);
   const reading = collection.documents.some((d) => d.status === 'queued');
 
   // Files are read in the background: look again until none is waiting.
@@ -185,12 +189,31 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-[15px] font-semibold">{collection.name}</h2>
           <p className="text-[12px] text-fg-dim">
-            {collection.description || trn(collection.documents.length, 'ui.count.documents_one', 'ui.count.documents_other')}
+            {trn(collection.documents.length, 'ui.count.documents_one', 'ui.count.documents_other')}
+            {collection.description ? ` · ${collection.description}` : ''}
           </p>
+          {readers && (
+            <p className="mt-0.5 text-[12px] text-fg-dim" data-testid={`readers-${collection.id}`}>
+              {readers.length === 0 ? tr('ui.knowledge.noAgentUsesThisYet') : (
+                <>
+                  {tr('ui.knowledge.usedBy')}{' '}
+                  {readers.map((r, i) => (
+                    <span key={r.href}>
+                      {i > 0 && ', '}
+                      <Link to={r.href} className="text-fg underline-offset-2 hover:text-accent-ink hover:underline">{r.name}</Link>
+                    </span>
+                  ))}
+                </>
+              )}
+            </p>
+          )}
         </div>
         <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" aria-label={tr('ui.knowledge.addDocumentsToName', { name: collection.name })} onChange={upload} />
         <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => fileInput.current?.click()}>
           {busy ? tr('ui.knowledge.adding') : tr('ui.knowledge.addDocuments')}
+        </Button>
+        <Button type="button" size="sm" variant="outline" aria-expanded={addingLink} onClick={() => setAddingLink((v) => !v)}>
+          {tr('ui.knowledge.addALink')}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={removeCollection}>{tr('ui.knowledge.delete')}</Button>
       </div>
@@ -230,7 +253,7 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
           ))}
         </ul>
       )}
-      <AddWebPage collectionId={collection.id} onAdded={onChanged} onError={setError} />
+      {addingLink && <AddWebPage collectionId={collection.id} onAdded={() => { setAddingLink(false); onChanged(); }} onError={setError} />}
       {collection.documents.some((d) => d.status === 'ready') && (
         <form onSubmit={search} className="flex gap-2 border-t border-line px-4 py-3">
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr('ui.knowledge.tryASearchTheWay')} aria-label={tr('ui.knowledge.searchName', { name: collection.name })} />
@@ -255,11 +278,31 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
   );
 }
 
-export default function Knowledge() {
+/** Collections agents can read. `embedded` drops the page header: it is a tab of the Library. */
+export default function Knowledge({ embedded = false }: { embedded?: boolean }) {
   const { data, loading, error, refetch } = useResource<KnowledgeCollection[]>('/knowledge');
   const [name, setName] = useState('');
   const [createError, setCreateError] = useState('');
   const collections = data ?? [];
+  // Who reads each collection: agents that have it switched on, and projects that include it.
+  const agents = useResource<{ id: string; name: string; knowledge?: string[] | null }[]>('/agents');
+  const projects = useResource<{ projects?: { id: string; name: string; knowledge?: string[] | null }[] }>('/projects');
+  const readersOf = useMemo(() => {
+    if (!Array.isArray(agents.data)) return null;
+    const map = new Map<string, Reader[]>();
+    const add = (rows: unknown, href: (id: string) => string, label: (name: string) => string) => {
+      if (!Array.isArray(rows)) return;
+      for (const row of rows as { id: string; name: string; knowledge?: string[] | null }[]) {
+        if (!row || !Array.isArray(row.knowledge)) continue;
+        for (const id of row.knowledge) {
+          map.set(String(id), [...(map.get(String(id)) ?? []), { id: row.id, name: label(row.name), href: href(row.id) }]);
+        }
+      }
+    };
+    add(agents.data, (id) => `/agents/${id}/connections`, (name) => name);
+    add(projects.data?.projects, (id) => `/projects/${id}`, (name) => tr('ui.knowledge.theNameProject', { name }));
+    return map;
+  }, [agents.data, projects.data]);
 
   const create = async (event: FormEvent) => {
     event.preventDefault();
@@ -276,7 +319,7 @@ export default function Knowledge() {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title={tr('ui.knowledge.knowledge')} subtitle={tr('ui.knowledge.documentsAndWebPagesYour')} />
+      {!embedded && <PageHeader title={tr('ui.knowledge.knowledge')} subtitle={tr('ui.knowledge.documentsAndWebPagesYour')} />}
       <div className="flex-1 overflow-y-auto">
         {loading && !data ? (
           <LoadingState label={tr('ui.knowledge.loadingCollections')} />
@@ -296,7 +339,7 @@ export default function Knowledge() {
                 desc={tr('ui.knowledge.createACollectionAddPdfs_7ba7')}
               />
             ) : (
-              collections.map((c) => <CollectionCard key={c.id} collection={c} onChanged={() => refetch({ silent: true })} />)
+              collections.map((c) => <CollectionCard key={c.id} collection={c} readers={readersOf ? readersOf.get(c.id) ?? [] : null} onChanged={() => refetch({ silent: true })} />)
             )}
           </div>
         )}

@@ -28,10 +28,10 @@ describe('ModelPicker', () => {
     const select = screen.getByRole('combobox', { name: 'Model' });
     expect(select).toHaveValue('gpt-5.5');
     expect(screen.getByRole('group', { name: 'Recent' })).toBeInTheDocument();
-    expect(await screen.findByRole('option', { name: 'gpt-5-account-only' })).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'GPT-5 Account Only' })).toBeInTheDocument();
     expect(apiGet).toHaveBeenCalledWith('/providers/openai/models');
     // Recent models aren't repeated in the account group.
-    expect(screen.getAllByRole('option', { name: 'gpt-5.5' })).toHaveLength(1);
+    expect(screen.getAllByRole('option', { name: 'GPT-5.5' })).toHaveLength(1);
     expect(screen.getByRole('option', { name: 'Custom…' })).toBeInTheDocument();
   });
 

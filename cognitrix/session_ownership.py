@@ -862,7 +862,18 @@ async def resume_lifecycle(
         )
 
 
-async def _load_lifecycle_token(token: LifecycleToken) -> SessionOwnership:
+async def _load_lifecycle_token(
+    token: LifecycleToken,
+    *,
+    after_cleanup: bool = False,
+) -> SessionOwnership:
+    """Load the binding a token names, refusing a token that no longer fits.
+
+    ``after_cleanup`` is for finishing a clear or delete. Removing a stored
+    document releases its quota, which moves the binding's version on, so the
+    version may be newer than the token's. The owner, state and generation
+    must still match: nothing but that lifecycle's own cleanup changes a
+    binding while it is clearing or deleting."""
     binding = await SessionOwnership.get(token.binding_id)
     if (
         binding is None
@@ -871,7 +882,11 @@ async def _load_lifecycle_token(token: LifecycleToken) -> SessionOwnership:
         or binding.agent_id != token.agent_id
         or binding.state != token.state
         or binding.generation != token.generation
-        or binding.version != token.version
+        or (
+            binding.version < token.version
+            if after_cleanup and token.state != OwnershipState.ACTIVE
+            else binding.version != token.version
+        )
     ):
         raise OwnershipConflict('Session lifecycle token is stale')
     return binding
@@ -881,7 +896,7 @@ async def finish_clear(token: LifecycleToken) -> SessionOwnership:
     if token.state != OwnershipState.CLEARING:
         raise OwnershipConflict('Not a clear lifecycle token')
     async with _lock_for(_mutation_locks, token.session_id):
-        binding = await _load_lifecycle_token(token)
+        binding = await _load_lifecycle_token(token, after_cleanup=True)
         return await _cas(binding, {
             'state': OwnershipState.ACTIVE.value,
             'document_count': 0,
@@ -901,7 +916,7 @@ async def finish_delete(token: LifecycleToken) -> None:
     if token.state != OwnershipState.DELETING:
         raise OwnershipConflict('Not a delete lifecycle token')
     async with _lock_for(_mutation_locks, token.session_id):
-        binding = await _load_lifecycle_token(token)
+        binding = await _load_lifecycle_token(token, after_cleanup=True)
         deleted = await _settle_mutation(SessionOwnership.delete_many({
             'id': str(binding.id),
             'session_id': binding.session_id,

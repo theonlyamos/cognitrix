@@ -242,3 +242,35 @@ async def test_whole_team_answers_at_the_same_time_and_the_lead_goes_last():
         ('group_speaker', 'Alice'), ('generate', 'Alice thinking'),
     ]
     assert gc.mentions_everyone('hi @all') and not gc.mentions_everyone('hi @alice') and not gc.mentions_everyone('`@all`')
+
+
+def test_attachments_are_written_after_the_message_they_came_with():
+    from cognitrix.media.documents import DOCUMENT_HISTORY_MARKER
+
+    picture = {'id': 'img_1', 'name': 'shapes.png', 'mime_type': 'image/png', 'origin': 'uploaded'}
+    entries = gc.attachment_entries(
+        [picture],
+        [
+            {'id': 'd1', 'name': 'launch-plan.txt', 'path': 'uploads/chat-1/f_abc.txt'},
+            {'id': 'd2', 'name': 'escape.txt', 'path': '../outside/f.txt'},
+            {'id': 'd3', 'name': 'abs.txt', 'path': '/etc/passwd'},
+        ],
+    )
+    assert [e['type'] for e in entries] == ['image', 'text']
+    assert all(e['speaker_id'] == gc.USER_SPEAKER and e['role'] == 'User' for e in entries)
+    assert entries[0]['artifact']['id'] == 'img_1'
+    # Only files stored under the chat's own uploads folder are named.
+    assert entries[1]['content'] == DOCUMENT_HISTORY_MARKER + '\nuploads/chat-1/f_abc.txt'
+    assert entries[1]['attachment_names'] == ['launch-plan.txt']
+    assert gc.attachment_entries([], []) == []
+
+
+def test_agents_are_told_about_a_picture_and_where_the_files_are():
+    chat = [gc.transcript_entry('What is in these?')] + gc.attachment_entries(
+        [{'id': 'img_1', 'name': 'shapes.png', 'mime_type': 'image/png', 'origin': 'uploaded'}],
+        [{'id': 'd1', 'name': 'launch-plan.txt', 'path': 'uploads/chat-1/f_abc.txt'}],
+    )
+    _history, trigger = gc.agent_view(chat, 'agent-1')
+    assert 'What is in these?' in trigger
+    assert '[Attached a picture]' in trigger
+    assert 'uploads/chat-1/f_abc.txt' in trigger

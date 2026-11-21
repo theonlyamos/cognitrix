@@ -48,12 +48,12 @@ function setup(overrides: Partial<ChatSidebarProps> = {}) {
 describe('ChatSidebar', () => {
   beforeEach(() => localStorage.clear());
 
-  it('opens the computer from its live preview and artifacts from their rows', async () => {
+  it('opens the computer from its live preview and pages from their rows', async () => {
     const user = userEvent.setup();
     const props = setup();
     await user.click(screen.getByRole('button', { name: "Open Assistant's computer" }));
     expect(props.onOpenComputer).toHaveBeenCalled();
-    const artifacts = screen.getByRole('region', { name: 'Artifacts' });
+    const artifacts = screen.getByRole('region', { name: 'Pages' });
     expect(within(artifacts).getByText('NEW')).toBeInTheDocument();
     await user.click(within(artifacts).getByRole('button', { name: /Lisbon itinerary/ }));
     expect(props.onOpenArtifact).toHaveBeenCalledWith('p1');
@@ -69,9 +69,9 @@ describe('ChatSidebar', () => {
     expect(props.onDeny).toHaveBeenCalledWith('r1');
   });
 
-  it('says so when the computer is idle or off', () => {
+  it('leaves the computer section out while the computer is idle or off', () => {
     setup({ desktop: null });
-    expect(screen.getByText(/isn't using its computer right now/)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Computer' })).toBeNull();
   });
 
   it('folds sections and hides them from the sections menu, remembered per browser', async () => {

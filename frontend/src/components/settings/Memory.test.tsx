@@ -90,7 +90,7 @@ describe('MemorySettings', () => {
   it('lists memories with their scope and filters by agent', async () => {
     renderSettings();
     expect(await screen.findByText('Prefers short answers.')).toBeInTheDocument();
-    expect(screen.getByText('GLOBAL')).toBeInTheDocument();
+    expect(screen.getByText('ALL AGENTS')).toBeInTheDocument();
     expect(screen.getByText('CODER')).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('radio', { name: 'Coder' }));
     expect(screen.queryByText('Prefers short answers.')).not.toBeInTheDocument();

@@ -20,6 +20,8 @@ export interface Proactivity {
   backoff: number;
   week: { tokens: number; pushes: number; held: number; runs: number; skipped: number };
   today_tokens: number;
+  /** Dollars per million tokens at the main assistant's model price; null when unknown. */
+  token_price?: number | null;
   main_assistant: { id: string; name: string; primary: boolean; checkins: boolean; every_minutes: number } | null;
   /** True when your assistant isn't your main one yet or its check-ins are off. */
   needs_setup: boolean;

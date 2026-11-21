@@ -22,7 +22,7 @@ export default function TeamPage() {
   const { teamId } = useParams();
   const navigate = useNavigate();
   const editing = Boolean(teamId);
-  const backTo = editing ? `/teams/${teamId}` : '/teams';
+  const backTo = editing ? `/teams/${teamId}` : '/agents?tab=teams';
 
   const { data: existing, loading: loadingTeam } = useResource<TeamData>(teamId ? `/teams/${teamId}` : null);
   const { data: agentList } = useResource<Agent[]>('/agents');
@@ -84,7 +84,10 @@ export default function TeamPage() {
   return (
     <PageForm
       eyebrow={editing ? 'EDIT TEAM' : 'NEW TEAM'}
-      title={editing ? name || tr('ui.teamPage.editTeam') : tr('ui.teamPage.newTeam')}
+      trail={editing
+        ? [{ label: tr('ui.teamPage.teams'), to: '/agents?tab=teams' }, { label: name || tr('ui.teamPage.editTeam'), to: backTo }]
+        : [{ label: tr('ui.teamPage.teams'), to: '/agents?tab=teams' }]}
+      title={editing ? tr('ui.teamPage.editTeam') : tr('ui.teamPage.newTeam')}
       backTo={backTo}
       error={error}
       onSave={save}

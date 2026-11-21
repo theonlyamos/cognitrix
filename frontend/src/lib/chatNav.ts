@@ -57,10 +57,10 @@ export function chatsStale() {
   window.dispatchEvent(new Event(CHATS_STALE));
 }
 
-/** Where a chat lives: one-to-one chats on the chat page, team chats on the team's page. */
+/** Where a chat lives: the chat screen, for one agent or for a team. */
 export function chatHref(chat: { id: string; kind?: 'agent' | 'team'; team_id?: string | null }) {
   return chat.kind === 'team'
-    ? `/teams/${encodeURIComponent(chat.team_id || '')}/chat?chat=${encodeURIComponent(chat.id)}`
+    ? `/home?team=${encodeURIComponent(chat.team_id || '')}&chat=${encodeURIComponent(chat.id)}`
     : `/home?chat=${encodeURIComponent(chat.id)}`;
 }
 
@@ -68,6 +68,6 @@ export function chatHref(chat: { id: string; kind?: 'agent' | 'team'; team_id?: 
 export function newChatHref(target?: { kind: 'agent' | 'team'; id: string }) {
   if (!target) return '/home?new=1';
   return target.kind === 'team'
-    ? `/teams/${encodeURIComponent(target.id)}/chat`
+    ? `/home?team=${encodeURIComponent(target.id)}`
     : `/home?new=${encodeURIComponent(`agent:${target.id}`)}`;
 }

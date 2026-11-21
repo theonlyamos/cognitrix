@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
-  LayoutDashboard as DashboardIcon, Inbox as InboxIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon,
-  Users as UsersIcon, BookOpen as BookOpenIcon, AppWindow as AppWindowIcon, Mic as MicIcon, CreditCard as CardIcon, FolderKanban as ProjectsIcon,
+  House as DashboardIcon, Bot as BotIcon, ListChecks as ListChecksIcon,
+  LibraryBig as LibraryIcon, Mic as MicIcon, CreditCard as CardIcon, FolderKanban as ProjectsIcon,
   Plus as PlusIcon, Search as SearchIcon, Ellipsis as MoreIcon, PanelLeft as PanelLeftIcon, type LucideIcon,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -17,23 +17,25 @@ import { cn } from '@/lib/utils';
 
 type NavItem = { path: string; label: MessageKey; icon: LucideIcon };
 
-// The everyday places. Chats are the list below, so there is no Chat item.
+// The everyday places. Chats are the list below, so there is no Chat item;
+// the inbox is the bell at the bottom, next to the account.
 const NAV: NavItem[] = [
   { path: '/dashboard', label: 'nav.dashboard', icon: DashboardIcon },
-  { path: '/inbox', label: 'nav.inbox', icon: InboxIcon },
   { path: '/agents', label: 'nav.agents', icon: BotIcon },
   { path: '/projects', label: 'nav.projects', icon: ProjectsIcon },
-  { path: '/apps', label: 'nav.apps', icon: AppWindowIcon },
+  { path: '/apps', label: 'nav.apps', icon: LibraryIcon },
   { path: '/tasks', label: 'nav.tasks', icon: ListChecksIcon },
 ];
 // Behind "More".
 const MORE: NavItem[] = [
-  { path: '/automations', label: 'nav.automations', icon: ZapIcon },
-  { path: '/teams', label: 'nav.teams', icon: UsersIcon },
-  { path: '/knowledge', label: 'nav.knowledge', icon: BookOpenIcon },
   { path: '/meetings', label: 'nav.meetings', icon: MicIcon },
   { path: '/payments', label: 'nav.payments', icon: CardIcon },
 ];
+// Pages that hang under a main place, so that place stays lit.
+const ALSO: Record<string, string[]> = {
+  '/agents': ['/teams'],
+  '/apps': ['/artifacts', '/knowledge'],
+};
 
 const COLLAPSED_KEY = 'sidebar.collapsed';
 
@@ -64,7 +66,8 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
   const notifications = useOptionalNotifications();
   const waiting = notifications?.inbox.length ?? 0;
   const [collapsed, setCollapsed] = useState(loadCollapsed);
-  const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(`${path}/`);
+  const under = (path: string) => location.pathname === path || location.pathname.startsWith(`${path}/`);
+  const isActive = (path: string) => under(path) || (ALSO[path] ?? []).some(under);
   const moreActive = MORE.some((item) => isActive(item.path));
   const [moreOpen, setMoreOpen] = useState(moreActive);
   const [bellOpen, setBellOpen] = useState(false);
@@ -103,17 +106,8 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
       >
         <span className="relative flex-none">
           <Icon className="h-[17px] w-[17px]" strokeWidth={1.9} aria-hidden="true" />
-          {item.path === '/inbox' && waiting > 0 && collapsed && (
-            <span aria-hidden="true" className="absolute -right-1.5 -top-1.5 hidden h-2.5 w-2.5 rounded-full border-2 border-panel bg-accent md:block" />
-          )}
         </span>
         <span className={cn('flex-1 truncate', slim('md:sr-only'))}>{label}</span>
-        {item.path === '/inbox' && waiting > 0 && (
-          <span className={cn('rounded-full bg-accent px-1.5 text-[11px] font-semibold leading-[18px] text-accent-foreground', slim('md:hidden'))}>
-            {waiting}
-            <span className="sr-only"> {t('nav.waiting')}</span>
-          </span>
-        )}
       </Link>
     );
   };
@@ -222,16 +216,17 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
           <div className="relative flex-none">
             <button
               type="button"
-              aria-label={notifications.unread ? tr('ui.sidebar.tUnreadNew', { t: t('nav.notifications'), unread: notifications.unread }) : t('nav.notifications')}
+              aria-label={waiting ? `${t('nav.inbox')}: ${waiting} ${t('nav.waiting')}` : notifications.unread ? tr('ui.sidebar.tUnreadNew', { t: t('nav.inbox'), unread: notifications.unread }) : t('nav.inbox')}
+              title={t('nav.inbox')}
               aria-expanded={bellOpen}
               aria-haspopup="dialog"
               onClick={() => setBellOpen((open) => !open)}
               className={cn('relative grid h-11 w-11 place-items-center rounded-lg text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-9 md:w-9', bellOpen && 'bg-panel-2 text-fg')}
             >
               <BellIcon />
-              {notifications.unread > 0 && (
-                <span className="absolute right-1 top-1 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-accent px-0.5 text-[9px] font-semibold text-accent-foreground">
-                  {notifications.unread > 9 ? '9+' : notifications.unread}
+              {(waiting > 0 || notifications.unread > 0) && (
+                <span className={cn('absolute right-1 top-1 grid h-3.5 min-w-3.5 place-items-center rounded-full px-0.5 text-[9px] font-semibold', waiting > 0 ? 'bg-warn text-bg' : 'bg-accent text-accent-foreground')}>
+                  {(waiting || notifications.unread) > 9 ? '9+' : waiting || notifications.unread}
                 </span>
               )}
             </button>

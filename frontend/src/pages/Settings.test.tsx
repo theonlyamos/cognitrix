@@ -67,10 +67,13 @@ describe('Settings', () => {
     expect(within(nav).getByRole('link', { name: /Appearance/ })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
 
-    fireEvent.click(within(nav).getByRole('link', { name: /Agent access/ }));
-    expect(screen.getByTestId('where')).toHaveTextContent('/settings/access');
+    fireEvent.click(within(nav).getByRole('link', { name: /Connections/ }));
+    expect(screen.getByTestId('where')).toHaveTextContent('/settings/apps');
     expect(await screen.findByText('MCP card')).toBeInTheDocument();
-    expect(screen.getByText('/work')).toBeInTheDocument();
+
+    fireEvent.click(within(nav).getByRole('link', { name: /Computers/ }));
+    expect(screen.getByTestId('where')).toHaveTextContent('/settings/computers');
+    expect(await screen.findByText('/work')).toBeInTheDocument();
   });
 
   it('hides desktop-only sections on the web and calls the engine a server', () => {
@@ -82,7 +85,7 @@ describe('Settings', () => {
 
   it('sends old #anchor links to the right section', async () => {
     renderAt('/settings#mcp-servers');
-    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/settings/access#mcp-servers'));
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/settings/apps#mcp-servers'));
   });
 
   it('redirects unknown sections to the menu', async () => {
@@ -94,7 +97,7 @@ describe('Settings', () => {
     renderAt('/settings/account');
     fireEvent.change(screen.getByLabelText('Search settings'), { target: { value: 'telegram' } });
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual(['Chat apps›']);
+    expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual(['Connections›']);
     fireEvent.change(screen.getByLabelText('Search settings'), { target: { value: 'zzz' } });
     expect(screen.getByText(/No settings match/)).toBeInTheDocument();
   });

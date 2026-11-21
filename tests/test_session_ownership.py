@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
@@ -852,3 +853,49 @@ async def test_unknown_database_backend_fails_closed_for_ownership_indexes():
             SimpleNamespace(dbms='unknown'),
             'session_ownerships',
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('operation', ['delete', 'clear'])
+async def test_a_chat_with_a_stored_document_finishes_on_the_first_try(tmp_path, operation):
+    """Removing the document releases its quota and moves the binding on; the
+    lifecycle that did the removing must still be able to finish."""
+    from cognitrix.session_ownership import (
+        OwnershipConflict,
+        OwnershipState,
+        SessionOwnership,
+        adopt_reservation,
+        begin_clear,
+        begin_delete,
+        claim_new,
+        commit_reservation,
+        finish_clear,
+        finish_delete,
+        release_document,
+        reserve_intent,
+    )
+
+    await _initialize_ownership_db(tmp_path)
+    binding = await claim_new('session-1', 'user-1', 'agent-1')
+    for step in (reserve_intent, adopt_reservation, commit_reservation):
+        extra = {'size_bytes': 9} if step is reserve_intent else {}
+        await step(
+            'session-1', 'user-1', 'agent-1', generation=binding.generation,
+            promotion_token='token', **extra,
+        )
+    begin, finish = (begin_delete, finish_delete) if operation == 'delete' else (begin_clear, finish_clear)
+    token = await begin('session-1', 'user-1', 'agent-1')
+    await release_document(
+        'session-1', 'user-1', 'agent-1', promotion_token='token', size_bytes=9,
+    )
+
+    # A token from another generation is still refused.
+    with pytest.raises(OwnershipConflict):
+        await finish(replace(token, generation=token.generation + 1))
+    await finish(token)
+
+    left = await SessionOwnership.find_one({'session_id': 'session-1'})
+    if operation == 'delete':
+        assert left is None
+    else:
+        assert left.state == OwnershipState.ACTIVE and left.document_count == 0

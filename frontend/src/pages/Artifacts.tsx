@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Download, FileText, LayoutPanelTop, MessageCircle, Pin, Plus, Search, Shapes, Table2, X } from 'lucide-react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { AccessBadge, LiveBadge } from '@/components/artifacts/ArtifactViewer';
 import { EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/list-ui';
 import { api, errorMessage } from '@/lib/api';
-import { ago, parseStamp, sizeLabel, type ArtifactList, type FileItem, type ImageItem, type PageSummary } from '@/lib/artifactPages';
+import { ago, frameSrc, parseStamp, sizeLabel, type ArtifactList, type FileItem, type ImageItem, type PageSummary } from '@/lib/artifactPages';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
 
@@ -37,13 +37,90 @@ export const isDataPage = (page: PageSummary) => page.format === 'sheet' || page
 const card = 'flex min-w-0 flex-col rounded-[12px] border border-line bg-panel transition-colors';
 const smallButton = 'inline-flex h-8 items-center gap-1 rounded-md border border-line px-2 text-[12px] hover:bg-panel-2 disabled:opacity-50';
 
+/** True once the element has scrolled near the screen, so a list only loads the previews people can see. */
+function useSeen<T extends Element>() {
+  const ref = useRef<T>(null);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || seen || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) setSeen(true);
+    }, { rootMargin: '200px' });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [seen]);
+  return [ref, seen] as const;
+}
+
+/** A small live picture of a page: the page itself, drawn at a quarter size.
+ *  It cannot be clicked or typed into, and has none of the page's powers. */
+function PageThumb({ page, fallback }: { page: PageSummary; fallback: ReactNode }) {
+  const [ref, seen] = useSeen<HTMLDivElement>();
+  const [url, setUrl] = useState('');
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!seen) return;
+    let live = true;
+    api.get<{ url: string }>(`/artifact-pages/${page.id}/frame`)
+      .then(({ data }) => { if (live && data?.url) setUrl(data.url); })
+      .catch(() => { /* the icon stays */ });
+    return () => { live = false; };
+  }, [seen, page.id, page.viewer_version]);
+  return (
+    <div ref={ref} className="absolute inset-0 overflow-hidden rounded-t-[12px]">
+      {!shown && <div className="flex h-full items-center justify-center">{fallback}</div>}
+      {url && (
+        <iframe
+          src={frameSrc(url)}
+          title=""
+          aria-hidden
+          tabIndex={-1}
+          loading="lazy"
+          sandbox="allow-scripts"
+          referrerPolicy="no-referrer"
+          onLoad={() => setShown(true)}
+          data-testid="page-thumbnail"
+          className={cn('pointer-events-none absolute left-0 top-0 h-[400%] w-[400%] origin-top-left scale-[0.25] border-0 bg-panel', !shown && 'opacity-0')}
+        />
+      )}
+    </div>
+  );
+}
+
+const THUMB_TEXT_BYTES = 200_000;
+
+/** The first lines of a text document, small, in place of a generic icon. */
+function FileThumb({ file, fallback }: { file: FileItem; fallback: ReactNode }) {
+  const [ref, seen] = useSeen<HTMLDivElement>();
+  const [text, setText] = useState('');
+  const readable = READABLE.test(file.mime_type) && file.size_bytes <= THUMB_TEXT_BYTES;
+  useEffect(() => {
+    if (!seen || !readable) return;
+    let live = true;
+    api.get(`/artifact-pages/files/${file.id}`, { responseType: 'text', transformResponse: (v) => v })
+      .then(({ data }) => { if (live) setText(String(data ?? '').slice(0, 1200)); })
+      .catch(() => { /* the icon stays */ });
+    return () => { live = false; };
+  }, [seen, readable, file.id, file.updated]);
+  return (
+    <div ref={ref} className="absolute inset-0 overflow-hidden rounded-t-[12px]">
+      {text.trim() ? (
+        <pre aria-hidden data-testid="file-thumbnail" className="h-full overflow-hidden whitespace-pre-wrap break-words bg-panel px-3 py-2.5 font-mono text-[7.5px] leading-[1.45] text-fg-dim">{text}</pre>
+      ) : (
+        <div className="flex h-full items-center justify-center">{fallback}</div>
+      )}
+    </div>
+  );
+}
+
 function PageCard({ page }: { page: PageSummary }) {
   return (
     <Link to={`/artifacts/${page.id}`} className={cn(card, 'group hover:border-fg-dim')}>
-      <div className="relative flex h-28 items-center justify-center rounded-t-[12px] border-b border-line bg-panel-2">
-        {page.format === 'sheet' ? <Table2 size={30} className="text-fg-dim/60" aria-label={tr('ui.artifacts.sheet')} />
+      <div className="relative h-36 rounded-t-[12px] border-b border-line bg-panel-2">
+        <PageThumb page={page} fallback={page.format === 'sheet' ? <Table2 size={30} className="text-fg-dim/60" aria-label={tr('ui.artifacts.sheet')} />
           : page.format === 'whiteboard' ? <Shapes size={30} className="text-fg-dim/60" aria-label={tr('ui.artifacts.whiteboard')} />
-          : <LayoutPanelTop size={30} className="text-fg-dim/60" aria-hidden />}
+          : <LayoutPanelTop size={30} className="text-fg-dim/60" aria-hidden />} />
         <span className="absolute left-2.5 top-2.5 flex items-center gap-1.5">
           {page.live && <LiveBadge />}
           {page.pinned && <span className="inline-flex items-center gap-1 rounded-md bg-panel px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim"><Pin size={10} />{tr('ui.artifacts.pinned')}</span>}
@@ -103,8 +180,8 @@ function FileCard({ file, onOpen, onChanged }: { file: FileItem; onOpen: (file: 
   const extension = file.title.includes('.') ? file.title.split('.').pop()!.toUpperCase().slice(0, 5) : 'FILE';
   return (
     <div className={card}>
-      <div className="relative flex h-28 items-center justify-center rounded-t-[12px] border-b border-line bg-panel-2">
-        <FileText size={30} className="text-fg-dim/60" aria-hidden />
+      <div className="relative h-36 rounded-t-[12px] border-b border-line bg-panel-2">
+        <FileThumb file={file} fallback={<FileText size={30} className="text-fg-dim/60" aria-hidden />} />
         <span className="absolute bottom-2.5 right-2.5 rounded-md bg-panel px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim">{extension}</span>
       </div>
       <div className="flex min-w-0 flex-col gap-1.5 p-3">

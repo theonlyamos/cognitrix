@@ -45,7 +45,8 @@ async def pay(tmp_path, monkeypatch):
 
 
 async def _ready(service, user='u1', **settings):
-    await service.save_settings(user, enabled=True, **settings)
+    # The person turned payments on and ticked the agent that asks in these tests.
+    await service.save_settings(user, enabled=True, **{'agent_ids': ['a1'], **settings})
     return await service.add_card(user, number=f'{CARD[:4]} {CARD[4:8]} {CARD[8:12]} {CARD[12:]}', exp_month=12,
                                   exp_year=2099, cvc='123', name='Ama Mensah', postal='00233')
 
@@ -61,6 +62,10 @@ async def test_nothing_happens_until_payments_are_on_and_a_card_is_saved(pay):
         await _ask(s)
     assert err.value.code == 'payments_off'
     await s.save_settings('u1', enabled=True)
+    with pytest.raises(s.PaymentError) as err:
+        await _ask(s)
+    assert err.value.code == 'agent_not_allowed'
+    await s.save_settings('u1', agent_ids=['a1'])
     with pytest.raises(s.PaymentError) as err:
         await _ask(s)
     assert err.value.code == 'no_card'
@@ -324,3 +329,14 @@ def test_payment_tools_carry_their_own_approval():
     d = DestructiveOpDetector()
     for name in ('Request Payment', 'Pay', 'Cancel Payment'):
         assert d.analyze(name, {}).risk_level == RiskLevel.LOW
+
+
+async def test_no_agent_may_ask_until_one_is_picked(pay):
+    """Turning payments on does not hand every agent the right to ask."""
+    s = pay.service
+    await s.save_settings('fresh', enabled=True)
+    await s.add_card('fresh', number=CARD, exp_month=12, exp_year=2099, cvc='123')
+    assert not await s.agent_may_ask('fresh', 'a1')
+    await s.save_settings('fresh', agent_ids=['a1'])
+    assert await s.agent_may_ask('fresh', 'a1')
+    assert not await s.agent_may_ask('fresh', 'a2')

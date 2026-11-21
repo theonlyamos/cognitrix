@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from cognitrix.agents import access as agent_access
 from cognitrix.common.security import AuthContext, get_auth_context, jwt_only
 from cognitrix.payments import service
-from cognitrix.payments.models import PaymentCard, PaymentRequest
+from cognitrix.payments.models import NO_AGENTS, PaymentCard, PaymentRequest
 
 payments_api = APIRouter(prefix='/payments', dependencies=[Depends(jwt_only)])
 
@@ -107,7 +107,9 @@ async def put_settings(body: SettingsBody, ctx: AuthContext = Depends(get_auth_c
         fields['monthly_cents'] = _cents(body.monthly, currency)
     if body.agent_ids is not None:
         visible = {str(a.id) for a in await agent_access.visible_agents(user_key)}
-        fields['agent_ids'] = [a for a in dict.fromkeys(body.agent_ids) if a in visible]
+        chosen = [a for a in dict.fromkeys(body.agent_ids) if a in visible]
+        # The list names exactly who may ask; an empty one is nobody, never everybody.
+        fields['agent_ids'] = chosen or [NO_AGENTS]
     try:
         await service.save_settings(user_key, **fields)
     except service.PaymentError as exc:

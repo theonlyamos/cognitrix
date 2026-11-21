@@ -196,7 +196,7 @@ html.dark {
 .md a:hover { filter: brightness(1.1); }
 .md blockquote { margin: 0 0 .7em; padding-left: .9em; border-left: 2px solid var(--line); color: var(--fg-dim); }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 1em 0; }
-.md table { border-collapse: collapse; margin: 0 0 .7em; font-size: .92em; display: block; overflow-x: auto; }
+.md table { border-collapse: collapse; margin: 0 0 .7em; font-size: .92em; display: block; max-width: 100%; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--line); padding: .35em .6em; text-align: left; }
 .md th { background: var(--panel-2); font-weight: 600; }
 

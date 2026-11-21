@@ -31,7 +31,7 @@ describe('SwarmCard', () => {
     const onOpenChat = vi.fn();
     render(<SwarmCard swarm={swarm()} onStop={onStop} onStopWorker={onStopWorker} onOpenChat={onOpenChat} />);
 
-    const card = screen.getByRole('region', { name: 'Swarm Pricing research' });
+    const card = screen.getByRole('region', { name: 'Helpers: Pricing research' });
     expect(within(card).getByText(/1 of 3 done/)).toBeInTheDocument();
     expect(within(card).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
     expect(within(card).getByText('Acme charges $10 a seat.')).toBeInTheDocument();

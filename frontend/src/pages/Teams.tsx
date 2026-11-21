@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom';
 import { useResource } from '@/hooks/useResource';
 import { Button } from '@/lib/components/ui/button';
-import { PageHeader, LoadingState, ErrorState, EmptyState, Chevron } from '@/components/list-ui';
+import { LoadingState, ErrorState, EmptyState, Chevron } from '@/components/list-ui';
+import { AgentBadge } from '@/components/StartChat';
+import type { AgentAvatar } from '@/lib/agentAvatar';
 import { tr, trn } from '@/lib/i18n';
 
 interface Team {
@@ -11,66 +13,56 @@ interface Team {
   assigned_agents?: string[];
 }
 
+/** The list of teams: a tab of the Agents page. */
 export default function Teams() {
   const { data, loading, error, refetch } = useResource<Team[]>('/teams');
+  const agents = useResource<{ id: string; name: string; avatar?: AgentAvatar | null }[]>('/agents');
   const teams = data ?? [];
+  const byId = new Map((agents.data ?? []).map((a) => [a.id, a]));
 
+  if (loading) return <LoadingState label={tr('ui.teams.loadingTeams')} />;
+  if (error) return <ErrorState message={error} onRetry={refetch} />;
+  if (teams.length === 0) {
+    return (
+      <EmptyState
+        icon={<TeamIcon />}
+        title={tr('ui.teams.noTeamsYet')}
+        desc={tr('ui.teams.createATeamSoMultiple')}
+        action={
+          <Button asChild>
+            <Link to="/teams/new">{tr('ui.teams.createYourFirstTeam')}</Link>
+          </Button>
+        }
+      />
+    );
+  }
   return (
-    <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
-      <PageHeader title={tr('ui.teams.teams')} subtitle={trn(teams.length, 'ui.teams.countPrivate_one', 'ui.teams.countPrivate_other')}>
-        <Button asChild size="sm">
-          <Link to="/teams/new">{tr('ui.teams.newTeam')}</Link>
-        </Button>
-      </PageHeader>
-
-      <div className="flex-1 overflow-y-auto">
-        {loading ? (
-          <LoadingState label={tr('ui.teams.loadingTeams')} />
-        ) : error ? (
-          <ErrorState message={error} onRetry={refetch} />
-        ) : teams.length === 0 ? (
-          <EmptyState
-            icon={<TeamIcon />}
-            title={tr('ui.teams.noTeamsYet')}
-            desc={tr('ui.teams.createATeamSoMultiple')}
-            action={
-              <Button asChild>
-                <Link to="/teams/new">{tr('ui.teams.createYourFirstTeam')}</Link>
-              </Button>
-            }
-          />
-        ) : (
-          <ul>
-            {teams.map((t) => (
-              <li key={t.id}>
-                <Link
-                  to={`/teams/${t.id}`}
-                  className="group grid grid-cols-[1fr_auto] items-center gap-4 border-b border-line px-6 py-3.5 transition-colors hover:bg-panel-2"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className="grid h-8 w-8 flex-none place-items-center rounded-sm border border-line bg-panel-2 text-fg-dim">
-                      <TeamIcon />
-                    </span>
-                    <div className="min-w-0">
-                      <div className="truncate font-medium transition-colors group-hover:text-accent-ink">{t.name}</div>
-                      {t.description ? (
-                        <div className="truncate text-[13px] text-fg-dim">{t.description}</div>
-                      ) : (
-                        <div className="font-mono text-[11px] text-fg-dim">{tr('ui.teams.lengthAgentsSlice', { length: t.assigned_agents?.length || 0, slice: t.id.slice(0, 8) })}</div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 font-mono text-[11px] text-fg-dim">
-                    <span className="tnum">{tr('ui.teams.lengthAgents', { length: t.assigned_agents?.length || 0 })}</span>
-                    <Chevron />
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
+    <ul>
+      {teams.map((t) => {
+        const members = (t.assigned_agents ?? []).map((id) => byId.get(id)).filter(Boolean) as { id: string; name: string; avatar?: AgentAvatar | null }[];
+        return (
+          <li key={t.id}>
+            <Link
+              to={`/teams/${t.id}`}
+              className="group flex items-center gap-3 border-b border-line px-4 py-3 transition-colors hover:bg-panel-2 md:px-6"
+            >
+              <AgentBadge name={t.name} team size="lg" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium transition-colors group-hover:text-accent-ink">{t.name}</div>
+                <div className="truncate text-[13px] text-fg-dim">
+                  {t.description || members.map((m) => m.name).join(', ') || trn(t.assigned_agents?.length || 0, 'ui.teams.members_one', 'ui.teams.members_other')}
+                </div>
+              </div>
+              <span className="hidden flex-none items-center -space-x-1 sm:flex">
+                {members.slice(0, 5).map((m) => <AgentBadge key={m.id} name={m.name} avatar={m.avatar} />)}
+              </span>
+              <span className="flex-none text-[12.5px] text-fg-dim">{trn(t.assigned_agents?.length || 0, 'ui.teams.members_one', 'ui.teams.members_other')}</span>
+              <Chevron />
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

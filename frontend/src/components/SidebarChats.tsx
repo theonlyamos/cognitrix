@@ -87,6 +87,10 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
   const { data: chatsData, refetch, setData: setChatsData } = useResource<SidebarChat[]>('/sessions/chats');
   const { data: agentsData, refetch: refetchAgents } = useResource<Named[]>('/agents');
   const { data: teamsData, refetch: refetchTeams } = useResource<Named[]>('/teams');
+  // Only asked for when some chat is in a project, to name it on the row.
+  const anyInProject = (chatsData ?? []).some((c) => c.project_id);
+  const { data: projectsData } = useResource<{ projects?: Named[] }>(anyInProject ? '/projects' : null);
+  const projectName = (id?: string | null) => (id ? (projectsData?.projects ?? []).find((p) => p.id === id)?.name : undefined);
   const [mode, setMode] = useState<ChatListMode>(loadChatListMode);
   const [closed, setClosed] = useState<Set<string>>(loadClosedSections);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -243,7 +247,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
       title: c.title,
       when: fmtRelative(c.updated_at),
       running: isRunning(c),
-      selected: c.kind !== 'team' && c.id === activeChatId,
+      selected: c.id === activeChatId,
     });
     const activeChat = chats.find((c) => c.id === activeChatId);
     const groups: RailGroup[] = grouped.groups.map((g) => {
@@ -284,7 +288,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
   // ── Full list ──
   const row = (c: SidebarChat, opts: { badge: boolean; indent?: boolean }) => {
     const who = nameOf(c);
-    const selected = c.kind !== 'team' && c.id === activeChatId;
+    const selected = c.id === activeChatId;
     const busy = isRunning(c);
     if (renaming?.id === c.id) {
       return (
@@ -332,6 +336,12 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
           {opts.badge && <AgentBadge name={who} team={c.kind === 'team'} avatar={avatarOf(c)} size="sm" />}
           {opts.badge && <span className="sr-only">{who}: </span>}
           <span className="min-w-0 flex-1 truncate">{c.title}</span>
+          {projectName(c.project_id) && (
+            <span title={tr('ui.sidebarChats.inProject', { name: projectName(c.project_id) ?? '' })}
+              className="max-w-[35%] flex-none truncate rounded border border-line px-1.5 text-[11px] text-fg-dim">
+              {projectName(c.project_id)}
+            </span>
+          )}
           {c.pinned && <PinIcon aria-label={tr('ui.sidebarChats.pinned')} className="h-3 w-3 flex-none text-fg-dim" strokeWidth={2} />}
           {busy && <span aria-label={tr('ui.sidebarChats.working')} title={tr('ui.sidebarChats.working_3b4d')} data-testid={`running-${c.id}`} className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />}
         </button>

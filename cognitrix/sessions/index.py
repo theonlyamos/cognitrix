@@ -31,7 +31,7 @@ class ChatIndex(Model):
     team_id: str = ''
     project_id: str = ''
     title: str = ''
-    """Derived from the first message."""
+    """The title the model wrote, or the first message until there is one."""
     custom_title: str = ''
     pinned: bool = False
     archived: bool = False
@@ -118,7 +118,7 @@ def _fields(session, owner: str) -> dict[str, Any]:
         'agent_id': str(session.agent_id or ''),
         'team_id': str(session.team_id or ''),
         'project_id': str(getattr(session, 'project_id', None) or ''),
-        'title': group_chat.chat_title(chat) if team else _session_title(chat),
+        'title': group_chat.chat_title(chat) if team else ((getattr(session, 'auto_title', None) or '').strip() or _session_title(chat)),
         'custom_title': (getattr(session, 'title', None) or '').strip(),
         'pinned': bool(getattr(session, 'pinned', False)),
         'archived': bool(getattr(session, 'archived', False)),

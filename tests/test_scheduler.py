@@ -126,6 +126,21 @@ def test_next_run_interval():
     assert compute_next_run(t, NOW) == '2030-06-01 12:05:00'
 
 
+def test_next_run_cron_in_the_persons_time_zone():
+    """A cron line set with a time zone fires at that zone's clock time."""
+    # NOW is 2030-06-01 12:00 UTC; 09:00 in Tokyo (UTC+9) is 00:00 UTC.
+    t = _task(schedule_cron='0 9 * * *', schedule_tz='Asia/Tokyo')
+    assert compute_next_run(t, NOW) == '2030-06-02 00:00:00'
+    # New York is on summer time in June (UTC-4): 09:00 there is 13:00 UTC.
+    t = _task(schedule_cron='0 9 * * *', schedule_tz='America/New_York')
+    assert compute_next_run(t, NOW) == '2030-06-01 13:00:00'
+
+
+def test_validate_unknown_time_zone():
+    t = _task(schedule_cron='0 9 * * *', schedule_tz='Mars/Olympus')
+    assert 'time zone' in validate_schedule(t, respecified=True)
+
+
 def test_next_run_cron_is_utc():
     """Cron runs on the server clock; the stored instant must be UTC."""
     t = _task(schedule_cron='*/15 * * * *')

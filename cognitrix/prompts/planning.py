@@ -53,7 +53,13 @@ PLANNING_SYSTEM_PROMPT = """You are an expert task planner. Break down complex t
 }
 
 ## Rules
-- Create 3-10 steps depending on task complexity
+- Use as few steps as the job needs. A question, a comparison, a summary or a
+  short piece of writing is ONE step (two at most). Use 3-10 steps only for
+  work with clearly separate parts, such as building, testing and publishing.
+- Never split one piece of research into a step per item ("find price of A",
+  "find price of B"): one step gathers all of it.
+- Give every step a short title that says what it does ("Compare the prices"),
+  never the name of the agent that does it.
 - Each step must have clear verification criteria
 - Mark dependencies explicitly (steps that must complete before this one)
 - Identify steps that can run in parallel

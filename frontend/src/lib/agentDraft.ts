@@ -374,6 +374,35 @@ export const TABS: { id: TabId; label: string; needs?: 'edit' | 'owner' }[] = [
 
 export type AgentRole = 'owner' | 'edit' | 'use';
 
+/** The five tabs a person sees; each holds one or more of the sections above.
+ *  A group's id is its first section, so old links to any section still open. */
+export const TAB_GROUPS: { id: TabId; label: string; parts: TabId[] }[] = [
+  { id: 'overview', get label() { return tr('ui.agentTabs.overview'); }, parts: ['overview'] },
+  { id: 'general', get label() { return tr('ui.agentTabs.setup'); }, parts: ['general'] },
+  { id: 'tools', get label() { return tr('ui.agentTabs.access'); }, parts: ['tools', 'folders', 'connections'] },
+  { id: 'tasks', get label() { return tr('ui.agentTabs.work'); }, parts: ['tasks', 'checkins', 'teams'] },
+  { id: 'sharing', get label() { return tr('ui.agentTabs.sharing'); }, parts: ['sharing'] },
+];
+
+/** The groups a role sees, each with only the sections that role may open. */
+export function groupsFor(role: AgentRole | undefined) {
+  const allowed = new Set(tabsFor(role).map((t) => t.id));
+  return TAB_GROUPS
+    .map((group) => ({ ...group, label: group.label, parts: group.parts.filter((part) => allowed.has(part)) }))
+    .filter((group) => group.parts.length > 0)
+    .map((group) => ({ ...group, id: group.parts[0] }));
+}
+
+/** What a section is called as a heading inside its tab. */
+export function partLabel(id: TabId): string {
+  const words: Record<TabId, string> = {
+    overview: tr('ui.agentTabs.overview'), general: tr('ui.agentTabs.setup'), tools: tr('ui.agentTabs.toolsAndApprovals'),
+    folders: tr('ui.agentTabs.workingFolders'), connections: tr('ui.agentTabs.connections'), tasks: tr('ui.agentTabs.tasks'),
+    checkins: tr('ui.agentTabs.checkIns'), teams: tr('ui.agentTabs.teams'), sharing: tr('ui.agentTabs.sharing'),
+  };
+  return words[id];
+}
+
 export function tabsFor(role: AgentRole | undefined) {
   const mine = role || 'owner';
   return TABS.filter((t) => !t.needs || mine === 'owner' || (t.needs === 'edit' && mine === 'edit'));
