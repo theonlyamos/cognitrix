@@ -122,7 +122,7 @@ def opened_pull_requests(tool_name: str, args: dict[str, Any] | None,
 
 def maybe_opened(tool_name: str, text: str) -> bool:
     """Cheap first look, so most tool calls cost nothing."""
-    return bool(_CREATE_TOOL.search(str(tool_name or ''))) or 'github.com/' in (text or '')
+    return bool(_CREATE_TOOL.search(str(tool_name or ''))) or _URL.search(text or '') is not None
 
 
 async def _enabled(owner: str) -> bool:
