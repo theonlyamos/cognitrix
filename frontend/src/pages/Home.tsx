@@ -1768,21 +1768,53 @@ export default function Home() {
     openChat({ id: chatId, kind: 'agent', agent_id: worker?.agent_id || agentId } as ChatSummary);
   };
 
-  // /home?chat=<id> (from an Inbox alert) opens that chat once the list has it.
+  // The address names the chat on screen: /home?chat=<id>. A link, a bookmark
+  // or the back button opens that chat; opening a chat here updates the address.
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedChat = searchParams.get('chat');
+  // The chat id this page last wrote to (or read from) the address.
+  const addressChatRef = useRef<string | null>(null);
+  // A chat id in the address that has not been opened yet (first load, back button).
+  const pendingLinkRef = useRef<string | null>(linkedChat);
+  if (linkedChat !== addressChatRef.current && linkedChat) pendingLinkRef.current = linkedChat;
   useEffect(() => {
-    if (!linkedChat || !allChatsData) return;
+    if (!linkedChat || linkedChat === addressChatRef.current || !allChatsData) return;
     const chat = allChatsData.find((c) => c.id === linkedChat);
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.delete('chat');
-      return next;
-    }, { replace: true });
-    if (chat) openChat(chat);
+    addressChatRef.current = linkedChat;
+    pendingLinkRef.current = null;
+    if (chat) {
+      if (chat.id !== activeRef.current) openChat(chat);
+    } else {
+      // A link to a chat that is gone: drop it.
+      addressChatRef.current = null;
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('chat');
+        return next;
+      }, { replace: true });
+    }
     // openChat changes every render; this runs once per link.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedChat, allChatsData]);
+  const shownChatId = incognito ? null : activeSessionId;
+  useEffect(() => {
+    // Wait a moment: switching agents passes through "no chat" on the way.
+    const timer = window.setTimeout(() => {
+      if (pendingLinkRef.current) return;
+      const inAddress = new URLSearchParams(window.location.search).get('chat');
+      if (shownChatId === inAddress) { addressChatRef.current = inAddress; return; }
+      addressChatRef.current = shownChatId;
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (shownChatId) next.set('chat', shownChatId);
+        else next.delete('chat');
+        return next;
+        // Chat to chat is a step back can undo; a new chat getting its id is not.
+      }, { replace: !inAddress });
+    }, 200);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownChatId]);
 
   // Start a fresh chat with an agent, or open a team's group chat.
   const startChatWith = (target: PickTarget) => {
@@ -1872,6 +1904,22 @@ export default function Home() {
   const acceptNextStep = useCallback((step: string) => {
     void sendRef.current(tr('ui.home.yesGoAheadStep', { step }), 'chat', null, { keepComposer: true });
   }, []);
+  // A page published twice in one turn shows one card: the newest version's.
+  const supersededCards = useMemo(() => {
+    const hidden = new Map<string, string>();
+    let latest = new Map<string, { messageId: string; toolId: string }>();
+    for (const message of messages) {
+      if (message.role === 'user') { latest = new Map(); continue; }
+      (message.tools ?? []).forEach((tool, index) => {
+        const published = tool.status === 'done' ? publishedFrom(tool.name, tool.result ?? undefined) : null;
+        if (!published) return;
+        const before = latest.get(published.id);
+        if (before) hidden.set(before.messageId, [hidden.get(before.messageId), before.toolId].filter(Boolean).join(','));
+        latest.set(published.id, { messageId: message.id, toolId: tool.id || String(index) });
+      });
+    }
+    return hidden;
+  }, [messages]);
   let lastReplyIndex = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i].role === 'assistant' && messages[i].content.trim()) {
@@ -2395,6 +2443,7 @@ export default function Home() {
                   onEdit={canRework && isUserTurn(message) ? startRework : undefined}
                   onRegenerate={canRework && index === lastReplyIndex && canRegenerate ? regenerate : undefined}
                   onNextStep={index === messages.length - 1 && index === lastReplyIndex && !busy ? acceptNextStep : undefined}
+                  supersededCards={supersededCards.get(message.id)}
                 />
               ))}
 

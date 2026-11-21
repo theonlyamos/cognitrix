@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { UserProvider, useUser } from '@/context/AppContext';
 import { SessionProvider } from '@/context/SessionContext';
 import { AccountThemeSync, ThemeProvider } from '@/context/ThemeContext';
@@ -81,6 +81,12 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   return <DesktopFrame>{children}</DesktopFrame>;
 }
 
+/** /chat/<id>: the short form of a chat's link. */
+function ChatLink() {
+  const { chatId = '' } = useParams();
+  return <Navigate to={`/home?chat=${encodeURIComponent(chatId)}`} replace />;
+}
+
 function AppRoutes() {
   return (
     <Suspense fallback={<LoadingScreen />}>
@@ -100,6 +106,7 @@ function AppRoutes() {
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/home" element={<Home />} />
+          <Route path="/chat/:chatId" element={<ChatLink />} />
           <Route path="/shared/:chatId" element={<SharedChat />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/agents/new" element={<AgentPage />} />

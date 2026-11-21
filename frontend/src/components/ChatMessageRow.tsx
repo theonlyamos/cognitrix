@@ -44,13 +44,17 @@ interface ChatMessageRowProps {
   onRegenerate?: () => void;
   /** Say yes to the "Next step: …" a reply ends with (the latest reply only). */
   onNextStep?: (step: string) => void;
+  /** Tool call ids (comma separated) whose page card a later version in the same turn replaces. */
+  supersededCards?: string;
 }
 
 const actionClass =
   'min-h-11 px-1 font-mono text-[10.5px] text-fg-dim transition-colors hover:text-fg md:min-h-0';
 
 /** Reasoning the model streamed inside <think> tags is not part of the answer. */
-const withoutThinking = (text: string) => text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+export const withoutThinking = (text: string) =>
+  // A block still being streamed has no closing tag yet: hide it to the end.
+  text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim();
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -99,6 +103,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   onEdit,
   onRegenerate,
   onNextStep,
+  supersededCards,
 }: ChatMessageRowProps) {
   if (message.role === 'tool') {
     if (!message.tools?.length) return null;
@@ -149,7 +154,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
               {tool.status !== 'running' && signInNeeded(tool.result) && <SignInNeededNotice app={signInNeeded(tool.result)!} />}
               {tool.status === 'done' && <MemoryNotice toolName={tool.name} result={tool.result} />}
               {tool.status === 'done' && <ThemeNotice toolName={tool.name} result={tool.result} />}
-              {tool.status === 'done' && <ArtifactCard toolName={tool.name} result={tool.result} />}
+              {tool.status === 'done' && !supersededCards?.split(',').includes(tool.id || String(index)) && <ArtifactCard toolName={tool.name} result={tool.result} />}
               {tool.status === 'done' && <AppViewCard result={tool.result} />}
               {tool.status === 'done' && tool.card && <InfoCard card={tool.card} />}
               {tool.status === 'running' && isShowCard(tool.name) && <InfoCardPending />}
@@ -169,9 +174,12 @@ export const ChatMessageRow = memo(function ChatMessageRow({
     );
   }
 
-  if (message.role === 'assistant' && !message.content.trim() && !(isLast && streaming)) return null;
-
   const isUser = message.role === 'user';
+  // What the model wrote for the person, without its reasoning.
+  const reply = isUser ? message.content : withoutThinking(message.content);
+  if (message.role === 'assistant' && !reply && !(isLast && streaming)) return null;
+  const thinking = !isUser && !reply && message.content.includes('<think>');
+
   // A card button press: a small line, not a full message.
   const press = isUser ? parsePress(message.content) : null;
   if (press) {
@@ -186,12 +194,12 @@ export const ChatMessageRow = memo(function ChatMessageRow({
       </div>
     );
   }
-  const blockedUrl = isUser ? null : blockedEndpoint(message.content);
+  const blockedUrl = isUser ? null : blockedEndpoint(reply);
   // Written by someone this chat is shared with (sessions/sharing.py).
   const guest = isUser ? splitAuthor(message.content) : null;
   const guestAuthor = guest?.author ?? null;
   // A reply ending "Next step: …" gets a one-tap yes (the latest reply only).
-  const step = !isUser && onNextStep && !(isLast && streaming) ? nextStep(message.content) : null;
+  const step = !isUser && onNextStep && !(isLast && streaming) ? nextStep(reply) : null;
   return (
     <div className={cn('group/msg mx-auto flex w-full max-w-3xl flex-col px-4 py-2.5 sm:px-6', isUser && 'items-end')}>
       {isUser && guestAuthor ? (
@@ -217,13 +225,13 @@ export const ChatMessageRow = memo(function ChatMessageRow({
           </>
         ) : isLast && streaming ? (
           <div className="whitespace-pre-wrap break-words leading-relaxed">
-            {message.content}
+            {thinking ? <span className="text-fg-dim">{tr('ui.home.thinking')}</span> : reply}
             <span className="caret" />
           </div>
         ) : (
           <div className="md break-words">
-            <Suspense fallback={<div className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</div>}>
-              <MarkdownMessage content={step ? step.rest : message.content} />
+            <Suspense fallback={<div className="whitespace-pre-wrap break-words leading-relaxed">{reply}</div>}>
+              <MarkdownMessage content={step ? step.rest : reply} />
             </Suspense>
           </div>
         )}
@@ -248,7 +256,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
           </div>
         ))}
       </div>
-      {(message.timestamp || message.durationMs !== undefined || (message.content.trim() && !(isLast && streaming))) && (
+      {(message.timestamp || message.durationMs !== undefined || (reply.trim() && !(isLast && streaming))) && (
         <div className="mt-1 flex flex-wrap items-center gap-3 opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100 md:group-focus-within/msg:opacity-100">
           {(message.timestamp || (!isUser && message.durationMs !== undefined)) && (
             <span className="font-mono text-[10.5px] text-fg-dim">
@@ -263,7 +271,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
               )}
             </span>
           )}
-          {message.content.trim() && !(isLast && streaming) && (
+          {reply.trim() && !(isLast && streaming) && (
           <>
             <CopyButton text={message.content} />
             {!isUser && <ListenButton id={message.id} text={message.content} />}
