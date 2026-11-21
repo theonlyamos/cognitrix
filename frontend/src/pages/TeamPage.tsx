@@ -22,7 +22,7 @@ export default function TeamPage() {
   const { teamId } = useParams();
   const navigate = useNavigate();
   const editing = Boolean(teamId);
-  const backTo = editing ? `/teams/${teamId}` : '/teams';
+  const backTo = editing ? `/teams/${teamId}` : '/agents?tab=teams';
 
   const { data: existing, loading: loadingTeam } = useResource<TeamData>(teamId ? `/teams/${teamId}` : null);
   const { data: agentList } = useResource<Agent[]>('/agents');

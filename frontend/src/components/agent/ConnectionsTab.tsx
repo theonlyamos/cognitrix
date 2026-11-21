@@ -69,7 +69,7 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
             <p className="px-3.5 py-3 text-[13px] text-fg-dim">{tr('ui.agent.connectionsTab.loading')}</p>
           ) : collections.length === 0 ? (
             <p className="px-3.5 py-3 text-[13px] text-fg-dim">
-              {tr('ui.agent.connectionsTab.noCollectionsYet')}{' '}<Link to="/knowledge" className="text-accent-ink hover:underline">{tr('ui.agent.connectionsTab.createOneOnTheKnowledge')}</Link>.
+              {tr('ui.agent.connectionsTab.noCollectionsYet')}{' '}<Link to="/apps?tab=knowledge" className="text-accent-ink hover:underline">{tr('ui.agent.connectionsTab.createOneOnTheKnowledge')}</Link>.
             </p>
           ) : collections.map((c) => (
             <div key={c.id} className="border-t border-line px-3.5 py-2.5 first:border-t-0">

@@ -97,7 +97,7 @@ export default function TasksTab({ agent, draft, update, overview, refreshOvervi
         </div>
       </Card>
 
-      <Card title={tr('ui.agent.tasksTab.webhooks')} aside={<Link to="/automations" className={linkButtonClass}>{tr('ui.agent.tasksTab.openAutomations')}</Link>}>
+      <Card title={tr('ui.agent.tasksTab.webhooks')} aside={<Link to="/tasks?show=scheduled" className={linkButtonClass}>{tr('ui.agent.tasksTab.openAutomations')}</Link>}>
         {automations === null ? (
           <p className="text-[13px] text-fg-dim">{tr('ui.agent.tasksTab.loading')}</p>
         ) : hooks.length === 0 ? (

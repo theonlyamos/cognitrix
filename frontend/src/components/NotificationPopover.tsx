@@ -110,7 +110,7 @@ export default function NotificationPopover({ onClose, placement = 'below' }: {
       )}
       <div className="flex justify-between border-t border-line px-3.5 py-2.5 text-[12.5px]">
         <Link to="/inbox" onClick={onClose} className="text-accent-ink hover:underline">{tr('ui.notificationPopover.openInbox')}</Link>
-        <Link to="/notifications" onClick={onClose} className="text-fg-dim hover:text-fg">{tr('ui.notificationPopover.allNotificationsAndSettings')}</Link>
+        <Link to="/inbox?tab=recent" onClick={onClose} className="text-fg-dim hover:text-fg">{tr('ui.notificationPopover.allNotificationsAndSettings')}</Link>
       </div>
     </div>
   );

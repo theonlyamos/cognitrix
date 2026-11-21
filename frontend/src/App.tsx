@@ -23,25 +23,21 @@ const AgentPage = lazy(() => import('@/pages/AgentPage'));
 const Tasks = lazy(() => import('@/pages/Tasks'));
 const TaskPage = lazy(() => import('@/pages/TaskPage'));
 const TaskDetail = lazy(() => import('@/pages/TaskDetail'));
-const Teams = lazy(() => import('@/pages/Teams'));
 const TeamDetail = lazy(() => import('@/pages/TeamDetail'));
 const TeamChat = lazy(() => import('@/pages/TeamChat'));
 const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
 const Inbox = lazy(() => import('@/pages/Inbox'));
-const Automations = lazy(() => import('@/pages/Automations'));
 const Apps = lazy(() => import('@/pages/Apps'));
 const AppDetail = lazy(() => import('@/pages/AppDetail'));
 const CreateApp = lazy(() => import('@/pages/CreateApp'));
 const OpenApp = lazy(() => import('@/pages/OpenApp'));
 const ArtifactPage = lazy(() => import('@/pages/ArtifactPage'));
 const PublicArtifact = lazy(() => import('@/pages/PublicArtifact'));
-const Knowledge = lazy(() => import('@/pages/Knowledge'));
 const Projects = lazy(() => import('@/pages/Projects'));
 const ProjectDetail = lazy(() => import('@/pages/ProjectDetail'));
 const Meetings = lazy(() => import('@/pages/Meetings'));
 const Payments = lazy(() => import('@/pages/Payments'));
-const Notifications = lazy(() => import('@/pages/Notifications'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const QuickAsk = lazy(() => import('@/pages/QuickAsk'));
 const SharedChat = lazy(() => import('@/pages/SharedChat'));
@@ -116,27 +112,27 @@ function AppRoutes() {
           <Route path="/tasks/new" element={<TaskPage />} />
           <Route path="/tasks/:taskId" element={<TaskDetail />} />
           <Route path="/tasks/:taskId/edit" element={<TaskPage />} />
-          <Route path="/teams" element={<Teams />} />
+          <Route path="/teams" element={<Navigate to="/agents?tab=teams" replace />} />
           <Route path="/teams/new" element={<TeamPage />} />
           <Route path="/teams/:teamId" element={<TeamDetail />} />
           <Route path="/teams/:teamId/edit" element={<TeamPage />} />
           <Route path="/teams/:teamId/chat" element={<TeamChat />} />
           <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/inbox" element={<Inbox />} />
-          <Route path="/automations" element={<Automations />} />
+          <Route path="/automations" element={<Navigate to="/tasks?show=scheduled" replace />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/apps/new" element={<CreateApp />} />
           <Route path="/apps/:appId" element={<AppDetail />} />
           {/* Artifacts live under Apps now (Pages, Images, Docs tabs). */}
           <Route path="/artifacts" element={<Navigate to="/apps?tab=pages" replace />} />
           <Route path="/artifacts/:artifactId" element={<ArtifactPage />} />
-          <Route path="/knowledge" element={<Knowledge />} />
+          <Route path="/knowledge" element={<Navigate to="/apps?tab=knowledge" replace />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/projects/:projectId/:tab" element={<ProjectDetail />} />
           <Route path="/meetings" element={<Meetings />} />
           <Route path="/payments" element={<Payments />} />
-          <Route path="/notifications" element={<Notifications />} />
+          <Route path="/notifications" element={<Navigate to="/inbox?tab=recent" replace />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/settings/:section" element={<Settings />} />
         </Route>

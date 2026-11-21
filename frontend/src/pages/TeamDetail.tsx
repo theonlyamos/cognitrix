@@ -47,7 +47,7 @@ export default function TeamDetail() {
     setActionError('');
     try {
       await api.delete(`/teams/${team.id}`);
-      navigate('/teams');
+      navigate('/agents?tab=teams');
     } catch (deleteError) {
       setActionError(errorMessage(deleteError, tr('ui.teamDetail.couldNotDeleteTheTeam')));
     }
@@ -64,7 +64,7 @@ export default function TeamDetail() {
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
       <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
-          <Link to="/teams" aria-label={tr('ui.teamDetail.backToTeams')} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
+          <Link to="/agents?tab=teams" aria-label={tr('ui.teamDetail.backToTeams')} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
           <div className="min-w-0">

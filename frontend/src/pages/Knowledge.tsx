@@ -255,7 +255,8 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
   );
 }
 
-export default function Knowledge() {
+/** Collections agents can read. `embedded` drops the page header: it is a tab of the Library. */
+export default function Knowledge({ embedded = false }: { embedded?: boolean }) {
   const { data, loading, error, refetch } = useResource<KnowledgeCollection[]>('/knowledge');
   const [name, setName] = useState('');
   const [createError, setCreateError] = useState('');
@@ -276,7 +277,7 @@ export default function Knowledge() {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title={tr('ui.knowledge.knowledge')} subtitle={tr('ui.knowledge.documentsAndWebPagesYour')} />
+      {!embedded && <PageHeader title={tr('ui.knowledge.knowledge')} subtitle={tr('ui.knowledge.documentsAndWebPagesYour')} />}
       <div className="flex-1 overflow-y-auto">
         {loading && !data ? (
           <LoadingState label={tr('ui.knowledge.loadingCollections')} />

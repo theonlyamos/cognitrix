@@ -4,7 +4,7 @@ import { api, errorMessage } from '@/lib/api';
 import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import { desktop, isDesktop, type DesktopSettings, type UpdateInfo } from '@/lib/desktop';
-import { Toggle } from '@/pages/Notifications';
+import { Toggle, NotificationPrefsCard } from '@/pages/Notifications';
 import { useT, type MessageKey, tr } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
@@ -40,7 +40,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'sign-ins' | 'appearance' | 'models' | 'usage' | 'swarms' | 'assistant' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'computers' | 'chat-apps' | 'email' | 'people' | 'audit' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'notifications' | 'models' | 'usage' | 'assistant' | 'memory' | 'voice' | 'apps' | 'computers' | 'people' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -49,39 +49,47 @@ interface SectionMeta {
   /** Extra words the settings search matches. */
   keywords: string;
   desktopOnly?: boolean;
-  /** Shown only to admins of a shared server. */
-  adminOnly?: boolean;
 }
 
 const SECTIONS: SectionMeta[] = [
-  { id: 'account', get label() { return tr('ui.settings.account'); }, group: 'GENERAL', keywords: 'profile email name password export backup download data sign out devices api keys' },
-  { id: 'sign-ins', get label() { return tr('ui.settings.signIns'); }, group: 'GENERAL', keywords: 'devices signed in sessions sign out phone browser laptop code qr another device new device log in login security' },
-  { id: 'appearance', get label() { return tr('ui.settings.appearance'); }, group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
+  { id: 'account', get label() { return tr('ui.settings.account'); }, group: 'GENERAL', keywords: 'profile email name password export backup download data sign out devices signed in sessions phone browser laptop code qr another device new device log in login security developer api keys' },
+  { id: 'appearance', get label() { return tr('ui.settings.appearance'); }, group: 'GENERAL', keywords: 'theme dark light system send enter motion animation language' },
+  { id: 'notifications', label: 'Notifications', group: 'GENERAL', keywords: 'alerts bell push browser desktop phone approval question task finished failed reply inbox' },
   { id: 'models', get label() { return tr('ui.settings.modelsAndKeys'); }, group: 'AI', keywords: 'providers api key chatgpt plan subscription plus pro openai anthropic claude gemini google groq openrouter cerebras ollama coding agent cli claude code codex gemini cli copilot opencode antigravity' },
-  { id: 'usage', get label() { return tr('ui.settings.usage'); }, group: 'AI', keywords: 'cost spend tokens money bill price how much' },
+  { id: 'usage', get label() { return tr('ui.settings.usage'); }, group: 'AI', keywords: 'cost spend tokens money bill price how much limits helpers swarm workers parallel sub agents subagents fan out budget concurrency how many at once' },
   { id: 'assistant', get label() { return tr('ui.settings.assistant'); }, group: 'AI', keywords: 'proactive check in brief morning quiet hours do not disturb interrupt alerts notifications push daily limit tokens main assistant' },
-  { id: 'memory', get label() { return tr('ui.settings.memory'); }, group: 'AI', keywords: 'remember memories personalization forget history what agents know about me' },
-  { id: 'skills', get label() { return tr('ui.settings.skills'); }, group: 'AI', keywords: 'skill instructions learned how to slash commands playbook procedure reuse' },
+  { id: 'memory', get label() { return tr('ui.settings.memory'); }, group: 'AI', keywords: 'remember memories personalization forget history what agents know about me tidy skills skill instructions learned how to slash commands playbook procedure reuse' },
   { id: 'voice', get label() { return tr('ui.settings.voice'); }, group: 'AI', keywords: 'input mic microphone speech transcription dictation spoken replies read aloud listen text to speech tts' },
-  { id: 'apps', get label() { return tr('ui.settings.connectedApps'); }, group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
-  { id: 'access', get label() { return tr('ui.settings.agentAccess'); }, group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
-  { id: 'computers', get label() { return tr('ui.settings.computers'); }, group: 'AGENTS', keywords: 'pc pair pairing my computer laptop desktop device link connect sandbox remote machine' },
-  { id: 'swarms', get label() { return tr('ui.settings.swarms'); }, group: 'AGENTS', keywords: 'swarm workers parallel sub agents subagents fan out limit budget tokens concurrency how many at once' },
-  { id: 'chat-apps', get label() { return tr('ui.settings.chatApps'); }, group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp sms text message twilio phone bot alerts approvals mention channel' },
-  { id: 'email', get label() { return tr('ui.settings.agentEmail'); }, group: 'AGENTS', keywords: 'email mail address inbox imap smtp gmail mailbox reply send' },
-  { id: 'people', get label() { return tr('ui.settings.people'); }, group: 'SERVER', keywords: 'users admin invite invitation members roles disable remove delete accounts email smtp reset spending limit cap budget', adminOnly: true },
-  { id: 'audit', get label() { return tr('ui.settings.auditLog'); }, group: 'SERVER', keywords: 'audit log activity history who did what tool calls approvals sign ins security' },
+  { id: 'apps', get label() { return tr('ui.settings.connectedApps'); }, group: 'AGENTS', keywords: 'connected apps github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp servers tools passwords credentials secrets tokens telegram slack discord teams microsoft whatsapp sms text message twilio phone bot email mail address imap smtp mailbox' },
+  { id: 'computers', get label() { return tr('ui.settings.computers'); }, group: 'AGENTS', keywords: 'pc pair pairing my computer laptop desktop device link connect sandbox remote machine working folder files apps agents can use' },
+  { id: 'people', get label() { return tr('ui.settings.people'); }, group: 'SERVER', keywords: 'users admin invite invitation members roles disable remove delete accounts email smtp reset spending limit cap budget audit log activity history who did what tool calls approvals sign ins security' },
   { id: 'desktop', get label() { return tr('ui.settings.desktopApp'); }, group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
   { id: 'engine', get label() { return tr('ui.settings.engine'); }, group: 'THIS COMPUTER', keywords: 'server status restart log version database queue worker data folder' },
 ];
 
 /** Old /settings#… links (from before sections had their own pages). */
-const LEGACY_HASH: Record<string, SectionId> = {
+const LEGACY_HASH: Record<string, string> = {
   'voice-input': 'voice',
-  'mcp-servers': 'access',
+  'mcp-servers': 'apps#mcp-servers',
   'connected-apps': 'apps',
-  'saved-sign-ins': 'access',
-  'chat-apps': 'chat-apps',
+  'saved-sign-ins': 'apps#saved-sign-ins',
+  'chat-apps': 'apps#chat-apps',
+};
+
+/** Sections that moved into another one; old links land on the right part. */
+const MOVED: Record<string, string> = {
+  'sign-ins': 'account#devices',
+  skills: 'memory#skills',
+  swarms: 'usage#helpers',
+  access: 'computers',
+  'chat-apps': 'apps#chat-apps',
+  email: 'apps#agent-email',
+  audit: 'people#activity',
+};
+/** Where an anchor of the old Agent access page lives now. */
+const MOVED_ANCHOR: Record<string, string> = {
+  '#mcp-servers': 'apps#mcp-servers',
+  '#saved-sign-ins': 'apps#saved-sign-ins',
 };
 
 function useDesktopPrefs(enabled: boolean) {
@@ -193,7 +201,8 @@ function AccountSection() {
   );
 }
 
-function AccessSection({ desktopApp }: { desktopApp: boolean }) {
+/** The folder agents work in on this machine, their own computer, and the apps they may use. */
+function ComputerAccess({ desktopApp }: { desktopApp: boolean }) {
   const { info, reload } = useSystemInfo();
   const { prefs, setPrefs } = useDesktopPrefs(desktopApp);
 
@@ -208,15 +217,13 @@ function AccessSection({ desktopApp }: { desktopApp: boolean }) {
 
   return (
     <>
-      <SectionHeader title={tr('ui.settings.agentAccess')} description={tr('ui.settings.whatAgentsCanReachFiles')} />
-
-      <SubHeading>{tr('ui.settings.workingFolder')}</SubHeading>
+      <SubHeading className="mt-7">{tr('ui.settings.workingFolder')}</SubHeading>
       <Group>
         <SettingRow
           label={<span className="break-all font-mono text-[12.5px] font-normal">{info?.working_folder ?? prefs?.working_folder ?? '…'}</span>}
           detail={desktopApp
             ? tr('ui.settings.shellCommandsAndFileTools')
-            : <>{tr('ui.settings.shellCommandsAndFileTools_e639')}{' '}<span className="font-mono">COGNITRIX_TOOLS_ROOT</span>{' '}{tr('ui.settings.onTheServer')}</>}
+            : 'Agents read and change files here. Whoever runs the server chooses the folder.'}
         >
           {desktopApp && (
             <>
@@ -226,16 +233,6 @@ function AccessSection({ desktopApp }: { desktopApp: boolean }) {
           )}
         </SettingRow>
       </Group>
-
-      <SubHeading className="mt-7" >{tr('ui.settings.mcpServers')}</SubHeading>
-      <div id="mcp-servers" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
-        <McpServersCard />
-      </div>
-
-      <SubHeading className="mt-7">{tr('ui.settings.savedSignIns')}</SubHeading>
-      <div id="saved-sign-ins" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
-        <CredentialsCard />
-      </div>
 
       <SubHeading className="mt-7">{tr('ui.settings.agentsComputer')}</SubHeading>
       <div id="computer-sandbox" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
@@ -349,7 +346,7 @@ function DesktopSection() {
           )}
           <SettingRow
             label={onWindows ? tr('ui.settings.windowsNotifications') : tr('ui.settings.systemNotifications')}
-            detail={<>{tr('ui.settings.chooseWhichEventsUnder')}{' '}<Link to="/notifications" className="text-accent-ink hover:underline">{tr('ui.settings.notifications')}</Link></>}
+            detail={<>{tr('ui.settings.chooseWhichEventsUnder')}{' '}<Link to="/settings/notifications" className="text-accent-ink hover:underline">{tr('ui.settings.notifications')}</Link></>}
           >
             <button type="button" onClick={() => void sendTest()} className={quietButtonClass}>{tr('ui.settings.sendTest')}</button>
             <Toggle label={onWindows ? tr('ui.settings.windowsNotifications') : tr('ui.settings.systemNotifications')} checked={prefs.notify_desktop} onChange={(v) => update({ notify_desktop: v })} />
@@ -422,36 +419,42 @@ function AppearanceSection() {
   );
 }
 
-function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean }) {
+function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boolean; admin: boolean }) {
   switch (id) {
-    case 'account': return <AccountSection />;
+    case 'account':
+      return (
+        <>
+          <AccountSection />
+          <SubHeading className="mt-7"><span id="devices" className="scroll-mt-4">Devices</span></SubHeading>
+          <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.devicesSignedInToYour')}</p>
+          <SignInsSettings />
+        </>
+      );
     case 'appearance':
       return <AppearanceSection />;
+    case 'notifications':
+      return (<><SectionHeader title="Notifications" description="Choose which events reach you, and where." /><NotificationPrefsCard /></>);
     case 'models':
       return (<><SectionHeader title={tr('ui.settings.modelsAndKeys')} description={tr('ui.settings.yourChatgptPlanAndApi')} /><ChatGPTPlanCard /><CodingAgents /><ProviderKeys /></>);
     case 'usage':
-      return (<><SectionHeader title={tr('ui.settings.usage')} description={tr('ui.settings.howManyTokensYourAgents')} /><UsageSettings /></>);
-    case 'swarms':
-      return (<><SectionHeader title={tr('ui.settings.swarms')} description={tr('ui.settings.howManyWorkersAnAgent')} /><SwarmSettings /></>);
+      return (
+        <>
+          <SectionHeader title="Usage and limits" description="What your agents have used, and how much help they may call in at once." />
+          <UsageSettings />
+          <SubHeading className="mt-7"><span id="helpers" className="scroll-mt-4">Helpers</span></SubHeading>
+          <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.howManyWorkersAnAgent')}</p>
+          <SwarmSettings />
+        </>
+      );
     case 'assistant':
       return (<><SectionHeader title={tr('ui.settings.assistant')} description={tr('ui.settings.howMuchYourMainAssistant')} /><AssistantSettings /></>);
     case 'memory':
       return (
         <>
-          <SectionHeader
-            title={tr('ui.settings.memory')}
-            description={tr('ui.settings.whatYourAgentsRememberAbout')}
-          />
+          <SectionHeader title="Memory and skills" description="What your agents remember about you, and the instructions they have learned." />
           <MemorySettings />
-        </>
-      );
-    case 'skills':
-      return (
-        <>
-          <SectionHeader
-            title={tr('ui.settings.skills')}
-            description={tr('ui.settings.instructionsYourAgentsLoadWhen')}
-          />
+          <SubHeading className="mt-7"><span id="skills" className="scroll-mt-4">{tr('ui.settings.skills')}</span></SubHeading>
+          <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.instructionsYourAgentsLoadWhen')}</p>
           <SkillsSettings />
         </>
       );
@@ -468,19 +471,28 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
     case 'apps':
       return (
         <>
-          <SectionHeader
-            title={tr('ui.settings.connectedApps')}
-            description={tr('ui.settings.signInToAppsSo')}
-          />
+          <SectionHeader title="Connections" description="The apps, accounts and channels your agents can reach." />
+          <SubHeading>{tr('ui.settings.connectedApps')}</SubHeading>
+          <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.signInToAppsSo')}</p>
           <ConnectedAppsCard />
-        </>
-      );
-    case 'access': return <AccessSection desktopApp={desktopApp} />;
-    case 'sign-ins':
-      return (
-        <>
-          <SectionHeader title={tr('ui.settings.signIns')} description={tr('ui.settings.devicesSignedInToYour')} />
-          <SignInsSettings />
+
+          <SubHeading className="mt-7">{tr('ui.settings.savedSignIns')}</SubHeading>
+          <div id="saved-sign-ins" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
+            <CredentialsCard />
+          </div>
+
+          <SubHeading className="mt-7"><span id="chat-apps" className="scroll-mt-4">{tr('ui.settings.chatApps')}</span></SubHeading>
+          <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.chatWithYourAgentsFrom')}</p>
+          <ChatChannelsCard />
+
+          <SubHeading className="mt-7"><span id="agent-email" className="scroll-mt-4">{tr('ui.settings.agentEmail')}</span></SubHeading>
+          <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.giveEachAgentItsOwn')}</p>
+          <AgentEmailCard />
+
+          <SubHeading className="mt-7">{tr('ui.settings.mcpServers')}</SubHeading>
+          <div id="mcp-servers" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
+            <McpServersCard />
+          </div>
         </>
       );
     case 'computers':
@@ -495,39 +507,18 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
               <ThisPcLink />
             </>
           )}
-        </>
-      );
-    case 'chat-apps':
-      return (
-        <>
-          <SectionHeader
-            title={tr('ui.settings.chatApps')}
-            description={tr('ui.settings.chatWithYourAgentsFrom')}
-          />
-          <ChatChannelsCard />
-        </>
-      );
-    case 'email':
-      return (
-        <>
-          <SectionHeader
-            title={tr('ui.settings.agentEmail')}
-            description={tr('ui.settings.giveEachAgentItsOwn')}
-          />
-          <AgentEmailCard />
+          <ComputerAccess desktopApp={desktopApp} />
         </>
       );
     case 'people':
       return (
         <>
-          <SectionHeader title={tr('ui.settings.people')} description={tr('ui.settings.whoHasAnAccountOn')} />
-          <PeopleSettings />
-        </>
-      );
-    case 'audit':
-      return (
-        <>
-          <SectionHeader title={tr('ui.settings.auditLog')} description={tr('ui.settings.whoDidWhatOnThis')} />
+          <SectionHeader
+            title={admin ? 'People and activity' : 'Activity'}
+            description={admin ? 'Who has an account on this server, and what was done on it.' : tr('ui.settings.whoDidWhatOnThis')}
+          />
+          {admin && <PeopleSettings />}
+          {admin && <SubHeading className="mt-7"><span id="activity" className="scroll-mt-4">Activity</span></SubHeading>}
           <AuditLog />
         </>
       );
@@ -572,8 +563,8 @@ export default function Settings() {
   const admin = Boolean(user?.is_admin) && !desktopApp;
 
   const visible = useMemo(
-    () => SECTIONS.filter((s) => (desktopApp || !s.desktopOnly) && (admin || !s.adminOnly)),
-    [desktopApp, admin],
+    () => SECTIONS.filter((s) => desktopApp || !s.desktopOnly),
+    [desktopApp],
   );
   const shown = visible.filter(
     (s) => matches(s, query) || t(`settings.section.${s.id}` as MessageKey).toLowerCase().includes(query.trim().toLowerCase()),
@@ -590,12 +581,10 @@ export default function Settings() {
 
   if (!section) {
     const legacy = LEGACY_HASH[location.hash.slice(1)];
-    if (legacy) {
-      const anchor = legacy === 'access' ? location.hash : '';
-      return <Navigate to={`/settings/${legacy}${anchor}`} replace />;
-    }
+    if (legacy) return <Navigate to={`/settings/${legacy}`} replace />;
   } else if (!active) {
-    return <Navigate to="/settings" replace />;
+    const moved = (section === 'access' && MOVED_ANCHOR[location.hash]) || MOVED[section];
+    return <Navigate to={moved ? `/settings/${moved}` : '/settings'} replace />;
   }
 
   // Wide screens with no section picked show the first one.
@@ -607,7 +596,7 @@ export default function Settings() {
   };
   const groupLabel = (g: string) => t(g === 'THIS COMPUTER' && !desktopApp ? 'settings.group.system' : GROUP_KEY[g]);
   const labelFor = (s: SectionMeta) =>
-    t(s.id === 'engine' && !desktopApp ? 'settings.section.server' : (`settings.section.${s.id}` as MessageKey));
+    t(s.id === 'engine' && !desktopApp ? 'settings.section.server' : s.id === 'people' && !admin ? 'settings.section.audit' : (`settings.section.${s.id}` as MessageKey));
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 bg-bg text-fg">
@@ -625,7 +614,7 @@ export default function Settings() {
         </div>
         {groups.map((g) => (
           <div key={g} className="md:contents">
-            <div className="px-2.5 pb-1.5 pt-4 font-mono text-[10px] tracking-[0.14em] text-fg-dim md:pt-3.5">{groupLabel(g)}</div>
+            <div className="px-2.5 pb-1.5 pt-4 text-[12px] font-medium text-fg-dim md:pt-3.5">{groupLabel(g)}</div>
             <div className="overflow-hidden rounded-[12px] border border-line bg-panel md:contents">
               {shown.filter((s) => s.group === g).map((s) => (
                 <Link
@@ -659,7 +648,7 @@ export default function Settings() {
               <span aria-hidden="true">←</span> {t('settings.title')}
             </Link>
           )}
-          <SectionBody key={current.id} id={current.id} desktopApp={desktopApp} />
+          <SectionBody key={current.id} id={current.id} desktopApp={desktopApp} admin={admin} />
         </div>
       </main>
     </div>

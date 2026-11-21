@@ -16,7 +16,7 @@ export default function TeamsTab({ agent, draft, update, overview }: TabProps) {
 
   return (
     <div className="flex flex-col gap-[18px]">
-      <Card title={tr('ui.agent.teamsTab.teams')} aside={<Link to="/teams" className={buttonClass}>{tr('ui.agent.teamsTab.addToATeam')}</Link>}>
+      <Card title={tr('ui.agent.teamsTab.teams')} aside={<Link to="/agents?tab=teams" className={buttonClass}>{tr('ui.agent.teamsTab.addToATeam')}</Link>}>
         {!overview ? (
           <p className="text-[13px] text-fg-dim">{tr('ui.agent.teamsTab.loading')}</p>
         ) : teams.length === 0 ? (
