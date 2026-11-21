@@ -150,6 +150,7 @@ async def create(user_id: str, data: dict[str, Any]) -> Project:
         computer=await clean_computer(user_id, data.get('computer')),
         pc_folders=[str(p) for p in (data.get('pc_folders') or []) if str(p or '').strip()][:20],
         use_account_memory=bool(data.get('use_account_memory', True)),
+        watch_prs=bool(data.get('watch_prs', True)),
         created=stamp, updated=stamp,
     )
     await row.save()
@@ -182,7 +183,7 @@ async def update(row: Project, data: dict[str, Any]) -> Project:
         changes['computer'] = await clean_computer(row.user_id, data.get('computer'))
     if 'pc_folders' in data:
         changes['pc_folders'] = [str(p) for p in (data.get('pc_folders') or []) if str(p or '').strip()][:20]
-    for flag in ('use_account_memory', 'pinned', 'archived'):
+    for flag in ('use_account_memory', 'watch_prs', 'pinned', 'archived'):
         if flag in data:
             changes[flag] = bool(data.get(flag))
     if not changes:
@@ -290,6 +291,7 @@ def view(row: Project, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         'computer': row.computer or None,
         'pc_folders': list(row.pc_folders or []),
         'use_account_memory': bool(row.use_account_memory),
+        'watch_prs': bool(getattr(row, 'watch_prs', True)),
         'pinned': bool(row.pinned),
         'archived': bool(row.archived),
         'created': row.created,

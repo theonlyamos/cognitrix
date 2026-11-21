@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
@@ -27,6 +27,9 @@ export interface PullRequestWatch {
   stop_reason: string | null;
   error: string | null;
   last_news_at: string | null;
+  /** Watched because an agent opened it, without being asked. */
+  auto?: boolean;
+  project_id?: string | null;
 }
 
 function Chip({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -39,8 +42,44 @@ function watchSpeed(w: PullRequestWatch): string {
   return `every ${minutes} min`;
 }
 
+/** The account switch: watch every pull request an agent opens. */
+function AutoWatchSwitch() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.get<{ auto_watch: boolean }>('/github/watches/settings')
+      .then(({ data }) => { if (live) setOn(data?.auto_watch ?? true); })
+      .catch(() => { if (live) setOn(null); });
+    return () => { live = false; };
+  }, []);
+  if (on === null) return null;
+  const change = async (next: boolean) => {
+    setOn(next);
+    try {
+      await api.put('/github/watches/settings', { auto_watch: next });
+    } catch {
+      setOn(!next);
+    }
+  };
+  return (
+    <label className="mt-2 flex items-start gap-2 text-[12.5px] text-fg">
+      <input type="checkbox" className="mt-0.5" checked={on} onChange={(e) => void change(e.target.checked)} />
+      <span>
+        {tr('ui.automations.autoWatch')}
+        <span className="block text-[11.5px] text-fg-dim">{tr('ui.automations.autoWatchHint')}</span>
+      </span>
+    </label>
+  );
+}
+
 /** Pull requests agents watch: news wakes the chat or task that asked. */
-export default function WatchedPullRequests({ watches, onChange }: { watches: PullRequestWatch[]; onChange: () => void }) {
+export default function WatchedPullRequests({ watches, onChange, showSwitch = true, bare = false }: {
+  watches: PullRequestWatch[]; onChange: () => void;
+  /** Show the "watch pull requests agents open" account switch. */
+  showSwitch?: boolean;
+  /** Inside a page section that has its own title. */
+  bare?: boolean;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
@@ -59,11 +98,16 @@ export default function WatchedPullRequests({ watches, onChange }: { watches: Pu
   };
 
   return (
-    <section aria-labelledby="watched-prs" className="border-b border-line px-4 py-4 md:px-6">
-      <h2 id="watched-prs" className="text-[13px] font-medium">{tr('ui.automations.watchedPullRequests')}</h2>
-      <p className="mt-1 text-[12.5px] text-fg-dim">
-        {tr('ui.automations.agentsWatchingAGithubPull')}
-      </p>
+    <section aria-labelledby={bare ? undefined : 'watched-prs'} className={cn(!bare && 'border-b border-line px-4 py-4 md:px-6')}>
+      {!bare && (
+        <>
+          <h2 id="watched-prs" className="text-[13px] font-medium">{tr('ui.automations.watchedPullRequests')}</h2>
+          <p className="mt-1 text-[12.5px] text-fg-dim">
+            {tr('ui.automations.agentsWatchingAGithubPull')}
+          </p>
+        </>
+      )}
+      {showSwitch && <AutoWatchSwitch />}
       {failed && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{failed}</p>}
       <ul className="mt-2 flex flex-col divide-y divide-line rounded-[10px] border border-line">
         {watches.map((w) => {
@@ -77,6 +121,7 @@ export default function WatchedPullRequests({ watches, onChange }: { watches: Pu
                 {w.title ? <span className="font-normal text-fg-dim"> · {w.title}</span> : null}
               </a>
               {live && <Chip>{watchSpeed(w)}</Chip>}
+              {w.auto && <Chip>{tr('ui.automations.openedByAgent')}</Chip>}
               <span className="flex-1" />
               {live ? (
                 <Button size="sm" variant="ghost" onClick={() => act(w, 'stop')} disabled={busy !== null}>

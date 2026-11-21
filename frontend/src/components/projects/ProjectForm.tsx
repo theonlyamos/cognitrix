@@ -157,6 +157,14 @@ export function ProjectFields({ value, onChange, options, compact = false }: {
           <span className="block text-[11.5px] text-fg-dim">{tr('ui.projects.useAccountMemoryHint')}</span>
         </span>
       </label>
+      <label className="flex items-start gap-2 text-[12.5px] text-fg">
+        <input type="checkbox" className="mt-0.5" checked={value.watch_prs ?? true}
+          onChange={(e) => set({ watch_prs: e.target.checked })} />
+        <span>
+          {tr('ui.projects.watchPrs')}
+          <span className="block text-[11.5px] text-fg-dim">{tr('ui.projects.watchPrsHint')}</span>
+        </span>
+      </label>
     </div>
   );
 }

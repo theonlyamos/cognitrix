@@ -192,9 +192,16 @@ class PullRequestWatch(Model):
     last_news_at: str | None = None
     started_at: str | None = None
     error: str | None = None
+    project_id: str | None = None
+    """The project of the chat or task that started the watch, if any."""
+    auto: bool = False
+    """Started on its own because an agent opened the pull request
+    (``cognitrix/tasks/pr_autowatch.py``), not by Watch Pull Request."""
 
-    @validator('due', 'final', pre=True)
+    @validator('due', 'final', 'auto', pre=True)
     def _null_false(cls, value):
+        if isinstance(value, str):
+            return value.strip().lower() in ('1', 'true', 'yes', 'on')
         return bool(value) if value is not None else False
 
     @validator('failures', pre=True)
@@ -227,7 +234,37 @@ class GitHubAgentWrite(Model):
     """JSON list of comment and review ids found in the tool's answer."""
 
 
-MODELS = (PullRequestWatch, GitHubRepoHook, GitHubAgentWrite)
+class PullRequestWatchSettings(Model):
+    """A person's choices about watching pull requests."""
+
+    owner_id: str
+    auto_watch: bool = True
+    """Watch every pull request an agent opens for them, without being asked."""
+
+    @validator('auto_watch', pre=True)
+    def _default_on(cls, value):
+        if value is None or value == '':
+            return True
+        if isinstance(value, str):
+            return value.strip().lower() not in ('0', 'false', 'no', 'off')
+        return bool(value)
+
+
+MODELS = (PullRequestWatch, GitHubRepoHook, GitHubAgentWrite, PullRequestWatchSettings)
+
+
+async def auto_watch_on(owner: str) -> bool:
+    row = await PullRequestWatchSettings.find_one({'owner_id': str(owner)})
+    return True if row is None else bool(row.auto_watch)
+
+
+async def set_auto_watch(owner: str, on: bool) -> bool:
+    row = await PullRequestWatchSettings.find_one({'owner_id': str(owner)})
+    if row is None:
+        await PullRequestWatchSettings(owner_id=str(owner), auto_watch=bool(on)).save()
+    else:
+        await PullRequestWatchSettings.update_one({'id': row.id}, {'auto_watch': bool(on)})
+    return bool(on)
 
 
 def _stamp(when: datetime | None = None) -> str:
@@ -290,6 +327,8 @@ def public_watch(watch: PullRequestWatch, where: str = '') -> dict[str, Any]:
         'checked_at': watch.checked_at,
         'last_news_at': watch.last_news_at,
         'started_at': watch.started_at,
+        'project_id': watch.project_id or None,
+        'auto': bool(watch.auto),
     }
 
 
@@ -760,8 +799,27 @@ def _speed(watch: PullRequestWatch) -> str:
             'and less often when it is quiet.')
 
 
-async def start_watch(row: Any, token: str, ref: str, instructions: str = '') -> str:
-    """Watch Pull Request: returns the text the agent sees."""
+class NotNew(WatchError):
+    """An automatic watch saw a pull request that wasn't just opened."""
+
+
+def project_of_turn() -> str | None:
+    try:
+        from cognitrix.projects import context as project_context
+
+        project = project_context.get()
+    except Exception:
+        return None
+    return project.id if project is not None else None
+
+
+async def start_watch(row: Any, token: str, ref: str, instructions: str = '', *,
+                      auto: bool = False, max_age: timedelta | None = None) -> str:
+    """Watch Pull Request: returns the text the agent sees.
+
+    ``auto`` marks a watch started because an agent opened the pull request;
+    with ``max_age`` a pull request opened longer ago than that is left alone
+    (``NotNew``), so one that only came up in a tool's output isn't watched."""
     repo, number = parse_ref(ref)
     target = await _target_from_context()
     owner = target['owner']
@@ -784,6 +842,10 @@ async def start_watch(row: Any, token: str, ref: str, instructions: str = '') ->
         raw = await fetch(gh, repo, number)
         etags = gh.etags
     pr = raw['pr']
+    if max_age is not None:
+        created = _parse_time(pr.get('created_at'))
+        if created is None or now - created > max_age:
+            raise NotNew(f'{repo}#{number} was not just opened.')
     repo = str(((pr.get('base') or {}).get('repo') or {}).get('full_name') or repo)
     state, _ = diff(None, raw, now=now)
     if not row.account:
@@ -803,6 +865,8 @@ async def start_watch(row: Any, token: str, ref: str, instructions: str = '') ->
         checked_at=_stamp(now),
         next_check_at=_stamp(now + timedelta(seconds=check_seconds())),
         started_at=_stamp(now),
+        project_id=project_of_turn(),
+        auto=auto,
     )
     if target['target'] == TASK:
         trigger = await _task_trigger(target, repo, number)
