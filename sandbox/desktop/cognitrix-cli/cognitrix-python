@@ -1,0 +1,4 @@
+#!/bin/sh
+# Python with the full cognitrix package (`cognitrix-python script.py`); see
+# the cognitrix wrapper next to this file for why PYTHONPATH is dropped.
+exec env -u PYTHONPATH /opt/cognitrix-cli/bin/python "$@"

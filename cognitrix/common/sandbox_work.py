@@ -52,6 +52,15 @@ CLI_KEYS = {
     'antigravity': (('google', 'GEMINI_API_KEY'),),
 }
 SANDBOX_CLIS = tuple(CLI_KEYS)
+# The app's own CLI is in the sandbox image too (sandbox/desktop/Dockerfile).
+# A command that runs it gets the person's model keys the same way the coding
+# CLIs do: as placeholders the key proxy fills in for each provider's API host.
+COGNITRIX_CLI_KEYS = (('anthropic', 'ANTHROPIC_API_KEY'), ('openai', 'OPENAI_API_KEY'),
+                      ('google', 'GOOGLE_API_KEY'), ('google', 'GEMINI_API_KEY'))
+# `cognitrix` or `cognitrix-python` as a command (at the start, or after ; & | ( $( and
+# any VAR=value before it), not a folder or file that happens to be called that.
+_COGNITRIX_COMMAND = re.compile(r'(?:^|[;&|(\n]|\$\()\s*(?:[A-Za-z_]\w*=\S*\s+)*(?:/usr/local/bin/)?'
+                                r'cognitrix(?:-python)?(?=\s|$|[;&|)])')
 
 # Run before agy in the sandbox: point it at the Gemini API key (merging into
 # any settings already in the home volume). jq is in the sandbox image.
@@ -475,7 +484,8 @@ class SandboxWork:
     def run(self, command: str, cwd: str | None = None, timeout: float = 120, background: bool = False,
             env: dict | None = None, stdin: str | None = None, label: str | None = None) -> dict:
         # The person's saved variables (Settings, Computer), then the call's own.
-        merged = self.hide_keys({**sandbox_env(self.user_id), **(env or {})})
+        base = cognitrix_cli_env() if runs_cognitrix(command) else {}
+        merged = self.hide_keys({**base, **sandbox_env(self.user_id), **(env or {})})
         body = {'command': command, 'cwd': cwd, 'timeout': timeout, 'background': background,
                 'env': merged, 'stdin': stdin, 'label': label}
         return self._call('POST', '/run', body, timeout=(15 if background else float(timeout) + 30))
@@ -930,6 +940,28 @@ def cli_env(key: str) -> dict[str, str]:
     return env
 
 
+def runs_cognitrix(command: str) -> bool:
+    """True when a shell command runs the app's own CLI."""
+    return bool(_COGNITRIX_COMMAND.search(command or ''))
+
+
+def cognitrix_cli_env() -> dict[str, str]:
+    """Model keys for the app's CLI run in the sandbox, as hidden values
+    (placeholders there; the key proxy fills the real key in only for that
+    provider's API host). Nothing is baked into the image."""
+    from cognitrix.common.key_proxy import HiddenValue
+    from cognitrix.providers.saved_keys import env_key, get_saved_key
+    env: dict[str, str] = {}
+    for provider, var in COGNITRIX_CLI_KEYS:
+        try:
+            value = env_key(provider) or get_saved_key(provider)
+        except Exception:
+            value = ''
+        if value:
+            env[var] = HiddenValue(value, PROVIDER_HOSTS[provider], var)
+    return env
+
+
 def pick_cli(which: str) -> str:
     """The CLI to run in the sandbox for 'auto', 'auto:<keys>' or a key:
     the first one this engine has an API key for."""
@@ -968,6 +1000,13 @@ def sandbox_prompt(folders: Any, agent_id: Any, user_id: Any = None) -> str:
         '- Installed: Python 3 (pip, venv, uv), Node 22 (npm, pnpm, yarn), git, gcc/make, ripgrep, jq, sqlite3, '
         'Chromium and Firefox. Install more without root: pip install --user, npm install -g, or Go, Rust '
         'and Java into your home folder; installs stay between chats.',
+        "- `cognitrix` is this app's own command-line tool (same code as the image; long-term vector memory is "
+        "left out). Use it to check a skill (`cognitrix skills --validate SKILL.md`), run a one-off headless agent "
+        "(`cognitrix --provider anthropic --model <model> -p \"...\" --no-stream`; add "
+        "--dangerously-skip-permissions only for work that should stay inside this sandbox), or run Python "
+        "that imports the cognitrix package with `cognitrix-python`. It has its own data in your home folder, "
+        "not the person's agents, chats or memories. A command that runs it gets the person's model keys as "
+        'placeholders (see below).',
         '- Long or never-ending commands (dev servers, watchers) go in the background: Bash with '
         'run_in_background=true, then Bash Output / Kill Shell.',
         '- Use Run Tests for test suites: it reports passed and failed tests to the person as a card.',

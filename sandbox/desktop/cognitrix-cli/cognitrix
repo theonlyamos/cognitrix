@@ -1,0 +1,5 @@
+#!/bin/sh
+# The app's own CLI (sandbox/desktop/cognitrix-cli/install.sh). PYTHONPATH is
+# dropped because the image sets it to the sandbox service's partial copy of
+# the package, which would hide the full one.
+exec env -u PYTHONPATH /opt/cognitrix-cli/bin/cognitrix "$@"

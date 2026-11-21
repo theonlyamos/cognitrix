@@ -300,7 +300,7 @@ class TestHybridContextManager:
     @pytest.fixture
     def hybrid_manager(self):
         """Create a hybrid context manager with mocked long-term memory."""
-        with patch('cognitrix.memory.hybrid_context.ChromaMemoryStore') as mock_store:
+        with patch('cognitrix.memory.chroma_store.ChromaMemoryStore') as mock_store:
             mock_store_instance = AsyncMock()
             mock_store.return_value = mock_store_instance
 
@@ -519,7 +519,7 @@ class TestMemoryIntegration:
     async def test_hybrid_context_full_flow(self):
         """Test full hybrid context flow."""
         # Simplified test - just verify the manager can be created
-        with patch('cognitrix.memory.hybrid_context.ChromaMemoryStore'):
+        with patch('cognitrix.memory.chroma_store.ChromaMemoryStore'):
             manager = HybridContextManager(
                 agent_id="test_agent",
                 max_short_term=3,
@@ -528,3 +528,21 @@ class TestMemoryIntegration:
 
             # Verify basic properties
             assert manager.agent_id == "test_agent"
+
+
+def test_works_without_chromadb(monkeypatch):
+    """The sandboxed computer's copy of the CLI has no chromadb: the package
+    still imports and long-term vector memory is just off."""
+    import importlib
+
+    from cognitrix.memory import hybrid_context
+
+    monkeypatch.delenv('DISABLE_VECTOR_STORE', raising=False)
+    monkeypatch.setattr(hybrid_context, '_chromadb_installed', lambda: False)
+    manager = hybrid_context.HybridContextManager(agent_id='no_chroma')
+    assert manager._vector_store_disabled is True
+    assert manager.long_term is None
+    # Importing the package doesn't load chromadb.
+    import cognitrix.memory as memory_pkg
+    importlib.reload(memory_pkg)
+    assert 'ChromaMemoryStore' not in vars(memory_pkg)
