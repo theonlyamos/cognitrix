@@ -46,10 +46,11 @@ import { useOptionalUser } from '@/context/AppContext';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 import { takeChatAutoSend, takeChatDraft } from '@/lib/chatDraft';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { CHATS_EDITED, chatsStale, setChatNav, type ChatsEditedDetail } from '@/lib/chatNav';
+import { CHATS_EDITED, chatHref, chatsStale, newChatHref, setChatNav, type ChatsEditedDetail } from '@/lib/chatNav';
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 import { setViewingChat } from '@/lib/chatPresence';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
+import { useIsPhone } from '@/hooks/useIsPhone';
 import { tr, dateLocale } from '@/lib/i18n';
 import ComputerChip from '@/components/ComputerChip';
 import { PcScreenPanel } from '@/components/PcScreen';
@@ -181,6 +182,7 @@ export default function Home() {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isPhone = useIsPhone();
 
   // Voice input: the transcript goes in at the cursor, ready to edit.
   const voice = useVoiceInput({
@@ -1749,7 +1751,7 @@ export default function Home() {
   const openChat = (chat: ChatSummary) => {
     if (chat.kind === 'team') {
       leaveRunningTurn();
-      navigate(`/teams/${chat.team_id}/chat?chat=${encodeURIComponent(chat.id)}`);
+      navigate(chatHref(chat));
       return;
     }
     if (!chat.agent_id || chat.agent_id === agentId) {
@@ -1821,7 +1823,7 @@ export default function Home() {
     setPicking(false);
     if (target.kind === 'team') {
       leaveRunningTurn();
-      navigate(`/teams/${target.id}/chat`);
+      navigate(newChatHref(target));
       return;
     }
     if (target.id === agentId) {
@@ -2230,6 +2232,35 @@ export default function Home() {
               onToggle: () => void toggleSandbox(),
               hideTag: pcs.length > 0,
             } : undefined}
+            phone={isPhone}
+            onLiveVoice={() => setLiveVoice(true)}
+            liveVoiceDisabled={!isConnected}
+            settings={(
+              <>
+                <ChatModelPicker agentLlm={currentAgent?.llm} value={chatModel} onChange={changeChatModel} />
+                {(pcs.length > 0 || chatPc) && (
+                  <ComputerChip
+                    devices={pcs}
+                    value={chatPc}
+                    onChange={(id) => void changeComputer(id)}
+                    usualIsSandbox={runInSandbox}
+                    onPair={() => navigate('/settings/computers')}
+                    onOpen={refreshPcs}
+                    disabled={busy}
+                  />
+                )}
+                {!chatPc && (
+                  <FolderChips
+                    variant="button"
+                    className="min-w-0"
+                    folders={shownFolders}
+                    onChange={changeFolders}
+                    emptyLabel={tr('ui.home.scratchFolder')}
+                    disabled={busy}
+                  />
+                )}
+              </>
+            )}
           >
             {empty && (
               <div className="min-w-0 flex-none">
@@ -2246,28 +2277,6 @@ export default function Home() {
                 )}
               </span>
             )}
-            <ChatModelPicker agentLlm={currentAgent?.llm} value={chatModel} onChange={changeChatModel} />
-            {(pcs.length > 0 || chatPc) && (
-              <ComputerChip
-                devices={pcs}
-                value={chatPc}
-                onChange={(id) => void changeComputer(id)}
-                usualIsSandbox={runInSandbox}
-                onPair={() => navigate('/settings/computers')}
-                onOpen={refreshPcs}
-                disabled={busy}
-              />
-            )}
-            {!chatPc && (
-              <FolderChips
-                variant="button"
-                className="min-w-0"
-                folders={shownFolders}
-                onChange={changeFolders}
-                emptyLabel={tr('ui.home.scratchFolder')}
-                disabled={busy}
-              />
-            )}
           </ComposerMenu>
           </div>
           <span className="flex-1" />
@@ -2276,7 +2285,7 @@ export default function Home() {
               {activeSessionId && (
                 <SideQuestionButton onClick={() => setSideOpen((v) => !v)} active={sideOpen} className="rounded-lg max-sm:hidden" />
               )}
-              <LiveVoiceButton onClick={() => setLiveVoice(true)} disabled={!isConnected} className="rounded-lg" />
+              {!isPhone && <LiveVoiceButton onClick={() => setLiveVoice(true)} disabled={!isConnected} className="rounded-lg" />}
               <MicButton voice={voice} className="rounded-lg" />
             </>
           )}

@@ -1,18 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useEventStream } from '@/hooks/useEventStream';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { LoadingState, ErrorState } from '@/components/list-ui';
+import { ChatHorizon } from '@/components/ThemeArtwork';
+import { AgentBadge } from '@/components/StartChat';
+import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
+import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
+import { insertTranscript } from '@/lib/voice';
+import { composerBtn } from '@/components/composerStyles';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
-import { parseChatEntries, toChatMessages, fmtRelative, type BackendChatEntry } from '@/lib/transcript';
+import { parseChatEntries, toChatMessages, type BackendChatEntry } from '@/lib/transcript';
 import { cn } from '@/lib/utils';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
 import { setViewingChat } from '@/lib/chatPresence';
-import { CHATS_EDITED, chatsStale, type ChatsEditedDetail } from '@/lib/chatNav';
+import { CHATS_EDITED, chatsStale, setChatNav, type ChatsEditedDetail } from '@/lib/chatNav';
 import { tr } from '@/lib/i18n';
 
 interface Member { id: string; name: string; handle: string; lead: boolean; provider?: string | null; model?: string | null }
@@ -53,6 +59,8 @@ interface RunEvent {
   [key: string]: unknown;
 }
 
+const humanizeToolName = (name: string) => name.replace(/_/g, ' ');
+
 const EVERYONE: Member = { id: '*', name: 'Everyone', handle: 'all', lead: false };
 
 let nextId = 0;
@@ -70,10 +78,26 @@ function mentionQuery(text: string, cursor: number): { start: number; query: str
   return { start: before.length - match[2].length - 1, query: match[2].toLowerCase() };
 }
 
-export default function TeamChat() {
-  const { teamId = '' } = useParams();
-  const [params, setParams] = useSearchParams();
+/**
+ * A chat with a whole team. It lives on the main chat screen
+ * (/home?team=<id>&chat=<id>) and looks like a chat with one agent: the same
+ * header, message list and message box, with @mentions picking who answers.
+ */
+export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {}) {
+  const routed = useParams().teamId;
+  const teamId = teamProp ?? routed ?? '';
+  const navigate = useNavigate();
+  const [params, setSearch] = useSearchParams();
   const chatId = params.get('chat');
+  // Only the chat changes here; which team is open stays in the address.
+  const setParams = useCallback((next: { chat?: string }, opts?: { replace?: boolean }) => {
+    setSearch((prev) => {
+      const copy = new URLSearchParams(prev);
+      if (next.chat) copy.set('chat', next.chat);
+      else copy.delete('chat');
+      return copy;
+    }, opts);
+  }, [setSearch]);
 
   const [info, setInfo] = useState<ChatsResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -88,7 +112,11 @@ export default function TeamChat() {
   useApprovalSeen(approvals);
   useEffect(() => {
     setViewingChat(chatId);
-    return () => setViewingChat(null);
+    setChatNav({ activeChatId: chatId });
+    return () => {
+      setViewingChat(null);
+      setChatNav({ activeChatId: null });
+    };
   }, [chatId]);
   const [follow, setFollow] = useState<{ sid: string; runId: string } | null>(null);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
@@ -100,6 +128,32 @@ export default function TeamChat() {
   chatIdRef.current = chatId;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Voice input: the transcript goes in at the cursor, ready to edit.
+  const voice = useVoiceInput({
+    onText: (text) => {
+      const el = inputRef.current;
+      setInput((current) => {
+        const start = el ? Math.min(el.selectionStart ?? current.length, current.length) : current.length;
+        const end = el ? Math.min(el.selectionEnd ?? start, current.length) : start;
+        const next = insertTranscript(current, text, start, end);
+        requestAnimationFrame(() => {
+          const box = inputRef.current;
+          if (!box) return;
+          box.focus();
+          box.setSelectionRange(next.cursor, next.cursor);
+        });
+        return next.value;
+      });
+    },
+  });
+  // The message box grows with what is typed.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [input]);
 
   const loadInfo = useCallback(async () => {
     try {
@@ -307,17 +361,6 @@ export default function TeamChat() {
     return () => window.removeEventListener(CHATS_EDITED, onEdited);
   }, [loadInfo, setParams]);
 
-  const removeChat = useCallback(async () => {
-    if (!chatId || running || !confirm(tr('ui.teamChat.deleteThisGroupChat'))) return;
-    try {
-      await api.delete(`/teams/${teamId}/chats/${chatId}`);
-      setParams({});
-      refresh();
-    } catch (err) {
-      setSendError(errorMessage(err, tr('ui.teamChat.couldNotDeleteTheChat')));
-    }
-  }, [chatId, refresh, running, setParams, teamId]);
-
   const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always', always = false) => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));
     try {
@@ -372,227 +415,276 @@ export default function TeamChat() {
   if (!info) return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><LoadingState label={tr('ui.teamChat.loadingTeamChat')} /></div>;
 
   const lead = members.find((m) => m.lead);
-  const placeholder = members.length ? tr('ui.teamChat.messageTheTeamHandle', { handle: members[0].handle }) : tr('ui.teamChat.addAgentsFirst');
+  const empty = messages.length === 0 && !chatId;
+  const activeChat = info.chats.find((c) => c.id === chatId);
+  const placeholder = !members.length
+    ? tr('ui.teamChat.addAgentsFirst')
+    : empty ? tr('ui.teamChat.messageTheTeamPlaceholder') : tr('ui.teamChat.replyToTheTeam');
+  const addMention = (m: Member) => {
+    setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}@${m.handle} `);
+    inputRef.current?.focus();
+  };
+
+  const composer = (
+    <div className="relative mx-auto w-full max-w-3xl">
+      {menuOpen && (
+        <div id="mention-menu" role="listbox" aria-label={tr('ui.teamChat.mentionATeammate')} className="animate-rise absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-xl border border-line bg-panel shadow-lg">
+          <div className="border-b border-line px-3 py-1.5 text-[11.5px] text-fg-dim">{tr('ui.teamChat.mention')}</div>
+          {options.map((m, i) => (
+            <button
+              key={m.id}
+              id={`mention-opt-${i}`}
+              role="option"
+              aria-selected={i === mentionIndex}
+              onMouseEnter={() => setMentionIndex(i)}
+              onMouseDown={(e) => { e.preventDefault(); pickMention(m); }}
+              className={cn('flex min-h-11 w-full items-center gap-2 border-l-2 px-3 py-2 text-left transition-colors md:min-h-0', i === mentionIndex ? 'border-l-accent bg-panel-2' : 'border-l-transparent hover:bg-panel-2')}
+            >
+              <span className="text-[13px] font-medium text-fg">{m.id === '*' ? tr('ui.teamChat.everyone') : m.name}</span>
+              <span className="font-mono text-[11.5px] text-accent-ink">@{m.handle}</span>
+              <span className="ml-auto truncate pl-3 text-[11.5px] text-fg-dim">{m.id === '*' ? tr('ui.teamChat.everyAgentAnswers') : m.lead ? tr('ui.teamChat.teamLead') : ''}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="relative rounded-2xl border border-line bg-panel shadow-[0_6px_24px_rgba(0,0,0,0.06)] transition-colors focus-within:border-fg-dim dark:shadow-[0_6px_24px_rgba(0,0,0,0.35)]">
+        {voice.active && <VoiceBar voice={voice} />}
+        <textarea
+          ref={inputRef}
+          rows={1}
+          value={input}
+          disabled={members.length === 0}
+          onChange={(e) => { setInput(e.target.value); updateMention(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
+          onSelect={(e) => updateMention(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+          onBlur={() => setMention(null)}
+          onKeyDown={(e) => {
+            if (menuOpen) {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex((i) => Math.min(i + 1, options.length - 1)); return; }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex((i) => Math.max(i - 1, 0)); return; }
+              if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickMention(options[mentionIndex]); return; }
+              if (e.key === 'Escape') { e.preventDefault(); setMention(null); return; }
+            }
+            if (e.key === 'Escape' && running) { e.preventDefault(); void stop(); return; }
+            if (isSendKey(e, getSendKey())) { e.preventDefault(); void send(); }
+          }}
+          role="combobox"
+          aria-label={tr('ui.teamChat.messageTheTeam')}
+          aria-expanded={menuOpen}
+          aria-controls="mention-menu"
+          aria-activedescendant={menuOpen ? `mention-opt-${mentionIndex}` : undefined}
+          placeholder={placeholder}
+          className={cn('block min-h-11 max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[15px] text-fg outline-none placeholder:text-fg-dim focus-visible:outline-none', voice.active && '!hidden')}
+        />
+        <div className={cn('flex min-w-0 items-center gap-0.5 px-2 pb-2 pt-1', voice.active && '!hidden')}>
+          <span className="flex min-w-0 flex-none items-center gap-1.5 pl-1 pr-1 text-[13px] font-medium text-fg-dim">
+            <AgentBadge name={info.team.name} team />
+            <span className="hidden max-w-[10rem] truncate sm:inline">{info.team.name}</span>
+          </span>
+          <button
+            type="button"
+            disabled={members.length === 0}
+            onClick={() => {
+              const el = inputRef.current;
+              const value = `${input}${input && !input.endsWith(' ') ? ' ' : ''}@`;
+              setInput(value);
+              setMention({ start: value.length - 1, query: '' });
+              setMentionIndex(0);
+              requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(value.length, value.length); });
+            }}
+            title={tr('ui.teamChat.namePicksWhoAnswersAll')}
+            className={composerBtn}
+          >
+            <span aria-hidden className="font-mono text-[15px] leading-none">@</span>
+            <span>{tr('ui.teamChat.mentionSomeone')}</span>
+          </button>
+          <span className="flex-1" />
+          {!voice.active && !running && <MicButton voice={voice} className="rounded-lg" />}
+          <button
+            onClick={() => { if (running) void stop(); else void send(); }}
+            disabled={!running && !input.trim()}
+            aria-label={running ? tr('ui.teamChat.stopTheTeam') : tr('ui.teamChat.send')}
+            className={cn(
+              'grid h-11 w-11 flex-none place-items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 hover:brightness-105 md:h-8 md:w-8',
+              running ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
+            )}
+          >
+            {running ? (
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+            ) : (
+              <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+            )}
+          </button>
+        </div>
+      </div>
+      {sendError && <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{sendError}</div>}
+      <VoiceNotice voice={voice} />
+      {empty && (
+        <div className="mt-1.5 hidden items-center gap-x-4 px-2 text-[11px] text-fg-dim md:flex">
+          <SendKeyHint />
+        </div>
+      )}
+    </div>
+  );
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
-        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
-          <Link to={`/teams/${teamId}`} aria-label={tr('ui.teamChat.backToTeam')} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
-          </Link>
-          <div className="min-w-0">
-            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">{tr('ui.teamChat.groupChat')}</p>
-            <h1 className="truncate text-lg font-semibold tracking-tight">{info.team.name}</h1>
+    <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-bg text-fg">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <ChatHorizon className={cn(empty && 'hidden')} />
+        {/* The same slim header as a chat with one agent: who, then the chat's name. */}
+        <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-3 md:pl-5">
+          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2.5 overflow-hidden">
+            <Link to={`/teams/${teamId}`} className="flex flex-none items-center gap-2 rounded-lg hover:text-accent-ink" aria-label={tr('ui.teamChat.chattingWithTeam', { name: info.team.name })}>
+              <AgentBadge name={info.team.name} team />
+              <span className={cn('text-[14px] font-semibold', chatId && 'hidden sm:inline')}>{info.team.name}</span>
+            </Link>
+            <span aria-hidden className="hidden flex-none text-fg-dim sm:inline">/</span>
+            <h1 className={cn('min-w-0 truncate text-[14px] text-fg-dim', chatId ? 'max-sm:font-semibold max-sm:text-fg' : 'max-sm:hidden')}>
+              {chatId ? (activeChat?.title || tr('ui.teamChat.groupChat')) : tr('ui.teamChat.newChat')}
+            </h1>
           </div>
-        </div>
-        <div className="flex flex-none items-center gap-2">
-          <label className="sr-only" htmlFor="group-chat-picker">{tr('ui.teamChat.groupChats')}</label>
-          <select
-            id="group-chat-picker"
-            value={chatId ?? ''}
-            onChange={(e) => setParams(e.target.value ? { chat: e.target.value } : {})}
-            className="h-11 w-28 truncate rounded border border-line bg-panel px-2 font-mono text-[11px] text-fg md:h-8 md:w-auto md:max-w-[16rem]"
-          >
-            <option value="">{tr('ui.teamChat.newChat')}</option>
-            {info.chats.map((c) => (
-              <option key={c.id} value={c.id}>{c.running ? '● ' : ''}{c.title}{c.updated_at ? ` · ${fmtRelative(c.updated_at)}` : ''}</option>
+          <div className="flex flex-none items-center gap-1" aria-label={tr('ui.teamChat.teamMembers')}>
+            {members.slice(0, 5).map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                title={m.lead ? tr('ui.teamChat.mentionNameLead', { name: m.name }) : tr('ui.teamChat.mentionName', { name: m.name })}
+                aria-label={m.lead ? tr('ui.teamChat.mentionNameLead', { name: m.name }) : tr('ui.teamChat.mentionName', { name: m.name })}
+                onClick={() => addMention(m)}
+                className={cn(
+                  'relative hidden h-9 items-center gap-1.5 rounded-full border px-2 text-[12.5px] transition-colors sm:inline-flex md:h-8',
+                  speaker === m.name ? 'border-accent text-accent-ink' : 'border-line text-fg-dim hover:border-fg-dim hover:text-fg',
+                )}
+              >
+                <span className="max-w-[7rem] truncate">{m.name}</span>
+                {speaker === m.name && <span className="think-bars" aria-label={tr('ui.teamChat.replying')}><i /><i /><i /></span>}
+              </button>
             ))}
-          </select>
-          {chatId && (
-            <button
-              type="button"
-              onClick={() => setParams({})}
-              className="hidden h-8 rounded border border-line px-2.5 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:block"
-            >
-              {tr('ui.teamChat.new')}
-            </button>
-          )}
-          {chatId && !running && (
-            <button
-              type="button"
-              onClick={removeChat}
-              aria-label={tr('ui.teamChat.deleteThisChat')}
-              className="grid h-11 w-11 place-items-center rounded text-fg-dim transition-colors hover:text-danger-ink md:h-8 md:w-8"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /></svg>
-            </button>
-          )}
-        </div>
-      </header>
-
-      <div className="flex flex-none flex-wrap items-center gap-1.5 border-b border-line px-4 py-2 md:px-6" aria-label={tr('ui.teamChat.teamMembers')}>
-        {members.map((m) => (
-          <button
-            key={m.id}
-            type="button"
-            title={`${m.provider || '—'} · ${m.model || '—'}`}
-            onClick={() => { setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}@${m.handle} `); inputRef.current?.focus(); }}
-            className={cn(
-              'inline-flex min-h-9 items-center gap-1.5 rounded border px-2 py-0.5 font-mono text-[11px] transition-colors md:min-h-0',
-              speaker === m.name ? 'border-accent text-accent-ink' : 'border-line text-fg-dim hover:border-fg-dim hover:text-fg',
+            {members.length > 5 && <span className="hidden text-[12px] text-fg-dim sm:inline">+{members.length - 5}</span>}
+            {chatId && (
+              <button
+                type="button"
+                onClick={() => setParams({})}
+                className="inline-flex h-11 items-center rounded-lg px-2.5 text-[12.5px] text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-9"
+              >
+                {tr('ui.teamChat.newChat')}
+              </button>
             )}
-          >
-            <span className="grid h-4 w-4 place-items-center rounded-sm bg-panel-2 text-[9px] font-bold text-accent-ink">{m.name[0]?.toUpperCase()}</span>
-            @{m.handle}
-            {m.lead && <span className="text-[9px] text-accent-ink">{tr('ui.teamChat.lead')}</span>}
-            {speaker === m.name && <span className="think-bars" aria-label={tr('ui.teamChat.replying')}><i /><i /><i /></span>}
-          </button>
-        ))}
-      </div>
-
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        {messages.length === 0 ? (
-          <div className="mx-auto max-w-xl px-6 py-14">
-            <h2 className="text-xl font-semibold tracking-tight">{tr('ui.teamChat.talkToTheWholeTeam')}</h2>
-            <ul className="mt-3 space-y-1.5 text-sm text-fg-dim">
-              <li><span className="font-mono text-accent-ink">@name</span>{' '}{tr('ui.teamChat.asksThatAgentMentionSeveral')}</li>
-              <li><span className="font-mono text-accent-ink">@all</span>{' '}{tr('ui.teamChat.asksEveryone')}</li>
-              <li>{tr('ui.teamChat.noMentionTheAgentWho')}{lead ? tr('ui.teamChat.orHandleTheLeadTo', { handle: lead.handle }) : ''}.</li>
-              <li>{tr('ui.teamChat.agentsCanHandWorkTo')}</li>
-            </ul>
           </div>
-        ) : (
-          <div>
-            {messages.map((message, index) => (
-              <ChatMessageRow
-                key={message.id}
-                message={message}
-                isLast={index === messages.length - 1}
-                streaming={running && index === messages.length - 1 && message.role === 'assistant'}
-              />
-            ))}
-            {running && (
-              <div role="status" className="grid grid-cols-1 gap-2 px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
-                <div className="truncate pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">{speaker ? speaker.toUpperCase() : tr('ui.teamChat.team')}</div>
-                <div className="flex items-center gap-2.5 font-mono text-[12px] text-fg-dim">
-                  <span className="think-bars"><i /><i /><i /><i /></span>
-                  {status || (speaker ? tr('ui.teamChat.speakerIsWorking', { speaker }) : tr('ui.teamChat.pickingWhoAnswers'))}
-                </div>
+        </header>
+
+        <div ref={scrollRef} role="log" aria-live="polite" aria-relevant="additions text" className="relative min-h-0 flex-1 overscroll-contain overflow-y-auto">
+          {empty ? (
+            <div className="mx-auto flex min-h-full w-full max-w-[720px] flex-col justify-center px-4 pb-16 pt-10 sm:px-6">
+              <div className="flex flex-col items-center text-center">
+                <AgentBadge name={info.team.name} team size="lg" />
+                <h2 className="mt-4 text-[28px] font-bold leading-tight tracking-[-0.015em] sm:text-[30px]">{tr('ui.teamChat.talkToTheWholeTeam')}</h2>
+                <p className="mt-2 max-w-md text-[15px] text-fg-dim">
+                  {lead ? tr('ui.teamChat.leadAnswersUnlessYouMention', { name: lead.name }) : tr('ui.teamChat.oneAgentAnswersUnlessYouMention')}
+                </p>
               </div>
-            )}
-            {!running && status && (
-              <p className="px-6 py-3 font-mono text-[11px] text-fg-dim">{status}</p>
-            )}
-          </div>
-        )}
-
-        {question && (
-          <QuestionCard
-            question={question}
-            onAnswer={(answer) => questionAction(question, 'answer', answer)}
-            onCancel={() => questionAction(question, 'cancel')}
-            onStopTimer={() => questionAction(question, 'stop_timer')}
-          />
-        )}
-
-        {approvals.map((a) => (
-          <div key={a.request_id} role="alert" className="animate-rise mx-6 my-4 border-l-2 border-danger bg-danger/5 px-3 py-3 font-mono text-[12px]">
-            <div className="flex items-center gap-2">
-              <span className="text-danger-ink">{tr('ui.teamChat.approvalRequired')}{speaker ? ` · ${speaker}` : ''}</span>
-              <span className="rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-fg-dim">{tr('ui.teamChat.riskLevelRisk', { risk_level: a.risk_level })}</span>
+              <div className="mt-6">{composer}</div>
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                {members.map((m) => (
+                  <button key={m.id} type="button" onClick={() => addMention(m)}
+                    className="min-h-11 rounded-full border border-line bg-panel px-3.5 text-[13px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-9">
+                    {tr('ui.teamChat.askName', { name: m.name })}
+                  </button>
+                ))}
+                {members.length > 1 && (
+                  <button type="button" onClick={() => addMention(EVERYONE)}
+                    className="min-h-11 rounded-full border border-line bg-panel px-3.5 text-[13px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-9">
+                    {tr('ui.teamChat.askEveryone')}
+                  </button>
+                )}
+              </div>
+              <p className="mt-5 text-center text-[13px] text-fg-dim">
+                {tr('ui.teamChat.orTalkToOneAgent')}{' '}
+                <button type="button" onClick={() => navigate('/home?new=1')} className="underline-offset-2 hover:text-fg hover:underline">{tr('ui.teamChat.startAOneToOneChat')}</button>
+              </p>
             </div>
-            <div className="mt-2 text-fg">
-              {tr('ui.teamChat.run')}{' '}<span className="text-accent-ink">{a.tool_name}</span>
-              {a.details && <span className="text-fg-dim"> — {a.details}</span>}
-            </div>
-            {a.params && Object.keys(a.params).length > 0 && (
-              <pre className="mt-2 max-h-32 overflow-auto rounded border border-line bg-panel-2 p-2 text-[11px] text-fg-dim">{JSON.stringify(a.params, null, 2)}</pre>
-            )}
-            <div className="mt-2.5 flex flex-wrap items-center gap-2">
-              <button onClick={() => respondApproval(a.request_id, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink md:min-h-0">{tr('ui.teamChat.approve')}</button>
-              {!a.always_ask && <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.teamChat.approveForSession')}</button>}
-              {a.full_shell && (
-                <button onClick={() => respondApproval(a.request_id, true, true, true)} title={tr('ui.teamChat.runEveryShellCommandIn')} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.teamChat.allowAllCommandsInThis')}</button>
-              )}
-              {a.app && (
-                <>
-                  <button onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={tr('ui.teamChat.letAgentsClickAndType', { label: a.app.label })} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.teamChat.allowLabelInThisChat', { label: a.app.label })}</button>
-                  <button onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={tr('ui.teamChat.neverAskAgainBeforeAgents', { label: a.app.label })} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.teamChat.alwaysAllowLabel', { label: a.app.label })}</button>
-                </>
-              )}
-              {a.always && (
-                <button onClick={() => respondApproval(a.request_id, true, true, false, undefined, true)}
-                  title={a.always.kind === 'command' ? tr('ui.approvals.alwaysCommandHint', { label: a.always.label }) : tr('ui.approvals.alwaysToolHint')}
-                  className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">
-                  {a.always.kind === 'command' ? tr('ui.approvals.alwaysAllowCommand', { label: a.always.label }) : tr('ui.approvals.alwaysAllow')}
-                </button>
-              )}
-              <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">{tr('ui.teamChat.deny')}</button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="flex-none border-t border-line px-4 py-4 md:px-6">
-        <div className="relative mx-auto max-w-3xl">
-          {menuOpen && (
-            <div id="mention-menu" role="listbox" aria-label={tr('ui.teamChat.mentionATeammate')} className="animate-rise absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-md border border-line bg-panel shadow-lg">
-              <div className="border-b border-line px-3 py-1.5 font-mono text-[10px] tracking-[0.18em] text-fg-dim">{tr('ui.teamChat.mention')}</div>
-              {options.map((m, i) => (
-                <button
-                  key={m.id}
-                  id={`mention-opt-${i}`}
-                  role="option"
-                  aria-selected={i === mentionIndex}
-                  onMouseEnter={() => setMentionIndex(i)}
-                  onMouseDown={(e) => { e.preventDefault(); pickMention(m); }}
-                  className={cn('flex w-full items-baseline gap-2 border-l-2 px-3 py-2 text-left transition-colors', i === mentionIndex ? 'border-l-accent bg-panel-2' : 'border-l-transparent hover:bg-panel-2')}
-                >
-                  <span className="font-mono text-[12px] text-accent-ink">@{m.handle}</span>
-                  <span className="ml-auto truncate pl-3 text-[11px] text-fg-dim">{m.id === '*' ? tr('ui.teamChat.everyAgentAnswers') : m.lead ? tr('ui.teamChat.teamLead') : m.model || ''}</span>
-                </button>
+          ) : (
+            <div className="py-4">
+              {messages.map((message, index) => (
+                <ChatMessageRow
+                  key={message.id}
+                  message={message}
+                  isLast={index === messages.length - 1}
+                  streaming={running && index === messages.length - 1 && message.role === 'assistant'}
+                />
               ))}
+              {running && (
+                <div role="status" className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6">
+                  <div className="flex items-center gap-2.5 text-[13px] text-fg-dim">
+                    <span className="think-bars"><i /><i /><i /><i /></span>
+                    {status || (speaker ? tr('ui.teamChat.speakerIsWorking', { speaker }) : tr('ui.teamChat.pickingWhoAnswers'))}
+                  </div>
+                </div>
+              )}
+              {!running && status && (
+                <p className="mx-auto w-full max-w-3xl px-4 py-3 text-[13px] text-fg-dim sm:px-6">{status}</p>
+              )}
             </div>
           )}
-          <div className="relative rounded-md border border-line bg-panel transition-colors focus-within:border-accent">
-            <textarea
-              ref={inputRef}
-              rows={1}
-              value={input}
-              disabled={members.length === 0}
-              onChange={(e) => { setInput(e.target.value); updateMention(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
-              onSelect={(e) => updateMention(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
-              onBlur={() => setMention(null)}
-              onKeyDown={(e) => {
-                if (menuOpen) {
-                  if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex((i) => Math.min(i + 1, options.length - 1)); return; }
-                  if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickMention(options[mentionIndex]); return; }
-                  if (e.key === 'Escape') { e.preventDefault(); setMention(null); return; }
-                }
-                if (isSendKey(e, getSendKey())) { e.preventDefault(); void send(); }
-              }}
-              role="combobox"
-              aria-label={tr('ui.teamChat.messageTheTeam')}
-              aria-expanded={menuOpen}
-              aria-controls="mention-menu"
-              aria-activedescendant={menuOpen ? `mention-opt-${mentionIndex}` : undefined}
-              placeholder={placeholder}
-              className="block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-14 text-sm text-fg placeholder:text-fg-dim md:min-h-0"
+
+          {question && (
+            <QuestionCard
+              question={question}
+              onAnswer={(answer) => questionAction(question, 'answer', answer)}
+              onCancel={() => questionAction(question, 'cancel')}
+              onStopTimer={() => questionAction(question, 'stop_timer')}
             />
-            <button
-              onClick={() => { if (running) void stop(); else void send(); }}
-              disabled={!running && !input.trim()}
-              aria-label={running ? tr('ui.teamChat.stopTheTeam') : tr('ui.teamChat.send')}
-              className={cn(
-                'absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',
-                running ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
-              )}
-            >
-              {running ? (
-                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
-              ) : (
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12l16-8-6 16-3-6-7-2z" /></svg>
-              )}
-            </button>
-          </div>
-          {sendError && <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{sendError}</div>}
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim">
-            <span>{tr('ui.teamChat.namePicksWhoAnswersAll')}</span>
-            <SendKeyHint />
-          </div>
+          )}
+
+          {approvals.map((a) => (
+            <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
+              <PanelCard
+                tone="danger"
+                tag={<>{tr('ui.home.approval')}</>}
+                title={<>{tr('ui.home.run')}{' '}<span className="text-accent-ink">{humanizeToolName(a.tool_name)}</span>?</>}
+                subtitle={a.details || undefined}
+                fields={[
+                  ...(speaker ? [{ label: tr('ui.teamChat.askedBy'), value: speaker }] : []),
+                  { label: tr('ui.home.tool'), value: humanizeToolName(a.tool_name) },
+                  { label: tr('ui.home.risk'), value: <span className={a.risk_level === 'high' || a.risk_level === 'critical' ? 'text-danger-ink' : undefined}>{a.risk_level}</span> },
+                  ...(a.app ? [{ label: tr('ui.home.app'), value: a.app.label }] : []),
+                ]}
+                footer={(
+                  <>
+                    <PanelButton kind="primary" onClick={() => respondApproval(a.request_id, true)}>{tr('ui.home.approve')}</PanelButton>
+                    {!a.always_ask && <PanelButton onClick={() => respondApproval(a.request_id, true, true)}>{tr('ui.home.approveForSession')}</PanelButton>}
+                    {a.full_shell && (
+                      <PanelButton onClick={() => respondApproval(a.request_id, true, true, true)} title={tr('ui.home.runEveryShellCommandIn')}>{tr('ui.home.allowAllCommandsInThis')}</PanelButton>
+                    )}
+                    {a.app && (
+                      <>
+                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={tr('ui.home.letAgentsClickAndType', { label: a.app.label })}>{tr('ui.home.allowLabelInThisChat', { label: a.app.label })}</PanelButton>
+                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={tr('ui.home.neverAskAgainBeforeAgents', { label: a.app.label })}>{tr('ui.home.alwaysAllowLabel', { label: a.app.label })}</PanelButton>
+                      </>
+                    )}
+                    {a.always && (
+                      <PanelButton onClick={() => respondApproval(a.request_id, true, true, false, undefined, true)}
+                        title={a.always.kind === 'command' ? tr('ui.approvals.alwaysCommandHint', { label: a.always.label }) : tr('ui.approvals.alwaysToolHint')}>
+                        {a.always.kind === 'command' ? tr('ui.approvals.alwaysAllowCommand', { label: a.always.label }) : tr('ui.approvals.alwaysAllow')}
+                      </PanelButton>
+                    )}
+                    <span className="grow" />
+                    <PanelButton kind="danger" onClick={() => respondApproval(a.request_id, false)}>{tr('ui.home.deny')}</PanelButton>
+                  </>
+                )}
+              >
+                {a.params && Object.keys(a.params).length > 0 ? (
+                  <pre className="max-h-40 overflow-auto rounded border border-line bg-panel-2 p-2 font-mono text-[11px] text-fg-dim">{JSON.stringify(a.params, null, 2)}</pre>
+                ) : undefined}
+              </PanelCard>
+            </div>
+          ))}
         </div>
+
+        {!empty && (
+          <div className="relative flex-none px-3 pb-4 pt-2 sm:px-6">
+            {composer}
+          </div>
+        )}
       </div>
     </div>
   );

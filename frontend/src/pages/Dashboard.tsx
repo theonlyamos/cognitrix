@@ -664,7 +664,7 @@ export default function Dashboard() {
                     {chatList.slice(0, 6).map((c) => {
                       const agent = c.agent_id ? agentById.get(c.agent_id) : undefined;
                       const name = c.kind === 'team' ? tr('ui.dashboard.teamChat') : agent?.name || tr('ui.dashboard.agent');
-                      const href = c.kind === 'team' && c.team_id ? `/teams/${c.team_id}/chat?chat=${encodeURIComponent(c.id)}` : `/home?chat=${encodeURIComponent(c.id)}`;
+                      const href = c.kind === 'team' && c.team_id ? `/home?team=${c.team_id}&chat=${encodeURIComponent(c.id)}` : `/home?chat=${encodeURIComponent(c.id)}`;
                       return (
                         <li key={c.id}>
                           <Link to={href} className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-panel-2/60">

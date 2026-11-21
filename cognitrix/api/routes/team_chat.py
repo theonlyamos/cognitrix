@@ -310,7 +310,7 @@ async def _run_turn(
         'bypass': False,
         'user_key': run_key,
         'agent_name': getattr(team, 'name', '') or '',
-        'href': f'/teams/{team.id}/chat?chat={session_id}',
+        'href': f'/home?team={team.id}&chat={session_id}',
     })
     question_token = question_turn_ctx.set(QuestionTurnContext(
         emit=emit,

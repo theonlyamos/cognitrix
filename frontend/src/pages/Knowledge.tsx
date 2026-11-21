@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
 import { Button } from '@/lib/components/ui/button';
@@ -29,6 +30,8 @@ export interface KnowledgeCollection {
   description: string;
   documents: KnowledgeDocument[];
 }
+/** An agent or project that reads a collection. */
+interface Reader { id: string; name: string; href: string }
 interface Hit { text: string; name: string; position: number; score: number; url?: string | null }
 
 const PAGE_CHOICES = [
@@ -95,7 +98,7 @@ const ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.log,.r
 
 const size = (bytes: number) => (bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
-function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollection; onChanged: () => void }) {
+function CollectionCard({ collection, readers, onChanged }: { collection: KnowledgeCollection; readers: Reader[] | null; onChanged: () => void }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -189,6 +192,21 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
             {trn(collection.documents.length, 'ui.count.documents_one', 'ui.count.documents_other')}
             {collection.description ? ` · ${collection.description}` : ''}
           </p>
+          {readers && (
+            <p className="mt-0.5 text-[12px] text-fg-dim" data-testid={`readers-${collection.id}`}>
+              {readers.length === 0 ? tr('ui.knowledge.noAgentUsesThisYet') : (
+                <>
+                  {tr('ui.knowledge.usedBy')}{' '}
+                  {readers.map((r, i) => (
+                    <span key={r.href}>
+                      {i > 0 && ', '}
+                      <Link to={r.href} className="text-fg underline-offset-2 hover:text-accent-ink hover:underline">{r.name}</Link>
+                    </span>
+                  ))}
+                </>
+              )}
+            </p>
+          )}
         </div>
         <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" aria-label={tr('ui.knowledge.addDocumentsToName', { name: collection.name })} onChange={upload} />
         <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => fileInput.current?.click()}>
@@ -266,6 +284,25 @@ export default function Knowledge({ embedded = false }: { embedded?: boolean }) 
   const [name, setName] = useState('');
   const [createError, setCreateError] = useState('');
   const collections = data ?? [];
+  // Who reads each collection: agents that have it switched on, and projects that include it.
+  const agents = useResource<{ id: string; name: string; knowledge?: string[] | null }[]>('/agents');
+  const projects = useResource<{ projects?: { id: string; name: string; knowledge?: string[] | null }[] }>('/projects');
+  const readersOf = useMemo(() => {
+    if (!Array.isArray(agents.data)) return null;
+    const map = new Map<string, Reader[]>();
+    const add = (rows: unknown, href: (id: string) => string, label: (name: string) => string) => {
+      if (!Array.isArray(rows)) return;
+      for (const row of rows as { id: string; name: string; knowledge?: string[] | null }[]) {
+        if (!row || !Array.isArray(row.knowledge)) continue;
+        for (const id of row.knowledge) {
+          map.set(String(id), [...(map.get(String(id)) ?? []), { id: row.id, name: label(row.name), href: href(row.id) }]);
+        }
+      }
+    };
+    add(agents.data, (id) => `/agents/${id}/connections`, (name) => name);
+    add(projects.data?.projects, (id) => `/projects/${id}`, (name) => tr('ui.knowledge.theNameProject', { name }));
+    return map;
+  }, [agents.data, projects.data]);
 
   const create = async (event: FormEvent) => {
     event.preventDefault();
@@ -302,7 +339,7 @@ export default function Knowledge({ embedded = false }: { embedded?: boolean }) 
                 desc={tr('ui.knowledge.createACollectionAddPdfs_7ba7')}
               />
             ) : (
-              collections.map((c) => <CollectionCard key={c.id} collection={c} onChanged={() => refetch({ silent: true })} />)
+              collections.map((c) => <CollectionCard key={c.id} collection={c} readers={readersOf ? readersOf.get(c.id) ?? [] : null} onChanged={() => refetch({ silent: true })} />)
             )}
           </div>
         )}

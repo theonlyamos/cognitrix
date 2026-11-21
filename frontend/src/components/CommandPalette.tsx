@@ -154,7 +154,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
     }));
     const teamItems: Item[] = teams.flatMap((t) => [
       { id: `team-${t.id}`, group: 'Teams' as const, label: t.name, run: go(`/teams/${t.id}`) },
-      { id: `team-chat-${t.id}`, group: 'Teams' as const, label: tr('ui.commandPalette.groupChatName', { name: t.name }), run: go(`/teams/${t.id}/chat`) },
+      { id: `team-chat-${t.id}`, group: 'Teams' as const, label: tr('ui.commandPalette.groupChatName', { name: t.name }), run: go(`/home?team=${t.id}`) },
     ]);
     const projectItems: Item[] = projects.map((p) => ({ id: `project-${p.id}`, group: 'Projects', label: p.name, hint: p.description, run: go(`/projects/${p.id}`) }));
     const libraryItems: Item[] = [

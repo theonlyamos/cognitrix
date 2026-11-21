@@ -39,7 +39,7 @@ export default function TeamsTab({ agent, draft, update, overview }: TabProps) {
                       {others.length ? tr('ui.agent.teamsTab.withMap', { map: others.map((m) => handleFor(m.name)).join(', ') }) : tr('ui.agent.teamsTab.noOtherMembers')}
                     </div>
                   </div>
-                  <Link to={`/teams/${t.id}/chat`} className={buttonClass}>{tr('ui.agent.teamsTab.openGroupChat')}</Link>
+                  <Link to={`/home?team=${t.id}`} className={buttonClass}>{tr('ui.agent.teamsTab.openGroupChat')}</Link>
                 </li>
               );
             })}

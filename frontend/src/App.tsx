@@ -15,7 +15,8 @@ import '@/app.css';
 import { tr } from '@/lib/i18n';
 
 // Code-split the authenticated app; auth pages + shell stay eager for first paint.
-const Home = lazy(() => import('@/pages/Home'));
+const ChatScreen = lazy(() => import('@/pages/ChatScreen'));
+const TeamChatLink = lazy(() => import('@/pages/ChatScreen').then((m) => ({ default: m.TeamChatLink })));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const Agents = lazy(() => import('@/pages/Agents'));
 const AgentDetail = lazy(() => import('@/pages/AgentDetail'));
@@ -24,7 +25,6 @@ const Tasks = lazy(() => import('@/pages/Tasks'));
 const TaskPage = lazy(() => import('@/pages/TaskPage'));
 const TaskDetail = lazy(() => import('@/pages/TaskDetail'));
 const TeamDetail = lazy(() => import('@/pages/TeamDetail'));
-const TeamChat = lazy(() => import('@/pages/TeamChat'));
 const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
 const Inbox = lazy(() => import('@/pages/Inbox'));
@@ -101,7 +101,7 @@ function AppRoutes() {
         {/* Persistent shell: Sidebar mounts once, pages render in the Outlet. */}
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/home" element={<Home />} />
+          <Route path="/home" element={<ChatScreen />} />
           <Route path="/chat/:chatId" element={<ChatLink />} />
           <Route path="/shared/:chatId" element={<SharedChat />} />
           <Route path="/agents" element={<Agents />} />
@@ -116,7 +116,7 @@ function AppRoutes() {
           <Route path="/teams/new" element={<TeamPage />} />
           <Route path="/teams/:teamId" element={<TeamDetail />} />
           <Route path="/teams/:teamId/edit" element={<TeamPage />} />
-          <Route path="/teams/:teamId/chat" element={<TeamChat />} />
+          <Route path="/teams/:teamId/chat" element={<TeamChatLink />} />
           <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/automations" element={<Navigate to="/tasks?show=scheduled" replace />} />

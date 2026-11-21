@@ -272,7 +272,7 @@ describe('entity detail routes', () => {
     renderAgentDetail('/agents/agent-1/teams');
     expect(screen.getByText('leader')).toBeInTheDocument();
     expect(screen.getByText('With @Agent-Two')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open group chat' })).toHaveAttribute('href', '/teams/team-1/chat');
+    expect(screen.getByRole('link', { name: 'Open group chat' })).toHaveAttribute('href', '/home?team=team-1');
   });
 
   it('lets a specific sub-agent model switch to a custom name', async () => {

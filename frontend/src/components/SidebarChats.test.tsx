@@ -134,12 +134,12 @@ describe('SidebarChats', () => {
     }
   });
 
-  it('opens a chat on the chat page, and team chats on the team page', async () => {
+  it('opens a chat on the chat page, team chats included', async () => {
     renderList();
     await userEvent.click(screen.getByRole('button', { name: /^Agent One: Trip to Accra/ }));
     expect(screen.getByTestId('where')).toHaveTextContent('/home?chat=c1');
     await userEvent.click(screen.getByRole('button', { name: /^Launch crew: Launch kickoff/ }));
-    expect(screen.getByTestId('where')).toHaveTextContent('/teams/team-1/chat?chat=c4');
+    expect(screen.getByTestId('where')).toHaveTextContent('/home?team=team-1&chat=c4');
   });
 
   it('groups chats by agent and remembers the choice and closed sections', async () => {

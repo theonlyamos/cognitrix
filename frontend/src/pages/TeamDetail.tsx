@@ -75,7 +75,7 @@ export default function TeamDetail() {
         <div className="flex flex-none items-center gap-1 md:gap-2">
           {members.length > 0 && (
             <Button asChild size="sm" className="w-11 px-0 md:w-auto md:px-3">
-              <Link to={`/teams/${team.id}/chat`} aria-label={tr('ui.teamDetail.openGroupChat')}>
+              <Link to={`/home?team=${team.id}`} aria-label={tr('ui.teamDetail.openGroupChat')}>
                 <svg className="h-4 w-4 md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
                 <span className="sr-only md:not-sr-only">{tr('ui.teamDetail.groupChat')}</span>
               </Link>

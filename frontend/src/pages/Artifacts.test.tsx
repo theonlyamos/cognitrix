@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installIntersectionObserver, intersect, resetIntersectionObservers, uninstallIntersectionObserver } from '@/test/intersection-observer';
 import Artifacts from './Artifacts';
 import { ArtifactCard } from '@/components/artifacts/ArtifactCard';
 import { onOpenArtifact, publishedFrom } from '@/lib/artifactPages';
@@ -55,6 +56,28 @@ describe('Artifacts page', () => {
     expect(screen.getByText(/shared by Grace/)).toBeInTheDocument();
     expect(screen.getByTestId('image-i1')).toBeInTheDocument();
     expect(screen.getByText('notes.md')).toBeInTheDocument();
+  });
+
+  describe('thumbnails', () => {
+    beforeEach(() => { installIntersectionObserver(); resetIntersectionObservers(); });
+    afterEach(() => uninstallIntersectionObserver());
+
+    it('draws a page and a document once their cards scroll into view', async () => {
+      apiGet.mockImplementation((url: string) => Promise.resolve({
+        data: url === '/artifact-pages' ? LIST : url.endsWith('/frame') ? { url: '/api/v1/artifact-frame/tok' } : '# Notes\nfirst line',
+      }));
+      show();
+      expect(await screen.findByText('Weekly numbers')).toBeInTheDocument();
+      // Nothing is fetched for cards that are not on screen yet.
+      expect(screen.queryByTestId('page-thumbnail')).toBeNull();
+      expect(apiGet).toHaveBeenCalledTimes(1);
+      act(() => intersect());
+      const frame = (await screen.findAllByTestId('page-thumbnail'))[0];
+      expect(frame).toHaveAttribute('src', expect.stringContaining('/api/v1/artifact-frame/tok'));
+      expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
+      expect(apiGet).toHaveBeenCalledWith('/artifact-pages/p1/frame');
+      expect(await screen.findByTestId('file-thumbnail')).toHaveTextContent('# Notes first line');
+    });
   });
 
   it('filters by kind, sharing and search', async () => {

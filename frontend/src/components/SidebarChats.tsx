@@ -247,7 +247,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
       title: c.title,
       when: fmtRelative(c.updated_at),
       running: isRunning(c),
-      selected: c.kind !== 'team' && c.id === activeChatId,
+      selected: c.id === activeChatId,
     });
     const activeChat = chats.find((c) => c.id === activeChatId);
     const groups: RailGroup[] = grouped.groups.map((g) => {
@@ -288,7 +288,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
   // ── Full list ──
   const row = (c: SidebarChat, opts: { badge: boolean; indent?: boolean }) => {
     const who = nameOf(c);
-    const selected = c.kind !== 'team' && c.id === activeChatId;
+    const selected = c.id === activeChatId;
     const busy = isRunning(c);
     if (renaming?.id === c.id) {
       return (
