@@ -480,6 +480,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('public_link_id', 'TEXT'), ('visitor_key', 'TEXT'),
     ('loaded_tools', 'TEXT'),
     ('project_id', 'TEXT'),
+    ('auto_title', 'TEXT'),
 )
 
 _CHAT_INDEX_MIGRATION_COLUMNS = (

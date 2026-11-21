@@ -876,7 +876,8 @@ export default function TaskDetail() {
   const selectedRunUsage = selectedRun ? formatUsage(selectedRun) : [];
   const selectedRunSummary = selectedRun ? runSummary(selectedRun) : '';
   const stepsShown = stepsOpen ?? (selectedRunIsLive || selectedRun?.status !== 'completed' || !hasSynthesis);
-  const manyRuns = visibleRuns.length + legacy.length > 1;
+  // Older transcripts are opened only from the list, so it stays whenever there is one.
+  const manyRuns = visibleRuns.length > 1 || legacy.length > 0;
   const selectedRunFailureLabel = selectedRun?.error_code
     ? FAILURE_LABEL[selectedRun.error_code]
       || (selectedRun.status === 'cancelled' ? tr('ui.taskDetail.failure.cancelled') : tr('ui.taskDetail.failure.unknown'))
