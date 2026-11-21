@@ -118,7 +118,7 @@ function nextAt(a: AutomationRow): string | null {
 }
 
 function howItRuns(a: AutomationRow): string {
-  const words = { once: { label: 'Runs once' }, checks: { label: 'The agent checks back' }, event: { label: 'When something happens' }, paused: { label: 'Paused' } };
+  const words = { once: { label: tr('ui.dashboard.runsOnce') }, checks: { label: tr('ui.dashboard.theAgentChecksBack') }, event: { label: tr('ui.dashboard.whenSomethingHappens') }, paused: { label: tr('ui.dashboard.paused') } };
   const schedule = scheduleInWords(a);
   if (schedule) return schedule;
   if (a.wake_pending) return words.checks.label;
@@ -147,11 +147,11 @@ function inboxHref(item: InboxItem): string {
 }
 
 const KIND_STYLE: Record<InboxItem['kind'], { label: string; className: string }> = {
-  approval: { label: 'Approval', className: 'bg-warn/15 text-warn-ink' },
-  question: { label: 'Question', className: 'bg-info/15 text-info-ink' },
-  notification: { label: 'Alert', className: 'bg-accent/15 text-accent-ink' },
-  offer: { label: 'Offer', className: 'bg-ok/15 text-ok' },
-  skill_draft: { label: 'Skill', className: 'bg-violet/15 text-violet-ink' },
+  approval: { get label() { return tr('ui.dashboard.approval'); }, className: 'bg-warn/15 text-warn-ink' },
+  question: { get label() { return tr('ui.dashboard.question'); }, className: 'bg-info/15 text-info-ink' },
+  notification: { get label() { return tr('ui.dashboard.alert'); }, className: 'bg-accent/15 text-accent-ink' },
+  offer: { get label() { return tr('ui.dashboard.offer'); }, className: 'bg-ok/15 text-ok' },
+  skill_draft: { get label() { return tr('ui.dashboard.skill'); }, className: 'bg-violet/15 text-violet-ink' },
 };
 
 /* ------------------------------------------------------------------ pieces */
@@ -318,10 +318,10 @@ function TryNext({ ready, hasChat, hasTask, hasSchedule, className }: {
     return () => { alive = false; };
   }, [hidden]);
   const steps = [
-    { done: hasChat, to: '/home', label: 'Ask your assistant something', detail: 'Start with a question or a small job.' },
-    { done: apps === true, to: '/settings/apps', label: 'Connect an app', detail: 'Mail, calendar or files, so agents can work with your things.' },
-    { done: hasTask, to: '/tasks/new', label: 'Hand over a task', detail: 'Describe a piece of work and let an agent finish it on its own.' },
-    { done: hasSchedule, to: '/tasks/new?repeat=1', label: 'Make something repeat', detail: 'A digest every Monday, a check every morning.' },
+    { done: hasChat, to: '/home', label: tr('ui.dashboard.askYourAssistantSomething'), detail: tr('ui.dashboard.startWithAQuestionOr') },
+    { done: apps === true, to: '/settings/apps', label: tr('ui.dashboard.connectAnApp'), detail: tr('ui.dashboard.mailCalendarOrFilesSo') },
+    { done: hasTask, to: '/tasks/new', label: tr('ui.dashboard.handOverATask'), detail: tr('ui.dashboard.describeAPieceOfWork') },
+    { done: hasSchedule, to: '/tasks/new?repeat=1', label: tr('ui.dashboard.makeSomethingRepeat'), detail: tr('ui.dashboard.aDigestEveryMondayA') },
   ];
   if (hidden || !ready || apps === null || steps.every((s) => s.done)) return null;
   const hide = () => {
@@ -331,8 +331,8 @@ function TryNext({ ready, hasChat, hasTask, hasSchedule, className }: {
   return (
     <section aria-labelledby="try-next" className={cn('rounded-[14px] border border-line bg-panel', className)}>
       <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-        <h2 id="try-next" className="text-[14px] font-semibold">Try next</h2>
-        <button type="button" onClick={hide} className="text-[12.5px] text-fg-dim hover:text-fg">Hide</button>
+        <h2 id="try-next" className="text-[14px] font-semibold">{tr('ui.dashboard.tryNext')}</h2>
+        <button type="button" onClick={hide} className="text-[12.5px] text-fg-dim hover:text-fg">{tr('ui.dashboard.hide')}</button>
       </div>
       <ul className="grid gap-px sm:grid-cols-2">
         {steps.map((step) => (

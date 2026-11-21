@@ -374,6 +374,7 @@ _TASK_MIGRATION_COLUMNS = (
     ('created_by', 'TEXT'), ('report_to', 'TEXT'), ('report_only_on', 'TEXT'),
     ('project_id', 'TEXT'),
     ('computer', 'TEXT'),
+    ('schedule_tz', 'TEXT'),
 )
 
 _USER_MIGRATION_COLUMNS = (

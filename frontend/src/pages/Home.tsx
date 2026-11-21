@@ -2330,9 +2330,12 @@ export default function Home() {
         <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{steerError}</div>
       )}
       <VoiceNotice voice={voice} />
-      <div className="mt-1.5 hidden items-center gap-x-4 px-2 text-[11px] text-fg-dim md:flex">
-        <SendKeyHint />
-      </div>
+      {/* Key hints: only before the first message, and never over the theme's drawing. */}
+      {empty && (
+        <div className="mt-1.5 hidden items-center gap-x-4 px-2 text-[11px] text-fg-dim md:flex">
+          <SendKeyHint />
+        </div>
+      )}
     </div>
   );
 
@@ -2358,11 +2361,6 @@ export default function Home() {
             </h1>
           </div>
           <div className="flex flex-none items-center gap-1">
-            {(chatModel || agentModel(currentAgent)) && (
-              <span className="hidden max-w-[220px] truncate rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-dim lg:inline" title={tr('ui.home.model')}>
-                {chatModel ? `${chatModel.provider} · ${chatModel.model}` : agentModel(currentAgent)}
-              </span>
-            )}
             {isConnected ? (
               <span className="sr-only">{tr('ui.home.connectionStatusConnected')}</span>
             ) : (

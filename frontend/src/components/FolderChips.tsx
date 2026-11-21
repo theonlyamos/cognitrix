@@ -200,6 +200,7 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
           className={cn(composerBtn, open && 'bg-panel-2 text-fg')}
         >
           <FolderIcon size={15} />
+          <span className="hidden text-fg-dim lg:inline">Working in</span>
           <span className={cn('hidden max-w-[11rem] truncate sm:inline', main && 'text-fg')}>{label}</span>
           {folders.length > 1 && <span className="font-mono text-[11px] text-fg-dim"><span className="hidden sm:inline">+{folders.length - 1}</span><span className="sm:hidden">{folders.length}</span></span>}
           <ChevronIcon />

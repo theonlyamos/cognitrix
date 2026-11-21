@@ -97,7 +97,7 @@ export function RecentNotifications() {
       <div className="grid h-full place-items-center px-6 text-center">
         <div>
           <div className="text-[15px] font-medium">{tr('ui.notifications.noNotificationsYet')}</div>
-          <p className="mt-1 text-[13px] text-fg-dim">Finished tasks, replies and alerts from your agents show up here.</p>
+          <p className="mt-1 text-[13px] text-fg-dim">{tr('ui.notifications.finishedTasksRepliesAndAlerts')}</p>
         </div>
       </div>
     );
@@ -106,7 +106,7 @@ export function RecentNotifications() {
     <div className="mx-auto w-full max-w-[760px] px-4 py-5 md:px-7">
       <div className="mb-2 flex items-center justify-end gap-4 text-[12.5px]">
         <button type="button" onClick={markAllRead} className="text-fg-dim hover:text-fg">{tr('ui.notifications.markAllRead')}</button>
-        <Link to="/settings/notifications" className="text-fg-dim hover:text-fg">Notification settings</Link>
+        <Link to="/settings/notifications" className="text-fg-dim hover:text-fg">{tr('ui.notifications.notificationSettings')}</Link>
       </div>
       <ul className="rounded-[14px] border border-line bg-panel p-1.5">
         {notifications.map((n) => (

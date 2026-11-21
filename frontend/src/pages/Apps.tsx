@@ -21,7 +21,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'boards', get label() { return tr('ui.apps.sheetsBoards'); } },
   { id: 'images', get label() { return tr('ui.apps.images'); } },
   { id: 'documents', get label() { return tr('ui.apps.docs'); } },
-  { id: 'knowledge', label: 'Knowledge' },
+  { id: 'knowledge', get label() { return tr('ui.apps.knowledge'); } },
   { id: 'shared', get label() { return tr('ui.apps.sharedWithMe'); } },
 ];
 const FILTERS: { id: Filter; label: string }[] = [
@@ -67,7 +67,7 @@ function AppTable({ apps }: { apps: AppSummary[] }) {
       <table className="w-full min-w-[760px] border-collapse text-[13px]">
         <thead>
           <tr className="text-left text-[12px] text-fg-dim">
-            {[{ label: 'Name' }, { label: 'Status' }, { label: 'Who can open' }, { label: 'Visits, last 7 days' }, { label: 'Built by' }, { label: 'Updated' }].map((h) => (
+            {[{ label: tr('ui.apps.name') }, { label: tr('ui.apps.status') }, { label: tr('ui.apps.whoCanOpen') }, { label: tr('ui.apps.visitsLast7Days') }, { label: tr('ui.apps.builtBy') }, { label: tr('ui.apps.updated') }].map((h) => (
               <th key={h.label} className="border-b border-line px-3 py-2 font-medium">{h.label}</th>
             ))}
           </tr>
@@ -217,8 +217,8 @@ export default function Apps() {
   const tab = (TABS.find((t) => t.id === params.get('tab'))?.id ?? 'apps') as Tab;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PageHeader title="Library" subtitle="What your agents made, and what they read: apps, pages, images, documents and knowledge.">
-        <NewButton to="/apps/new" label="New app" />
+      <PageHeader title={tr('ui.apps.library')} subtitle={tr('ui.apps.whatYourAgentsMadeAnd')}>
+        <NewButton to="/apps/new" label={tr('ui.apps.newApp')} />
       </PageHeader>
       <nav role="tablist" aria-label={tr('ui.apps.whatToShow')} className="flex flex-none gap-1 overflow-x-auto border-b border-line px-2 md:px-5">
         {TABS.map((t) => (

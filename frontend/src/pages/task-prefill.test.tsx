@@ -56,16 +56,13 @@ describe('TaskPage assignment prefill', () => {
   it('prefills a valid agent in create mode', async () => {
     renderTaskPage('/tasks/new?agentId=agent-1');
 
-    await waitFor(() => expect(screen.getByRole('checkbox', { name: /Agent One/ })).toBeChecked());
-    expect(screen.getByRole('checkbox', { name: /Agent Two/ })).not.toBeChecked();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /Who does it/ })).toHaveValue('agent:agent-1'));
   });
 
   it('prefills a valid team and its current members in create mode', async () => {
     renderTaskPage('/tasks/new?teamId=team-1');
 
-    await waitFor(() => expect(screen.getByRole('combobox', { name: /TEAM/ })).toHaveValue('team-1'));
-    expect(screen.getByRole('checkbox', { name: /Agent One/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Agent Two/ })).toBeChecked();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /Who does it/ })).toHaveValue('team:team-1'));
   });
 
   it('prefills an agent even when the unrelated team request fails', async () => {
@@ -73,7 +70,7 @@ describe('TaskPage assignment prefill', () => {
 
     renderTaskPage('/tasks/new?agentId=agent-1');
 
-    await waitFor(() => expect(screen.getByRole('checkbox', { name: /Agent One/ })).toBeChecked());
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /Who does it/ })).toHaveValue('agent:agent-1'));
     expect(screen.getByRole('alert')).toHaveTextContent('Teams are unavailable.');
   });
 
@@ -82,16 +79,15 @@ describe('TaskPage assignment prefill', () => {
 
     renderTaskPage('/tasks/new?teamId=team-1');
 
-    await waitFor(() => expect(screen.getByRole('combobox', { name: /TEAM/ })).toHaveValue('team-1'));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /Who does it/ })).toHaveValue('team:team-1'));
     expect(screen.getByRole('alert')).toHaveTextContent('Agents are unavailable.');
   });
 
   it('ignores invalid create-mode assignment IDs', async () => {
     renderTaskPage('/tasks/new?teamId=missing&agentId=also-missing');
 
-    await waitFor(() => expect(screen.getByRole('combobox', { name: /TEAM/ })).toHaveValue(''));
-    expect(screen.getByRole('checkbox', { name: /Agent One/ })).not.toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Agent Two/ })).not.toBeChecked();
+    // Neither id exists, so the task falls back to the first agent, never the bad ids.
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /Who does it/ })).toHaveValue('agent:agent-1'));
   });
 
   it('ignores prefill parameters while editing an existing task', async () => {
@@ -108,8 +104,6 @@ describe('TaskPage assignment prefill', () => {
 
     renderTaskPage('/tasks/task-1/edit?agentId=agent-1&teamId=team-1');
 
-    await waitFor(() => expect(screen.getByRole('checkbox', { name: /Agent Two/ })).toBeChecked());
-    expect(screen.getByRole('checkbox', { name: /Agent One/ })).not.toBeChecked();
-    expect(screen.getByRole('combobox', { name: /TEAM/ })).toHaveValue('');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /Who does it/ })).toHaveValue('agent:agent-2'));
   });
 });

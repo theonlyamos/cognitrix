@@ -54,7 +54,7 @@ interface SectionMeta {
 const SECTIONS: SectionMeta[] = [
   { id: 'account', get label() { return tr('ui.settings.account'); }, group: 'GENERAL', keywords: 'profile email name password export backup download data sign out devices signed in sessions phone browser laptop code qr another device new device log in login security developer api keys' },
   { id: 'appearance', get label() { return tr('ui.settings.appearance'); }, group: 'GENERAL', keywords: 'theme dark light system send enter motion animation language' },
-  { id: 'notifications', label: 'Notifications', group: 'GENERAL', keywords: 'alerts bell push browser desktop phone approval question task finished failed reply inbox' },
+  { id: 'notifications', get label() { return tr('ui.settings.notifications'); }, group: 'GENERAL', keywords: 'alerts bell push browser desktop phone approval question task finished failed reply inbox' },
   { id: 'models', get label() { return tr('ui.settings.modelsAndKeys'); }, group: 'AI', keywords: 'providers api key chatgpt plan subscription plus pro openai anthropic claude gemini google groq openrouter cerebras ollama coding agent cli claude code codex gemini cli copilot opencode antigravity' },
   { id: 'usage', get label() { return tr('ui.settings.usage'); }, group: 'AI', keywords: 'cost spend tokens money bill price how much limits helpers swarm workers parallel sub agents subagents fan out budget concurrency how many at once' },
   { id: 'assistant', get label() { return tr('ui.settings.assistant'); }, group: 'AI', keywords: 'proactive check in brief morning quiet hours do not disturb interrupt alerts notifications push daily limit tokens main assistant' },
@@ -223,7 +223,7 @@ function ComputerAccess({ desktopApp }: { desktopApp: boolean }) {
           label={<span className="break-all font-mono text-[12.5px] font-normal">{info?.working_folder ?? prefs?.working_folder ?? '…'}</span>}
           detail={desktopApp
             ? tr('ui.settings.shellCommandsAndFileTools')
-            : 'Agents read and change files here. Whoever runs the server chooses the folder.'}
+            : tr('ui.settings.agentsReadAndChangeFiles')}
         >
           {desktopApp && (
             <>
@@ -425,7 +425,7 @@ function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boo
       return (
         <>
           <AccountSection />
-          <SubHeading className="mt-7"><span id="devices" className="scroll-mt-4">Devices</span></SubHeading>
+          <SubHeading className="mt-7"><span id="devices" className="scroll-mt-4">{tr('ui.settings.devices')}</span></SubHeading>
           <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.devicesSignedInToYour')}</p>
           <SignInsSettings />
         </>
@@ -433,15 +433,15 @@ function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boo
     case 'appearance':
       return <AppearanceSection />;
     case 'notifications':
-      return (<><SectionHeader title="Notifications" description="Choose which events reach you, and where." /><NotificationPrefsCard /></>);
+      return (<><SectionHeader title={tr('ui.settings.notifications')} description={tr('ui.settings.chooseWhichEventsReachYou')} /><NotificationPrefsCard /></>);
     case 'models':
       return (<><SectionHeader title={tr('ui.settings.modelsAndKeys')} description={tr('ui.settings.yourChatgptPlanAndApi')} /><ChatGPTPlanCard /><CodingAgents /><ProviderKeys /></>);
     case 'usage':
       return (
         <>
-          <SectionHeader title="Usage and limits" description="What your agents have used, and how much help they may call in at once." />
+          <SectionHeader title={tr('ui.settings.usageAndLimits')} description={tr('ui.settings.whatYourAgentsHaveUsed')} />
           <UsageSettings />
-          <SubHeading className="mt-7"><span id="helpers" className="scroll-mt-4">Helpers</span></SubHeading>
+          <SubHeading className="mt-7"><span id="helpers" className="scroll-mt-4">{tr('ui.settings.helpers')}</span></SubHeading>
           <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.howManyWorkersAnAgent')}</p>
           <SwarmSettings />
         </>
@@ -451,7 +451,7 @@ function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boo
     case 'memory':
       return (
         <>
-          <SectionHeader title="Memory and skills" description="What your agents remember about you, and the instructions they have learned." />
+          <SectionHeader title={tr('ui.settings.memoryAndSkills')} description={tr('ui.settings.whatYourAgentsRememberAbout_6b86')} />
           <MemorySettings />
           <SubHeading className="mt-7"><span id="skills" className="scroll-mt-4">{tr('ui.settings.skills')}</span></SubHeading>
           <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.instructionsYourAgentsLoadWhen')}</p>
@@ -471,7 +471,7 @@ function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boo
     case 'apps':
       return (
         <>
-          <SectionHeader title="Connections" description="The apps, accounts and channels your agents can reach." />
+          <SectionHeader title={tr('ui.settings.connections')} description={tr('ui.settings.theAppsAccountsAndChannels')} />
           <SubHeading>{tr('ui.settings.connectedApps')}</SubHeading>
           <p className="mb-2 text-[12.5px] leading-snug text-fg-dim">{tr('ui.settings.signInToAppsSo')}</p>
           <ConnectedAppsCard />
@@ -514,11 +514,11 @@ function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boo
       return (
         <>
           <SectionHeader
-            title={admin ? 'People and activity' : 'Activity'}
-            description={admin ? 'Who has an account on this server, and what was done on it.' : tr('ui.settings.whoDidWhatOnThis')}
+            title={admin ? tr('ui.settings.peopleAndActivity') : tr('ui.settings.activity')}
+            description={admin ? tr('ui.settings.whoHasAnAccountOn_2d6b') : tr('ui.settings.whoDidWhatOnThis')}
           />
           {admin && <PeopleSettings />}
-          {admin && <SubHeading className="mt-7"><span id="activity" className="scroll-mt-4">Activity</span></SubHeading>}
+          {admin && <SubHeading className="mt-7"><span id="activity" className="scroll-mt-4">{tr('ui.settings.activity')}</span></SubHeading>}
           <AuditLog />
         </>
       );

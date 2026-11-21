@@ -49,8 +49,8 @@ interface Item {
 }
 
 const GROUP_WORDS: Record<Item['group'], { label: string }> = {
-  Actions: { label: 'Actions' }, Chats: { label: 'Chats' }, Agents: { label: 'Agents' }, Tasks: { label: 'Tasks' }, Teams: { label: 'Teams' },
-  Projects: { label: 'Projects' }, Library: { label: 'Library' }, Memory: { label: 'Memory' }, Settings: { label: 'Settings' },
+  Actions: { get label() { return tr('ui.commandPalette.actions'); } }, Chats: { get label() { return tr('ui.commandPalette.chats'); } }, Agents: { get label() { return tr('ui.commandPalette.agents'); } }, Tasks: { get label() { return tr('ui.commandPalette.tasks'); } }, Teams: { get label() { return tr('ui.commandPalette.teams'); } },
+  Projects: { get label() { return tr('ui.commandPalette.projects'); } }, Library: { get label() { return tr('ui.commandPalette.library'); } }, Memory: { get label() { return tr('ui.commandPalette.memory'); } }, Settings: { get label() { return tr('ui.commandPalette.settings'); } },
 };
 
 interface Named { id: string; name: string; description?: string }
@@ -119,24 +119,24 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
       { id: 'new-chat', group: 'Actions', label: tr('ui.commandPalette.newChat'), hint: tr('ui.commandPalette.talkToYourSelectedAgent'), shortcut: 'Ctrl N', run: go(newChatHref()) },
       { id: 'run-task', group: 'Actions', label: tr('ui.commandPalette.runTask'), hint: tr('ui.commandPalette.planAndExecuteWithAn'), run: go('/tasks/new') },
       { id: 'inbox', group: 'Actions', label: tr('ui.commandPalette.openInbox'), hint: tr('ui.commandPalette.approvalsQuestionsAndAgentAlerts'), run: go('/inbox') },
-      { id: 'scheduled', group: 'Actions', label: 'Scheduled tasks', hint: 'Tasks that run on their own', keywords: 'automations schedule recurring webhooks', run: go('/tasks?show=scheduled') },
+      { id: 'scheduled', group: 'Actions', label: tr('ui.commandPalette.scheduledTasks'), hint: tr('ui.commandPalette.tasksThatRunOnTheir'), keywords: 'automations schedule recurring webhooks', run: go('/tasks?show=scheduled') },
       { id: 'new-agent', group: 'Actions', label: tr('ui.commandPalette.newAgent'), run: go('/agents/new') },
       { id: 'new-team', group: 'Actions', label: tr('ui.commandPalette.newTeam'), run: go('/teams/new') },
-      { id: 'library', group: 'Actions', label: 'Open the library', hint: 'Apps, pages, images, documents and knowledge', keywords: 'artifacts apps knowledge', run: go('/apps') },
+      { id: 'library', group: 'Actions', label: tr('ui.commandPalette.openTheLibrary'), hint: tr('ui.commandPalette.appsPagesImagesDocumentsAnd'), keywords: 'artifacts apps knowledge', run: go('/apps') },
     ];
     const settings: Item[] = [
       { id: 'settings', group: 'Settings', label: tr('ui.commandPalette.settings'), keywords: 'preferences', run: go('/settings') },
-      { id: 'settings-account', group: 'Settings', label: 'Account and devices', keywords: 'password sign out export profile signed in sessions', run: go('/settings/account') },
-      { id: 'settings-appearance', group: 'Settings', label: 'Appearance', keywords: 'theme dark light language', run: go('/settings/appearance') },
+      { id: 'settings-account', group: 'Settings', label: tr('ui.commandPalette.accountAndDevices'), keywords: 'password sign out export profile signed in sessions', run: go('/settings/account') },
+      { id: 'settings-appearance', group: 'Settings', label: tr('ui.commandPalette.appearance'), keywords: 'theme dark light language', run: go('/settings/appearance') },
       { id: 'settings-notifications', group: 'Settings', label: tr('ui.commandPalette.notifications'), keywords: 'alerts bell push', run: go('/settings/notifications') },
-      { id: 'settings-models', group: 'Settings', label: 'Models and keys', keywords: 'provider api key openai anthropic gemini groq chatgpt', run: go('/settings/models') },
-      { id: 'settings-usage', group: 'Settings', label: 'Usage and limits', keywords: 'cost spend tokens money helpers swarm', run: go('/settings/usage') },
-      { id: 'settings-assistant', group: 'Settings', label: 'Assistant', keywords: 'check in morning brief quiet hours proactive', run: go('/settings/assistant') },
-      { id: 'settings-memory', group: 'Settings', label: 'Memory and skills', keywords: 'remember forget tidy instructions', run: go('/settings/memory') },
-      { id: 'settings-voice', group: 'Settings', label: 'Voice', keywords: 'microphone dictation spoken replies', run: go('/settings/voice') },
-      { id: 'settings-connections', group: 'Settings', label: 'Connections', keywords: 'connected apps github gmail google mcp passwords telegram slack email', run: go('/settings/apps') },
-      { id: 'settings-computers', group: 'Settings', label: 'Computers', keywords: 'pc pair sandbox working folder', run: go('/settings/computers') },
-      { id: 'api-keys', group: 'Settings', label: 'Developer keys', keywords: 'api tokens access scripts', run: go('/api-keys') },
+      { id: 'settings-models', group: 'Settings', label: tr('ui.commandPalette.modelsAndKeys'), keywords: 'provider api key openai anthropic gemini groq chatgpt', run: go('/settings/models') },
+      { id: 'settings-usage', group: 'Settings', label: tr('ui.commandPalette.usageAndLimits'), keywords: 'cost spend tokens money helpers swarm', run: go('/settings/usage') },
+      { id: 'settings-assistant', group: 'Settings', label: tr('ui.commandPalette.assistant'), keywords: 'check in morning brief quiet hours proactive', run: go('/settings/assistant') },
+      { id: 'settings-memory', group: 'Settings', label: tr('ui.commandPalette.memoryAndSkills'), keywords: 'remember forget tidy instructions', run: go('/settings/memory') },
+      { id: 'settings-voice', group: 'Settings', label: tr('ui.commandPalette.voice'), keywords: 'microphone dictation spoken replies', run: go('/settings/voice') },
+      { id: 'settings-connections', group: 'Settings', label: tr('ui.commandPalette.connections'), keywords: 'connected apps github gmail google mcp passwords telegram slack email', run: go('/settings/apps') },
+      { id: 'settings-computers', group: 'Settings', label: tr('ui.commandPalette.computers'), keywords: 'pc pair sandbox working folder', run: go('/settings/computers') },
+      { id: 'api-keys', group: 'Settings', label: tr('ui.commandPalette.developerKeys'), keywords: 'api tokens access scripts', run: go('/api-keys') },
     ];
     const agentItems: Item[] = agents.map((a) => ({
       id: `agent-${a.id}`,
@@ -158,9 +158,9 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
     ]);
     const projectItems: Item[] = projects.map((p) => ({ id: `project-${p.id}`, group: 'Projects', label: p.name, hint: p.description, run: go(`/projects/${p.id}`) }));
     const libraryItems: Item[] = [
-      ...apps.map((a) => ({ id: `app-${a.id}`, group: 'Library' as const, label: a.title, hint: 'App', run: go(`/apps/${a.id}`) })),
-      ...pages.map((a) => ({ id: `page-${a.id}`, group: 'Library' as const, label: a.title, hint: 'Page', run: go(`/artifacts/${a.id}`) })),
-      ...collections.map((c) => ({ id: `knowledge-${c.id}`, group: 'Library' as const, label: c.name, hint: 'Knowledge', run: go('/apps?tab=knowledge') })),
+      ...apps.map((a) => ({ id: `app-${a.id}`, group: 'Library' as const, label: a.title, hint: tr('ui.commandPalette.app'), run: go(`/apps/${a.id}`) })),
+      ...pages.map((a) => ({ id: `page-${a.id}`, group: 'Library' as const, label: a.title, hint: tr('ui.commandPalette.page'), run: go(`/artifacts/${a.id}`) })),
+      ...collections.map((c) => ({ id: `knowledge-${c.id}`, group: 'Library' as const, label: c.name, hint: tr('ui.commandPalette.knowledge'), run: go('/apps?tab=knowledge') })),
     ];
     const memoryItems: Item[] = memories.map((m) => ({ id: `memory-${m.id}`, group: 'Memory', label: m.content, run: go('/settings/memory') }));
     const byId = new Map(chats.map((c) => [c.id, c]));

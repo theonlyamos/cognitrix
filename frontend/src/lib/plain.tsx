@@ -1,4 +1,4 @@
-import { dateLocale } from '@/lib/i18n';
+import { dateLocale, tr } from '@/lib/i18n';
 
 // Plain words for things the server stores as codes: task and run statuses,
 // schedules, times and costs. One place, so every screen says them the same way.
@@ -12,20 +12,20 @@ export function parseServerTime(stamp: string | null | undefined): Date | null {
 }
 
 const STATUS_WORDS = {
-  pending: { label: 'Not started' },
-  queued: { label: 'Starting' },
-  in_progress: { label: 'Running' },
-  running: { label: 'Running' },
-  completed: { label: 'Done' },
-  done: { label: 'Done' },
-  failed: { label: 'Failed' },
-  cancelled: { label: 'Stopped' },
-  canceled: { label: 'Stopped' },
-  paused: { label: 'Paused' },
-  waiting: { label: 'Needs you' },
-  blocked: { label: 'Needs you' },
-  skipped: { label: 'Skipped' },
-  scheduled: { label: 'Scheduled' },
+  pending: { get label() { return tr('ui.lib.plain.notStarted'); } },
+  queued: { get label() { return tr('ui.lib.plain.starting'); } },
+  in_progress: { get label() { return tr('ui.lib.plain.running'); } },
+  running: { get label() { return tr('ui.lib.plain.running'); } },
+  completed: { get label() { return tr('ui.lib.plain.done'); } },
+  done: { get label() { return tr('ui.lib.plain.done'); } },
+  failed: { get label() { return tr('ui.lib.plain.failed'); } },
+  cancelled: { get label() { return tr('ui.lib.plain.stopped'); } },
+  canceled: { get label() { return tr('ui.lib.plain.stopped'); } },
+  paused: { get label() { return tr('ui.lib.plain.paused'); } },
+  waiting: { get label() { return tr('ui.lib.plain.needsYou'); } },
+  blocked: { get label() { return tr('ui.lib.plain.needsYou'); } },
+  skipped: { get label() { return tr('ui.lib.plain.skipped'); } },
+  scheduled: { get label() { return tr('ui.lib.plain.scheduled'); } },
 };
 
 /** "in_progress" -> "Running". Unknown codes come back with underscores as spaces. */
@@ -98,8 +98,8 @@ function weekdayName(day: number, style: 'long' | 'short' = 'long'): string {
 
 function everySeconds(seconds: number): string {
   const units = {
-    minutes: { label: 'Every {n} minutes' }, hour: { label: 'Every hour' }, hours: { label: 'Every {n} hours' },
-    day: { label: 'Every day' }, days: { label: 'Every {n} days' }, week: { label: 'Every week' },
+    minutes: { label: tr('ui.lib.plain.everyNMinutes') }, hour: { label: tr('ui.lib.plain.everyHour') }, hours: { label: tr('ui.lib.plain.everyNHours') },
+    day: { label: tr('ui.lib.plain.everyDay') }, days: { label: tr('ui.lib.plain.everyNDays') }, week: { label: tr('ui.lib.plain.everyWeek') },
   };
   const fill = (text: string, n: number) => text.replace('{n}', String(n));
   if (seconds % 604800 === 0 && seconds / 604800 === 1) return units.week.label;
@@ -119,10 +119,10 @@ export function cronInWords(cron: string, nextRun: Date | null = null): string |
   if (parts.length !== 5) return null;
   const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
   const words = {
-    everyNMinutes: { label: 'Every {n} minutes' }, everyHour: { label: 'Every hour' },
-    everyNHours: { label: 'Every {n} hours' }, dailyAt: { label: 'Every day at {time}' },
-    weekdaysAt: { label: 'Weekdays at {time}' }, weeklyAt: { label: 'Every {day} at {time}' },
-    monthlyAt: { label: 'Day {n} of every month at {time}' },
+    everyNMinutes: { label: tr('ui.lib.plain.everyNMinutes') }, everyHour: { label: tr('ui.lib.plain.everyHour') },
+    everyNHours: { label: tr('ui.lib.plain.everyNHours') }, dailyAt: { label: tr('ui.lib.plain.everyDayAtTime') },
+    weekdaysAt: { label: tr('ui.lib.plain.weekdaysAtTime') }, weeklyAt: { label: tr('ui.lib.plain.everyDayAtTime_3186') },
+    monthlyAt: { label: tr('ui.lib.plain.dayNOfEveryMonth') },
   };
   if (month !== '*') return null;
   const stepMinutes = /^\*\/(\d+)$/.exec(minute);
@@ -164,7 +164,7 @@ export interface ScheduleFields {
 
 /** A task's schedule in words, or null when it has none. */
 export function scheduleInWords(task: ScheduleFields): string | null {
-  const words = { once: { label: 'Once, {time}' }, custom: { label: 'Custom schedule ({cron})' } };
+  const words = { once: { label: tr('ui.lib.plain.onceTime') }, custom: { label: tr('ui.lib.plain.customScheduleCron') } };
   if (task.schedule_cron) {
     return cronInWords(task.schedule_cron, parseServerTime(task.next_run_at)) ?? words.custom.label.replace('{cron}', task.schedule_cron);
   }
@@ -185,9 +185,9 @@ export function money(usd: number | string | null | undefined): string {
 /** "2 min 25 s", "48 s", "1 h 4 min". */
 export function tookWords(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
-  if (s < 60) return `${s} s`;
+  if (s < 60) return tr('ui.lib.plain.sS', { s });
   if (s < 3600) return `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ''}`;
-  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+  return tr('ui.lib.plain.floorHFloor2Min', { floor: Math.floor(s / 3600), floor2: Math.floor((s % 3600) / 60) });
 }
 
 /** "637k", "1.2M": a token count for the Details line. */

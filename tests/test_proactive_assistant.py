@@ -115,6 +115,15 @@ async def test_checkin_skips_when_nothing_changed(db, monkeypatch):  # noqa: F81
     monkeypatch.setattr(checkins, 'change_marker', fake_marker)
     monkeypatch.setattr(checkins, '_save_state', fake_save)
 
+    # Before anything is connected the first check-in waits, at no cost.
+    allowed, reason = await checkins.gate_checkin(task, NOON)
+    assert not allowed and 'connected app' in reason
+    assert (await p.today_row(uid, NOON)).runs == 0
+
+    async def connected(_owner):
+        return True
+
+    monkeypatch.setattr(checkins, 'has_something_to_watch', connected)
     assert await checkins.gate_checkin(task, NOON) == (True, '')
     allowed, reason = await checkins.gate_checkin(task, NOON + timedelta(hours=1))
     assert not allowed and 'nothing changed' in reason

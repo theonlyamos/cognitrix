@@ -31,7 +31,7 @@ export function PageHeader({ title, subtitle, trail, children }: {
     <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
       <div className="min-w-0 flex-1 overflow-hidden">
         {trail && trail.length > 0 && (
-          <nav aria-label="You are here" className="flex items-center gap-1.5 truncate text-[12.5px] text-fg-dim">
+          <nav aria-label={tr('ui.listUi.youAreHere')} className="flex items-center gap-1.5 truncate text-[12.5px] text-fg-dim">
             {trail.map((step) => (
               <span key={step.to} className="flex items-center gap-1.5">
                 <Link to={step.to} className="hover:text-fg hover:underline">{step.label}</Link>
@@ -51,7 +51,7 @@ export function PageHeader({ title, subtitle, trail, children }: {
 /** The trail on its own, for pages that draw their own header. */
 export function Trail({ steps, current }: { steps: { label: string; to: string }[]; current?: string }) {
   return (
-    <nav aria-label="You are here" className="flex min-w-0 items-center gap-1.5 text-[13px] text-fg-dim">
+    <nav aria-label={tr('ui.listUi.youAreHere')} className="flex min-w-0 items-center gap-1.5 text-[13px] text-fg-dim">
       {steps.map((step) => (
         <span key={step.to} className="flex flex-none items-center gap-1.5">
           <Link to={step.to} className="hover:text-fg hover:underline">{step.label}</Link>

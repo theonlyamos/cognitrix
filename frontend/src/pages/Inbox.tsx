@@ -40,7 +40,7 @@ function Badge({ kind }: { kind: InboxItem['kind'] }) {
         kind === 'skill_draft' && 'bg-violet/15 text-violet-ink',
       )}
     >
-      {{ approval: { label: 'Approval' }, notification: { label: 'Alert' }, question: { label: 'Question' }, offer: { label: 'Offer' }, skill_draft: { label: 'Skill' } }[kind].label}
+      {{ approval: { label: tr('ui.inbox.approval') }, notification: { label: tr('ui.inbox.alert') }, question: { label: tr('ui.inbox.question') }, offer: { label: tr('ui.inbox.offer') }, skill_draft: { label: tr('ui.inbox.skill') } }[kind].label}
     </span>
   );
 }
@@ -418,15 +418,15 @@ export default function Inbox() {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title={tr('ui.inbox.inbox')} subtitle="Questions and approvals waiting on you, and what your agents did lately." />
+      <PageHeader title={tr('ui.inbox.inbox')} subtitle={tr('ui.inbox.questionsAndApprovalsWaitingOn')} />
       <ListToolbar>
         <FilterChips<InboxTab>
-          label="Show"
+          label={tr('ui.inbox.show')}
           value={tab}
           onChange={setTab}
           options={[
-            { id: 'needs', label: 'Needs you', count: inbox.length },
-            { id: 'recent', label: 'Recent', count: unread },
+            { id: 'needs', label: tr('ui.inbox.needsYou'), count: inbox.length },
+            { id: 'recent', label: tr('ui.inbox.recent'), count: unread },
           ]}
         />
       </ListToolbar>

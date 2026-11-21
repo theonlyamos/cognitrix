@@ -84,19 +84,19 @@ export default function Agents() {
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
-      <PageHeader title={tr('ui.agents.agents')} subtitle="The assistants that work for you, and the teams they form.">
+      <PageHeader title={tr('ui.agents.agents')} subtitle={tr('ui.agents.theAssistantsThatWorkFor')}>
         <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" aria-label={tr('ui.agents.agentFile')} onChange={importFile} />
         {tab === 'agents' && <Button type="button" size="sm" variant="ghost" className="max-sm:hidden" onClick={() => fileInput.current?.click()}>{tr('ui.agents.import')}</Button>}
-        {tab === 'agents' ? <NewButton to="/agents/new" label="New agent" /> : <NewButton to="/teams/new" label="New team" />}
+        {tab === 'agents' ? <NewButton to="/agents/new" label={tr('ui.agents.newAgent_d200')} /> : <NewButton to="/teams/new" label={tr('ui.agents.newTeam')} />}
       </PageHeader>
       <ListToolbar>
         <FilterChips<'agents' | 'teams'>
-          label="Show"
+          label={tr('ui.agents.show')}
           value={tab}
           onChange={(next) => setParams(next === 'teams' ? { tab: 'teams' } : {}, { replace: true })}
-          options={[{ id: 'agents', label: 'Agents' }, { id: 'teams', label: 'Teams' }]}
+          options={[{ id: 'agents', label: tr('ui.agents.agents') }, { id: 'teams', label: tr('ui.agents.teams') }]}
         />
-        {tab === 'agents' && agents.length > 6 && <ListSearch value={query} onChange={setQuery} placeholder="Search agents" />}
+        {tab === 'agents' && agents.length > 6 && <ListSearch value={query} onChange={setQuery} placeholder={tr('ui.agents.searchAgents')} />}
       </ListToolbar>
       {importError && (
         <p role="alert" className="border-b border-line px-6 py-2 text-[12.5px] text-danger-ink">{importError}</p>

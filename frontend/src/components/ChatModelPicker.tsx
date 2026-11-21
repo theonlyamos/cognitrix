@@ -4,6 +4,7 @@ import { MODELS, PROVIDER_LABELS, isHarness } from '@/lib/providers';
 import { fetchProviderModels } from '@/components/ModelPicker';
 import { composerBtn, composerPopover } from '@/components/composerStyles';
 import { cn } from '@/lib/utils';
+import { modelName } from '@/lib/plain';
 import { tr } from '@/lib/i18n';
 
 export interface ChatModel {
@@ -37,8 +38,9 @@ export function clearChatProviderCache() {
 }
 
 /** "anthropic/claude-sonnet-5.5" -> "claude-sonnet-5.5" for the button. */
+/** The model's name as people say it: "Claude Sonnet 5.5". */
 export function shortModel(model: string): string {
-  return model.split('/').pop() || model;
+  return modelName(model) || model;
 }
 
 const ChipIcon = () => (
@@ -192,7 +194,7 @@ export default function ChatModelPicker({ agentLlm, value, onChange, disabled }:
                   onClick={() => pick({ provider, model: m })}
                   className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left font-mono text-[12px] text-fg hover:bg-panel-2 md:min-h-8"
                 >
-                  <span className="min-w-0 flex-1 truncate">{m}</span>
+                  <span className="min-w-0 flex-1 truncate" title={m}>{shortModel(m)}</span>
                   {isSelected(m) && <Check />}
                 </button>
               ))}

@@ -11,6 +11,7 @@ import { AgentBadge } from '@/components/StartChat';
 import WatchedPullRequests, { type PullRequestWatch } from '@/components/WatchedPullRequests';
 import { friendlyTime, relativeTime, scheduleInWords } from '@/lib/plain';
 import type { AgentAvatar } from '@/lib/agentAvatar';
+import { tr } from '@/lib/i18n';
 
 interface Task {
   id: string;
@@ -103,34 +104,34 @@ export default function Tasks() {
   };
 
   const emptyWords = {
-    all: { label: 'No tasks match your search.' },
-    running: { label: 'Nothing is running right now.' },
-    scheduled: { label: 'Nothing is scheduled. Open a task and give it a schedule to have it repeat.' },
-    needs: { label: 'Nothing needs you.' },
-    done: { label: 'Nothing has finished yet.' },
+    all: { label: tr('ui.tasks.noTasksMatchYourSearch') },
+    running: { label: tr('ui.tasks.nothingIsRunningRightNow') },
+    scheduled: { label: tr('ui.tasks.nothingIsScheduledOpenA') },
+    needs: { label: tr('ui.tasks.nothingNeedsYou') },
+    done: { label: tr('ui.tasks.nothingHasFinishedYet') },
   };
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title="Tasks" subtitle="Work your agents do on their own, once or on a schedule.">
-        <NewButton to="/tasks/new" label="New task" />
+      <PageHeader title={tr('ui.tasks.tasks')} subtitle={tr('ui.tasks.workYourAgentsDoOn')}>
+        <NewButton to="/tasks/new" label={tr('ui.tasks.newTask_17b2')} />
       </PageHeader>
 
       {tasks.length > 0 && (
         <ListToolbar>
           <FilterChips<Show>
-            label="Show"
+            label={tr('ui.tasks.show')}
             value={show}
             onChange={setShow}
             options={[
-              { id: 'all', label: 'All' },
-              { id: 'running', label: 'Running', count: counts.running },
-              { id: 'scheduled', label: 'Scheduled', count: counts.scheduled },
-              { id: 'needs', label: 'Needs you', count: counts.needs },
-              { id: 'done', label: 'Done' },
+              { id: 'all', label: tr('ui.tasks.all') },
+              { id: 'running', label: tr('ui.tasks.running'), count: counts.running },
+              { id: 'scheduled', label: tr('ui.tasks.scheduled'), count: counts.scheduled },
+              { id: 'needs', label: tr('ui.tasks.needsYou'), count: counts.needs },
+              { id: 'done', label: tr('ui.tasks.done') },
             ]}
           />
-          <ListSearch value={query} onChange={setQuery} placeholder="Search tasks" />
+          <ListSearch value={query} onChange={setQuery} placeholder={tr('ui.tasks.searchTasks')} />
         </ListToolbar>
       )}
 
@@ -139,18 +140,18 @@ export default function Tasks() {
           <WatchedPullRequests watches={watches} onChange={() => watched.refetch({ silent: true })} />
         )}
         {loading && !data ? (
-          <LoadingState label="Loading tasks…" />
+          <LoadingState label={tr('ui.tasks.loadingTasks_a349')} />
         ) : error ? (
           <ErrorState message={error} onRetry={refetch} />
         ) : tasks.length === 0 ? (
           watches.length === 0 && (
             <EmptyState
               icon={<TaskIcon />}
-              title="No tasks yet"
-              desc="Hand an agent a piece of work to do on its own: once, every morning, or whenever something happens."
+              title={tr('ui.tasks.noTasksYet')}
+              desc={tr('ui.tasks.handAnAgentAPiece')}
               action={
                 <Button asChild>
-                  <Link to="/tasks/new">Create your first task</Link>
+                  <Link to="/tasks/new">{tr('ui.tasks.createYourFirstTask')}</Link>
                 </Button>
               }
             />
@@ -199,15 +200,15 @@ export default function Tasks() {
 }
 
 function PausedSchedule({ schedule }: { schedule: string }) {
-  return <>{schedule} (paused)</>;
+  return <>{tr('ui.tasks.schedulePaused', { schedule })}</>;
 }
 
 function NextRun({ at }: { at: string }) {
-  return <span title={friendlyTime(at)}>Next run {relativeTime(at)}</span>;
+  return <span title={friendlyTime(at)}>{tr('ui.tasks.nextRunRelativetime', { relativeTime: relativeTime(at) })}</span>;
 }
 
 function LastRun({ at }: { at: string }) {
-  return <span title={friendlyTime(at)}>Last run {relativeTime(at)}</span>;
+  return <span title={friendlyTime(at)}>{tr('ui.tasks.lastRunRelativetime', { relativeTime: relativeTime(at) })}</span>;
 }
 
 function TaskIcon() {

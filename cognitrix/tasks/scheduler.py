@@ -27,7 +27,7 @@ FMT = '%Y-%m-%d %H:%M:%S'
 MIN_INTERVAL = 60
 TICK_SECONDS = 20
 
-SCHEDULE_FIELDS = ('schedule_at', 'schedule_interval', 'schedule_cron',
+SCHEDULE_FIELDS = ('schedule_at', 'schedule_interval', 'schedule_cron', 'schedule_tz',
                    'next_run_at', 'schedule_enabled', 'schedule_requested_by',
                    'schedule_authority_kind', 'schedule_authority_id')
 
@@ -53,6 +53,8 @@ def validate_schedule(task: Task, *, respecified: bool, now: datetime | None = N
         return 'set at most one of schedule_at, schedule_interval, schedule_cron'
     if task.schedule_interval is not None and task.schedule_interval < MIN_INTERVAL:
         return f'schedule_interval must be at least {MIN_INTERVAL} seconds'
+    if (getattr(task, 'schedule_tz', None) or '').strip() and schedule_zone(task) is None:
+        return 'schedule_tz is not a known time zone'
     if task.schedule_cron:
         try:
             # get_next (not bare construction) also rejects well-formed but
@@ -72,6 +74,19 @@ def validate_schedule(task: Task, *, respecified: bool, now: datetime | None = N
     return None
 
 
+def schedule_zone(task: Task):
+    """The zone a task's cron line is read in, or None for the server's own."""
+    name = (getattr(task, 'schedule_tz', None) or '').strip()
+    if not name:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(name)
+    except Exception:
+        return None
+
+
 def compute_next_run(task: Task, now: datetime | None = None) -> str | None:
     """Next occurrence as a naive-UTC string, or None when unscheduled."""
     now = now or _utcnow()
@@ -80,7 +95,7 @@ def compute_next_run(task: Task, now: datetime | None = None) -> str | None:
     if task.schedule_interval:
         return (now + timedelta(seconds=task.schedule_interval)).strftime(FMT)
     if task.schedule_cron:
-        local_tz = datetime.now().astimezone().tzinfo
+        local_tz = schedule_zone(task) or datetime.now().astimezone().tzinfo
         local_now = now.replace(tzinfo=timezone.utc).astimezone(local_tz)
         nxt = croniter(task.schedule_cron, local_now).get_next(datetime)
         return nxt.astimezone(timezone.utc).replace(tzinfo=None).strftime(FMT)
