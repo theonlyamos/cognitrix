@@ -5,7 +5,8 @@ Browser sessions only.
 
     GET    /projects                         the person's projects (?archived=true for archived ones)
     POST   /projects                         create {name, description?, instructions?, color?, agents?,
-                                             folders?, knowledge?, computer?, pc_folders?, use_account_memory?}
+                                             folders?, knowledge?, computer?, pc_folders?, use_account_memory?,
+                                             watch_prs?}
     GET    /projects/{id}                    one project with its chats and tasks
     PATCH  /projects/{id}                    change any of the fields above, pinned, archived
     DELETE /projects/{id}                    remove it (?delete_chats=true also deletes its chats)
@@ -14,6 +15,7 @@ Browser sessions only.
     GET    /projects/{id}/memories           the project's own memories
     POST   /projects/{id}/memories           add one {content}
     GET    /projects/{id}/changes            file changes across the project's chats
+    GET    /projects/{id}/pull-requests      pull requests watched from the project's chats and tasks
 """
 from __future__ import annotations
 
@@ -63,6 +65,7 @@ class ProjectBody(BaseModel):
     computer: str | None = None
     pc_folders: list[str] | None = None
     use_account_memory: bool | None = None
+    watch_prs: bool | None = None
     pinned: bool | None = None
     archived: bool | None = None
     read_instructions: bool | None = None
@@ -272,3 +275,17 @@ async def project_changes(project_id: str, ctx: AuthContext = Depends(jwt_only))
         'removed': sum(c['removed'] for c in out),
         'pending': sum(c['pending'] for c in out),
     }
+
+
+@projects_api.get('/{project_id}/pull-requests')
+async def project_pull_requests(project_id: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Pull requests watched from the project's chats and tasks, the ones
+    still watched first. Stop or remove one with /github/watches/{id}."""
+    from cognitrix.tasks import pr_watch
+
+    row = await _mine(ctx, project_id)
+    owner = _owner(ctx)
+    watches = [w for w in await pr_watch.watches_for(owner) if str(w.project_id or '') == str(row.id)]
+    return {'pull_requests': [await pr_watch.describe(w) for w in watches],
+            'watch_prs': bool(getattr(row, 'watch_prs', True)),
+            'github_connected': await pr_watch.github_connection(owner) is not None}

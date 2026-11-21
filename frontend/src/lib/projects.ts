@@ -37,6 +37,8 @@ export interface Project {
   computer: ProjectComputer;
   pc_folders: string[];
   use_account_memory: boolean;
+  /** Pull requests agents open here are watched for reviews and checks. */
+  watch_prs?: boolean;
   pinned: boolean;
   archived: boolean;
   created: string;
@@ -68,7 +70,7 @@ export interface ProjectChanges {
 
 export type ProjectInput = Partial<Pick<Project,
   'name' | 'description' | 'instructions' | 'color' | 'agents' | 'folders' | 'knowledge' | 'computer' |
-  'pc_folders' | 'use_account_memory' | 'pinned' | 'archived'>>;
+  'pc_folders' | 'use_account_memory' | 'watch_prs' | 'pinned' | 'archived'>>;
 
 export const PROJECT_COLORS = ['blue', 'green', 'amber', 'red', 'violet', 'teal', 'pink', 'slate'] as const;
 

@@ -7,6 +7,7 @@ import { Input } from '@/lib/components/ui/input';
 import { LoadingState, ErrorState } from '@/components/list-ui';
 import { ChatRowMenu } from '@/components/ChatRowMenu';
 import { ChangesPanel } from '@/components/changes/ChangesPanel';
+import WatchedPullRequests, { type PullRequestWatch } from '@/components/WatchedPullRequests';
 import { ProjectFields, useProjectOptions } from '@/components/projects/ProjectForm';
 import { timeAgo } from '@/lib/agentDraft';
 import { chatHref } from '@/lib/chatNav';
@@ -18,11 +19,12 @@ import {
 } from '@/lib/projects';
 import { cn } from '@/lib/utils';
 
-const TABS = ['chats', 'changes', 'tasks', 'memory', 'settings'] as const;
+const TABS = ['chats', 'changes', 'pulls', 'tasks', 'memory', 'settings'] as const;
 type Tab = typeof TABS[number];
 const TAB_LABEL: Record<Tab, () => string> = {
   chats: () => tr('ui.projects.tabChats'),
   changes: () => tr('ui.projects.tabChanges'),
+  pulls: () => tr('ui.projects.tabPullRequests'),
   tasks: () => tr('ui.projects.tabTasks'),
   memory: () => tr('ui.projects.tabMemory'),
   settings: () => tr('ui.projects.tabSettings'),
@@ -109,6 +111,7 @@ export default function ProjectDetail() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'chats' && <ChatsTab project={project} chats={chats} agentName={agentName} onChanged={load} onNew={startChat} />}
         {tab === 'changes' && <ChangesTab changes={changes} onRefresh={loadChanges} />}
+        {tab === 'pulls' && <PullRequestsTab projectId={project.id} />}
         {tab === 'tasks' && <TasksTab project={project} />}
         {tab === 'memory' && <MemoryTab projectId={project.id} />}
         {tab === 'settings' && (
@@ -218,6 +221,53 @@ function ChangesTab({ changes, onRefresh }: { changes: ProjectChanges | null; on
   );
 }
 
+interface ProjectPulls { pull_requests: PullRequestWatch[]; watch_prs: boolean; github_connected: boolean }
+
+/** Pull requests the project's agents opened (or were asked to watch). */
+function PullRequestsTab({ projectId }: { projectId: string }) {
+  const [data, setData] = useState<ProjectPulls | null>(null);
+  const [error, setError] = useState('');
+  const load = useCallback(async () => {
+    try {
+      const { data: body } = await api.get<ProjectPulls>(`/projects/${projectId}/pull-requests`);
+      setData(body ?? { pull_requests: [], watch_prs: true, github_connected: true });
+      setError('');
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }, [projectId]);
+  useEffect(() => { void load(); }, [load]);
+  if (error && !data) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (!data) return <LoadingState label={tr('ui.projects.loading')} />;
+  const rows = data.pull_requests ?? [];
+  const notes = (
+    <>
+      {!data.watch_prs && <p className="text-[12.5px] text-fg-dim">{tr('ui.projects.prsOff')}</p>}
+      {!data.github_connected && (
+        <p className="text-[12.5px] text-fg-dim">
+          <Link to="/settings/apps" className="underline-offset-2 hover:underline">{tr('ui.projects.connectGithub')}</Link>
+        </p>
+      )}
+    </>
+  );
+  if (rows.length === 0) {
+    return (
+      <div className="mx-auto max-w-md px-6 py-16 text-center">
+        <p className="text-[15px] font-medium">{tr('ui.projects.noPullRequests')}</p>
+        <p className="mt-1 text-[13px] text-fg-dim">{tr('ui.projects.noPullRequestsDesc')}</p>
+        <div className="mt-3 space-y-1">{notes}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="mx-auto max-w-3xl space-y-2 px-4 py-5 md:px-6">
+      <p className="text-[12.5px] text-fg-dim">{tr('ui.projects.watchPrsHint')}</p>
+      {notes}
+      <WatchedPullRequests watches={rows} onChange={() => void load()} showSwitch={false} bare />
+    </div>
+  );
+}
+
 function TasksTab({ project }: { project: Project }) {
   const tasks = project.tasks ?? [];
   return (
@@ -307,7 +357,7 @@ function SettingsTab({ project, options, onSaved, onDeleted }: {
   const initial = (): ProjectInput => ({
     name: project.name, description: project.description, instructions: project.instructions, color: project.color ?? '',
     agents: project.agents, folders: project.folders, knowledge: project.knowledge, computer: project.computer ?? '',
-    pc_folders: project.pc_folders, use_account_memory: project.use_account_memory,
+    pc_folders: project.pc_folders, use_account_memory: project.use_account_memory, watch_prs: project.watch_prs ?? true,
   });
   const [value, setValue] = useState<ProjectInput>(initial);
   const [busy, setBusy] = useState(false);

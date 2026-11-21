@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from cognitrix.api.routes.tasks import _user_key
 from cognitrix.common.security import AuthContext, get_auth_context, jwt_only
@@ -19,6 +20,21 @@ logger = logging.getLogger('cognitrix.log')
 
 github_watches_api = APIRouter(dependencies=[Depends(jwt_only)])
 github_hooks_api = APIRouter()
+
+
+class SettingsBody(BaseModel):
+    auto_watch: bool
+
+
+@github_watches_api.get('/github/watches/settings')
+async def watch_settings(ctx: AuthContext = Depends(get_auth_context)):
+    """Whether pull requests agents open are watched without being asked."""
+    return {'auto_watch': await pr_watch.auto_watch_on(str(_user_key(ctx)))}
+
+
+@github_watches_api.put('/github/watches/settings')
+async def change_watch_settings(body: SettingsBody, ctx: AuthContext = Depends(get_auth_context)):
+    return {'auto_watch': await pr_watch.set_auto_watch(str(_user_key(ctx)), body.auto_watch)}
 
 
 @github_watches_api.get('/github/watches')

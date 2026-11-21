@@ -35,6 +35,9 @@ class Project(Model):
     Empty means all of them."""
     use_account_memory: bool = True
     """Agents in the project also see the person's account-wide memories."""
+    watch_prs: bool = True
+    """Pull requests agents open here are watched for reviews, comments and
+    checks (cognitrix/tasks/pr_autowatch.py)."""
     pinned: bool = False
     archived: bool = False
     created: str = ''
@@ -59,10 +62,14 @@ class Project(Model):
                 return []
         return list(value) if isinstance(value, list | tuple) else []
 
-    @field_validator('use_account_memory', mode='before')
+    @field_validator('use_account_memory', 'watch_prs', mode='before')
     @classmethod
     def _memory_default(cls, value):
-        return True if value is None else bool(value)
+        if value is None or value == '':
+            return True
+        if isinstance(value, str):
+            return value.strip().lower() not in ('0', 'false', 'no', 'off')
+        return bool(value)
 
 
 MODELS = (Project,)

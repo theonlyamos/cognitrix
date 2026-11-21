@@ -185,6 +185,18 @@ def _tool_outcome(value: Any) -> ToolOutcome:
     return ToolOutcome.success(str(value))
 
 
+async def _watch_opened_pull_requests(tool: Any, params: dict[str, Any], outcome: ToolOutcome) -> ToolOutcome:
+    """A tool call that opened a GitHub pull request starts watching it
+    (cognitrix/tasks/pr_autowatch.py); the agent is told in the result."""
+    from cognitrix.tasks import pr_autowatch
+
+    name = str(getattr(tool, 'name', '') or '')
+    note = await pr_autowatch.after_tool(name, params, outcome.text)
+    if not note:
+        return outcome
+    return outcome.model_copy(update={'text': f'{outcome.text}\n\n{note}'})
+
+
 async def _hide_saved_secrets(outcome: ToolOutcome) -> ToolOutcome:
     """Scrub the person's saved credential values out of a tool result.
 
@@ -880,6 +892,8 @@ class AgentManager:
                         path_lock.release()
                     if server_held:
                         server_lock.release()
+                if outcome.error is None:
+                    outcome = await _watch_opened_pull_requests(tool, params, outcome)
                 results_by_index[i] = _tool_result_entry(tc_id, await _hide_saved_secrets(outcome))
                 if i in audit_info:
                     name_, args_, risk_, approved_ = audit_info[i]
