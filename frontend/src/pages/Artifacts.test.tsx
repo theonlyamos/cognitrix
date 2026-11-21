@@ -71,12 +71,16 @@ describe('Artifacts page', () => {
       // Nothing is fetched for cards that are not on screen yet.
       expect(screen.queryByTestId('page-thumbnail')).toBeNull();
       expect(apiGet).toHaveBeenCalledTimes(1);
-      act(() => intersect());
-      const frame = (await screen.findAllByTestId('page-thumbnail'))[0];
+      // Cards start watching after they are drawn, so scroll them in until one answers.
+      await waitFor(() => {
+        act(() => intersect());
+        expect(apiGet).toHaveBeenCalledWith('/artifact-pages/p1/frame');
+      }, { timeout: 5000 });
+      const frame = (await screen.findAllByTestId('page-thumbnail', undefined, { timeout: 5000 }))[0];
       expect(frame).toHaveAttribute('src', expect.stringContaining('/api/v1/artifact-frame/tok'));
       expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
       expect(apiGet).toHaveBeenCalledWith('/artifact-pages/p1/frame');
-      expect(await screen.findByTestId('file-thumbnail')).toHaveTextContent('# Notes first line');
+      expect(await screen.findByTestId('file-thumbnail', undefined, { timeout: 5000 })).toHaveTextContent('# Notes first line');
     });
   });
 
