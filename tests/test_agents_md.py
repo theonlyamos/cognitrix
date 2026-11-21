@@ -182,3 +182,37 @@ async def test_the_folder_picker_route_checks_the_folder_first(repo, tmp_path):
     assert (await folder_instructions(str(repo / 'web')))['nested'] == 1
     with pytest.raises(HTTPException):
         await folder_instructions(str(tmp_path / 'data'))  # the app's own data folder is protected
+
+
+async def test_every_nested_file_on_the_way_comes_back_parent_first(repo):
+    from cognitrix.tools.misc import Read
+
+    (repo / 'web' / 'app' / 'deep').mkdir()
+    (repo / 'web' / 'app' / 'deep' / 'x.ts').write_text('x\n', encoding='utf-8')
+    (repo / 'web' / 'app' / 'deep' / 'AGENTS.md').write_text('Deep rule.', encoding='utf-8')
+    token = _turn([F.Folder(str(repo), F.WRITE, 'repo', True)], session='chat-3')
+    try:
+        out = (await Read.run(file_path=str(repo / 'web' / 'app' / 'deep' / 'x.ts'))).content
+        assert out.index('Web rule') < out.index('App rule') < out.index('Deep rule')
+        assert 'Root rule' not in out  # the working folder's own: in the prompt
+    finally:
+        reset_execution_context(token)
+
+
+def test_a_linked_instruction_file_cannot_point_outside(repo, tmp_path):
+    import os
+
+    if os.name == 'nt':
+        pytest.skip('symlinks need admin rights on Windows')
+    secret = tmp_path / 'secret.txt'
+    secret.write_text('server secret', encoding='utf-8')
+    (repo / 'web' / 'AGENTS.md').unlink()
+    (repo / 'web' / 'AGENTS.md').symlink_to(secret)
+    block = A.instructions_block([F.Folder(str(repo / 'web'), F.WRITE, 'web', True)])
+    assert 'server secret' not in block
+    # A link inside the repository is fine.
+    (repo / 'docs').mkdir()
+    (repo / 'docs' / 'rules.md').write_text('Linked rule.', encoding='utf-8')
+    (repo / 'web' / 'AGENTS.md').unlink()
+    (repo / 'web' / 'AGENTS.md').symlink_to(repo / 'docs' / 'rules.md')
+    assert A.file_in(repo / 'web').text == 'Linked rule.'

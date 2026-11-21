@@ -86,10 +86,29 @@ def _read(path: Path) -> str | None:
     return text
 
 
+def _safe_target(path: Path, directory: Path) -> bool:
+    """A file (or the link it is) stays inside its folder's repository, or the
+    folder itself, and out of protected places: a link can't pull another file
+    on the machine into the prompt."""
+    from cognitrix.common.folders import is_blocked
+
+    try:
+        target = Path(os.path.realpath(os.fspath(path)))
+        real_dir = Path(os.path.realpath(os.fspath(directory)))
+    except OSError:
+        return False
+    if target.parent == real_dir and not path.is_symlink():
+        return not is_blocked(target)
+    bound = repo_root(real_dir) or real_dir
+    return _inside(target, bound) and not is_blocked(target)
+
+
 def file_in(directory: Path) -> InstructionFile | None:
     """The instruction file of one folder (the first of NAMES), or None."""
     for name in NAMES:
         path = directory / name
+        if not path.is_file() or not _safe_target(path, directory):
+            continue
         text = _read(path)
         if text:
             return InstructionFile(path, text)
@@ -296,15 +315,16 @@ def note_for_path(path: Path) -> str:
             return ''
         root = _norm(folder.root)
         directory = _norm(Path(os.path.abspath(os.fspath(path))).parent)
-        found: InstructionFile | None = None
+        # Every file between the working folder and the file applies, the
+        # closest last; the working folder's own is in the prompt already.
+        found: list[InstructionFile] = []
         while directory != root and root in directory.parents:
-            found = file_in(directory)
-            if found is not None:
-                break
+            hit = file_in(directory)
+            if hit is not None and _norm(hit.path) != _norm(path):
+                found.append(hit)
             directory = directory.parent
-        if found is None or _norm(found.path) == _norm(path):
-            return ''
-        mark = (str(_norm(found.path)), os.stat(found.path).st_mtime)
+        found.reverse()
+        marks = [(str(_norm(f.path)), os.stat(f.path).st_mtime) for f in found]
     except Exception:
         logger.debug('AGENTS.md lookup failed', exc_info=True)
         return ''
@@ -313,14 +333,20 @@ def note_for_path(path: Path) -> str:
         _shown.move_to_end(key)
         while len(_shown) > MAX_SESSIONS:
             _shown.popitem(last=False)
-        if mark in shown:
-            return ''
-        shown.add(mark)
-    text = found.text
-    if len(text.encode('utf-8')) > MAX_BYTES:
-        text = text.encode('utf-8')[:MAX_BYTES].decode('utf-8', errors='ignore') + '\n[Cut short.]'
-    return (f'\n\n[Instructions from {found.path}. They apply to files in {found.directory} '
-            f'and win over the ones from parent folders.]\n{text}')
+        new = [f for f, m in zip(found, marks, strict=True) if m not in shown]
+        shown.update(marks)
+    out = ''
+    budget = MAX_BYTES
+    for f in new:
+        text = f.text
+        size = len(text.encode('utf-8'))
+        if size > budget:
+            text = text.encode('utf-8')[:max(budget, 0)].decode('utf-8', errors='ignore') + \
+                f'\n[Cut short. Read {f.path} for the rest.]'
+        budget -= size
+        out += (f'\n\n[Instructions from {f.path}. They apply to files in {f.directory}; '
+                'deeper files win over the ones above them.]\n' + text)
+    return out
 
 
 # ---------------------------------------------------------------- for the folder picker
