@@ -165,6 +165,9 @@ def _needs_person(risk: RiskAssessment) -> bool:
     categories = set(risk.categories or [])
     if PERSON_ONLY_CATEGORY in categories:
         return True
+    # Only the person can take over the computer, so only they can answer.
+    if 'person_takeover' in categories:
+        return True
     # The full shell only runs after a person approved that exact call, so
     # a reviewer "allow" could never let it run.
     if 'shell' in categories and str(risk.details or '').startswith('Runs in the full shell'):

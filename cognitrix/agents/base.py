@@ -714,8 +714,11 @@ class AgentManager:
                 full_shell = needs_person((assigned_tool, tool), args)
                 if full_shell and decision.action == 'run':
                     decision = ToolDecision('ask', risk, decision.source, decision.reason)
-                # So does anything that takes over the person's screen.
-                if decision.action == 'run' and 'screen_takeover' in (decision.risk.categories or []):
+                # So does anything that takes over the person's screen, and a
+                # request for the person to take over the agent's computer
+                # (they press Take over or Skip; "always allow" can't do it).
+                if decision.action == 'run' and {'screen_takeover', 'person_takeover'} & set(
+                        decision.risk.categories or []):
                     decision = ToolDecision('ask', decision.risk, decision.source, decision.reason)
 
                 if decision.action == 'ask':
@@ -749,6 +752,10 @@ class AgentManager:
                             if getattr(approval, 'reviewed', False) and approval.error
                             else f"user denied approval for {tool.name}"
                         )
+                        if 'person_takeover' in (risk.categories or []) and denial_code == 'approval_denied':
+                            reason = ("the person skipped taking over your computer"
+                                      + (f" ({approval.error})" if approval.error else '')
+                                      + ". Don't ask again; tell them in the chat what you still need")
                         audit.record_tool(
                             self.agent, assigned_tool.name, args, 'denied', risk=risk.risk_level.value,
                             note=('refused by the action reviewer' if getattr(approval, 'reviewed', False)

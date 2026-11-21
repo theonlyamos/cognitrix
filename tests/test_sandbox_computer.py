@@ -229,6 +229,70 @@ async def test_ask_to_take_over_is_sandbox_only(monkeypatch):
     assert 'only works on the sandboxed computer' in (await tools.ask_to_take_over.run(reason='x')).content
 
 
+async def test_ask_to_take_over_waits_for_take_over_and_hand_back(monkeypatch):
+    from cognitrix.tools import computer as tools
+
+    states = iter([None, None, 'the person', 'the person', None])
+    assert await tools.wait_for_hand_back(lambda: next(states), wait_s=5, poll_s=0) == 'handed_back'
+    # Nobody took over in time / never handed back.
+    assert await tools.wait_for_hand_back(lambda: None, wait_s=0.05, poll_s=0.01) == 'not_taken'
+    assert await tools.wait_for_hand_back(lambda: 'the person', wait_s=0.05, poll_s=0.01) == 'still_held'
+
+    # The tool itself: checks the agent's own desktop until it is handed back.
+    class Box:
+        def __init__(self):
+            self.answers = iter([[{'name': 'a1', 'held_by': 'the person'}, {'name': 'b2', 'held_by': None}],
+                                 [{'name': 'a1', 'held_by': None}]])
+
+        def desktops(self):
+            return next(self.answers)
+
+    driver = type('D', (), {'box': Box(), 'desktop': 'a1'})()
+    monkeypatch.setenv('COGNITRIX_COMPUTER_SANDBOX', 'docker')
+    monkeypatch.setattr(tools, '_driver', lambda actor, computer: driver)
+    monkeypatch.setattr(tools, '_TAKEOVER_POLL_S', 0)
+    out = (await tools.ask_to_take_over.run(reason='Sign in')).content
+    assert 'handed the computer back' in out
+
+
+def test_take_over_request_always_asks_a_person(monkeypatch):
+    from cognitrix.safety import action_reviewer
+
+    risk = DestructiveOpDetector().analyze('ask_to_take_over', {'reason': 'Sign in'})
+    # No reviewer answers it for the person, even in a task run.
+    monkeypatch.setattr(action_reviewer, 'reviewer_mode', lambda: 'always')
+    assert not action_reviewer.should_review(risk, 'task')
+
+
+async def test_take_over_card_waits_longer_and_names_the_desktop(monkeypatch):
+    from cognitrix.safety import approval_gate as gate_mod
+    from cognitrix.safety.approval_gate import ApprovalGate, ToolCall, web_turn_ctx
+
+    sent = []
+    seen = {}
+
+    async def emit(event):
+        sent.append(event)
+
+    async def fake_wait_for(fut, timeout):
+        seen['timeout'] = timeout
+        fut.cancel()
+        raise TimeoutError
+
+    monkeypatch.setattr(gate_mod.asyncio, 'wait_for', fake_wait_for)
+    risk = DestructiveOpDetector().analyze('ask_to_take_over', {'reason': 'Sign in to the bank'})
+    token = web_turn_ctx.set({'emit': emit, 'session_id': 's1', 'user_key': 'u'})
+    try:
+        out = await ApprovalGate().check_approval(
+            ToolCall(tool_name='ask_to_take_over', params={'reason': 'Sign in to the bank'}),
+            risk, interface='web', scope='A1')
+    finally:
+        web_turn_ctx.reset(token)
+    assert not out.approved and seen['timeout'] >= 30 * 60
+    card = next(e for e in sent if e.get('type') == 'approval_request')
+    assert card['takeover'] == {'desktop': 'a1', 'reason': 'Sign in to the bank'} and card['always_ask']
+
+
 # -- live screen API ------------------------------------------------------
 
 class _ApiBox:

@@ -4285,6 +4285,12 @@ const uiEn = {
   "ui.whatsNew.versionVersion_bd01": "VERSION {version}",
   "ui.whatsNew.whatSNew": "WHAT'S NEW",
   "ui.whatsNew.whatSNewInCognitrix": "What's new in Cognitrix",
+  "ui.takeover.tag": "Your turn",
+  "ui.takeover.title": "{name} needs you to take over its computer",
+  "ui.takeover.anAgent": "The agent",
+  "ui.takeover.hint": "Press Take over, do it on the screen, then press Hand back. The agent waits until you do. Skip if you won't do it.",
+  "ui.takeover.takeOver": "Take over",
+  "ui.takeover.skip": "Skip",
 } as const;
 
 export default uiEn;

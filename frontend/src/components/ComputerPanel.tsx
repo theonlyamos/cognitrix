@@ -17,9 +17,13 @@ interface PanelAgent {
 /** The agents' sandboxed computer: one desktop per agent, watched live, with
  *  Take over / Hand back. While a person has control the agent waits and
  *  sees nothing of what they do. */
-export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
+export function ComputerPanel({ agents, focusAgentId, takeOverRequest, onTakeOverStarted, onClose, onBack }: {
   agents: PanelAgent[];
   focusAgentId?: string | null;
+  /** An agent asked you to take over (Take over on its card): open this desktop with you in control. */
+  takeOverRequest?: { desktop: string; at: number } | null;
+  /** Called once that take over has been started, so it isn't repeated. */
+  onTakeOverStarted?: () => void;
   onClose: () => void;
   /** Beside a chat with its side panel open: go back to that panel. */
   onBack?: () => void;
@@ -49,6 +53,11 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
     const pick = desktops.find((d) => d.name === focusName) ?? desktops[0];
     if (pick) setSelected(pick.name);
   }, [desktops, focusName, selected]);
+  // Show the desktop an agent asked you to take over.
+  const takeOverName = takeOverRequest?.desktop ?? null;
+  useEffect(() => {
+    if (takeOverName && desktops.some((d) => d.name === takeOverName)) setSelected(takeOverName);
+  }, [desktops, takeOverName]);
 
   const label = (d: SandboxDesktop) => agents.find((a) => desktopName(a.id) === d.name)?.name ?? (d.name === 'main' ? 'Shared' : d.name);
   const agentIdOf = (d: SandboxDesktop) => agents.find((a) => desktopName(a.id) === d.name)?.id ?? null;
@@ -173,6 +182,8 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
             agentId={agentIdOf(current)}
             onChange={load}
             onControl={onControl}
+            takeOverNow={takeOverName === current.name ? takeOverRequest?.at ?? null : null}
+            onTakeOverStarted={onTakeOverStarted}
             view={fullscreen && !isPhone() ? 'fullscreen' : expanded ? 'expanded' : 'docked'}
             leading={oneBar && (
               <>
@@ -274,11 +285,14 @@ function DesktopSelect({ desktops, selected, label, onSelect, className }: {
 
 type View = 'docked' | 'expanded' | 'fullscreen';
 
-function DesktopScreen({ desktop, agentName, agentId, onChange, onControl, view, leading, trailing }: {
+function DesktopScreen({ desktop, agentName, agentId, onChange, onControl, takeOverNow, onTakeOverStarted, view, leading, trailing }: {
   desktop: SandboxDesktop;
   agentName: string;
   agentId?: string | null;
   onChange: () => void;
+  /** Set when the agent's request asks you to take over this desktop now. */
+  takeOverNow?: number | null;
+  onTakeOverStarted?: () => void;
   /** Told whether you have control, so the panel leaves Esc to the desktop. */
   onControl?: (held: boolean) => void;
   view: View;
@@ -341,6 +355,15 @@ function DesktopScreen({ desktop, agentName, agentId, onChange, onControl, view,
   const heldByYou = control !== null;
   const heldElsewhere = !heldByYou && !!desktop.held_by;
 
+  // Take over on the agent's request, once.
+  const takeRef = useRef<(() => Promise<void>) | null>(null);
+  useEffect(() => {
+    if (!takeOverNow) return;
+    onTakeOverStarted?.();
+    if (control === null && !teaching) void takeRef.current?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [takeOverNow]);
+
   async function take() {
     setBusy(true);
     setError('');
@@ -353,6 +376,8 @@ function DesktopScreen({ desktop, agentName, agentId, onChange, onControl, view,
       setBusy(false);
     }
   }
+
+  takeRef.current = take;
 
   async function teach() {
     setBusy(true);

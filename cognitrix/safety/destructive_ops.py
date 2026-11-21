@@ -420,8 +420,8 @@ class DestructiveOpDetector:
             reason = str(params.get('reason') or '').strip()[:200] or 'a step only you should do'
             return RiskAssessment(
                 RiskLevel.MEDIUM, ['person_takeover'],
-                f"Asks you to take over its computer: {reason}. Open the agent's computer, press Take over, "
-                'do it, then allow this to hand the computer back')
+                f"Needs you to take over its computer: {reason}. Press Take over, do it on the screen, then "
+                'press Hand back; the agent waits until you do')
         if name in _SANDBOX_WINDOW_TOOLS and _sandboxed_computer() and not _on_persons_computer(params):
             # The agents' own computer in a container, not the person's screen.
             return RiskAssessment(RiskLevel.LOW, ['sandbox_computer'],
