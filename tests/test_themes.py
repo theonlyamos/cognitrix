@@ -457,6 +457,14 @@ async def test_themes_agents_make_always_get_artwork(db):
         broken_theme = next(t for t in themes.project(await themes.get_settings(uid))['themes'] if t['id'] == 'broken')
         assert broken_theme['artwork'] == {'id': 'skyline'}
 
+        # A new choice for a theme replaces artwork picked for it before (Undo brings that back).
+        await _tool(action='artwork', artwork='blueprint', theme='hills')
+        swapped = _text(await _tool(action='create', name='Hills', light_background='#fafafa',
+                                    light_text='#111111', light_accent='#2a7', artwork='none'))
+        assert json.loads(swapped.split('Previous: ', 1)[1])['artwork'] == {'hills': {'id': 'blueprint'}}
+        row = await themes.get_settings(uid)
+        assert themes.theme_artwork('hills', row) == {'id': 'none'}
+
         # Asked for no artwork: none, and no note.
         plain = _text(await _tool(action='create', name='Plain', dark_background='#000000',
                                   dark_text='#ffffff', dark_accent='#888888', artwork='none'))

@@ -295,6 +295,7 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
                     art = {'id': found}
                 elif saved_art:
                     art = {'svg': saved_art['svg'], 'name': saved_art['name']}
+            chosen_art = art is not None  # the agent picked this drawing (not kept or a fallback)
             if art is None and replaced and replaced.get('artwork') and not note:
                 art = replaced['artwork']  # changing a theme's colours keeps its drawing
             if art is None:
@@ -307,6 +308,12 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
                 art = {**art, 'strength': strength}
             raw['artwork'] = art
             saved, _ = await themes.save_theme(user_id, raw, theme_id=existing)
+            # Artwork chosen for this theme earlier (action "artwork", Settings) would hide the new
+            # choice, so it goes; Undo puts it back.
+            previous_art = None
+            if chosen_art and before['artwork'].get(saved['id']):
+                previous_art = {saved['id']: before['artwork'][saved['id']]}
+                await themes.set_artwork(user_id, saved['id'], None)
             modes = tuple(m for m in ('light', 'dark') if saved.get(m))
             if mode and mode not in themes.MODES:
                 return ToolOutcome.failure('bad_mode', 'mode must be "light", "dark" or "system".')
@@ -318,7 +325,7 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
                 dark=saved['id'] if 'dark' in modes else None,
             )
             return _changed(saved['name'], before, after, replaced=replaced,
-                            created=None if replaced else saved['id'], note=note)
+                            created=None if replaced else saved['id'], artwork=previous_art, note=note)
     except themes.ThemeError as exc:
         return ToolOutcome.failure('bad_theme', str(exc))
     return ToolOutcome.failure('bad_action', 'action must be "list", "apply", "mode", "create" or "artwork".')
