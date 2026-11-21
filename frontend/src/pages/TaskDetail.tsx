@@ -5,9 +5,10 @@ import { useResource } from '@/hooks/useResource';
 import { usePolling } from '@/hooks/usePolling';
 import { useTaskRunEvents } from '@/hooks/useTaskRunEvents';
 import { Button } from '@/lib/components/ui/button';
-import { LoadingState, Spinner } from '@/components/list-ui';
+import { LoadingState, Spinner, StatusPill, Trail } from '@/components/list-ui';
+import { money, statusLabel, tookWords } from '@/lib/plain';
 import { MobileSheet } from '@/components/MobileSheet';
-import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
+import { DesktopMoreMenu, MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
 import { SelectionRow } from '@/components/SelectionRow';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { TranscriptView } from '@/components/TranscriptView';
@@ -150,14 +151,6 @@ interface LegacySession {
   message_count?: number;
 }
 
-const STATUS: Record<string, string> = {
-  completed: 'border-ok/40 text-ok',
-  in_progress: 'border-accent/40 text-accent-ink',
-  failed: 'border-danger/40 text-danger-ink',
-  cancelled: 'border-danger/30 text-fg-dim',
-  pending: 'border-line text-fg-dim',
-};
-
 const RUN_BADGE: Record<string, string> = {
   queued: 'text-accent-ink',
   running: 'text-accent-ink',
@@ -234,6 +227,17 @@ const isInternalResultArtifact = (
   && runId
   && value === taskArtifactPath(taskId, runId, artifactId)
 );
+
+/** "Took 2 min · about $0.04": what a finished run cost, in a line. */
+const runSummary = (run: TaskRunRecord): string => {
+  const parts: string[] = [];
+  const started = parseSessionDate(run.started_at);
+  const ended = parseSessionDate(run.completed_at);
+  if (started && ended) parts.push(tr('ui.taskDetail.tookTime', { time: tookWords((ended.getTime() - started.getTime()) / 1000) }));
+  const cost = money(run.usage?.cost_usd);
+  if (cost) parts.push(tr('ui.taskDetail.aboutCost', { cost }));
+  return parts.join(' · ');
+};
 
 const formatUsage = (run: TaskRunRecord): string[] => {
   const usage = run.usage || {};
@@ -368,6 +372,9 @@ export default function TaskDetail() {
   const { taskId } = useParams();
   const [searchParams] = useSearchParams();
   const [showAutomation, setShowAutomation] = useState(() => searchParams.get('automation') === '1');
+  // Steps and the token counts are how the answer was reached: folded until asked for.
+  const [stepsOpen, setStepsOpen] = useState<boolean | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
   const { data: task, loading: taskLoading, refetch } = useResource<TaskData>(taskId ? `/tasks/${taskId}` : null);
   const { data: runs, loading: runsLoading, error: runsError, refetch: refetchRuns } = useResource<TaskRunRecord[]>(
     taskId ? `/tasks/${taskId}/runs` : null,
@@ -867,6 +874,9 @@ export default function TaskDetail() {
       : [];
   const transcriptEntries = [...canonicalEntries, ...liveEntries];
   const selectedRunUsage = selectedRun ? formatUsage(selectedRun) : [];
+  const selectedRunSummary = selectedRun ? runSummary(selectedRun) : '';
+  const stepsShown = stepsOpen ?? (selectedRunIsLive || selectedRun?.status !== 'completed' || !hasSynthesis);
+  const manyRuns = visibleRuns.length + legacy.length > 1;
   const selectedRunFailureLabel = selectedRun?.error_code
     ? FAILURE_LABEL[selectedRun.error_code]
       || (selectedRun.status === 'cancelled' ? tr('ui.taskDetail.failure.cancelled') : tr('ui.taskDetail.failure.unknown'))
@@ -1014,10 +1024,10 @@ export default function TaskDetail() {
                   {ACTIVE_RUN.has(r.status) ? (
                     <span className="flex items-center gap-1.5 font-mono text-[10.5px] text-accent-ink">
                       <span className="think-bars"><i /><i /><i /></span>
-                      {r.status}
+                      {statusLabel(r.status)}
                     </span>
                   ) : (
-                    <span className={cn('font-mono text-[10.5px]', RUN_BADGE[r.status] || 'text-fg-dim')}>{r.status}</span>
+                    <span className={cn('text-[11.5px]', RUN_BADGE[r.status] || 'text-fg-dim')}>{statusLabel(r.status)}</span>
                   )}
                 </div>
                 {r.trigger_kind && TRIGGER_LABEL[r.trigger_kind] && (
@@ -1099,7 +1109,7 @@ export default function TaskDetail() {
       </MobileSheet>
 
       {/* Runs sidebar */}
-      <aside className="hidden w-60 flex-none flex-col border-r border-line bg-panel md:flex">
+      <aside className={cn('hidden w-60 flex-none flex-col border-r border-line bg-panel', manyRuns && 'md:flex')}>
         {runsPanel()}
       </aside>
 
@@ -1115,14 +1125,11 @@ export default function TaskDetail() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
           <div className="min-w-0 overflow-hidden">
-            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">{tr('ui.taskDetail.task_5cc9')}</p>
+            <div className="hidden md:block"><Trail steps={[{ label: tr('ui.taskDetail.tasks'), to: '/tasks' }]} /></div>
             <h1 className="truncate text-[15px] font-semibold tracking-tight">{task?.title || tr('ui.taskDetail.task')}</h1>
           </div>
           </div>
-          <span className={cn('sr-only rounded border px-2 py-0.5 font-mono text-[10.5px] md:not-sr-only', STATUS[status] || STATUS.pending)}>{status}</span>
-          {plan.length > 0 && (
-            <span className="sr-only font-mono text-[10.5px] text-fg-dim tnum md:not-sr-only">{tr('ui.taskDetail.stepsStepsdoneLength', { stepsDone, length: plan.length })}</span>
-          )}
+          <span className="sr-only md:not-sr-only"><StatusPill status={isLive ? 'running' : status} /></span>
           {task?.wake_pending && task.wake_at && (
             <span className="sr-only font-mono text-[10.5px] text-fg-dim md:not-sr-only" title={task.wake_reason || tr('ui.taskDetail.nextCheck')}>
               {tr('ui.taskDetail.checkNextrunlocal', { nextRunLocal: nextRunLocal(task.wake_at) })}
@@ -1156,26 +1163,12 @@ export default function TaskDetail() {
                 <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16v11H7l-3 3V5z" /></svg>
               </Button>
             )}
-            {hasSchedule && (
-              <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={toggleSchedule} disabled={togglingSchedule}>
-                {task?.schedule_enabled ? tr('ui.taskDetail.pauseSchedule') : tr('ui.taskDetail.resumeSchedule')}
-              </Button>
-            )}
-            <Button
-              variant={showAutomation ? 'subtle' : 'outline'}
-              size="sm"
-              className="hidden md:inline-flex"
-              aria-pressed={showAutomation}
-              onClick={() => setShowAutomation((v) => !v)}
-            >
-              {tr('ui.taskDetail.notesTriggers')}
-            </Button>
             <Button asChild variant="outline" size="sm" className="hidden md:inline-flex">
               <Link to={`/tasks/${taskId}/edit`}>{tr('ui.taskDetail.edit')}</Link>
             </Button>
             {isLive ? (
-              <Button variant="ghost" size="sm" onClick={cancel} disabled={cancelActionDisabled} className="hidden hover:text-danger-ink md:inline-flex">
-                {activeRun?.status === 'cancelling' || cancelling ? cancelActionLabel : tr('ui.taskDetail.cancel')}
+              <Button variant="outline" size="sm" onClick={cancel} disabled={cancelActionDisabled} className="hidden text-danger-ink md:inline-flex">
+                {activeRun?.status === 'cancelling' || cancelling ? cancelActionLabel : tr('ui.taskDetail.stopRun')}
               </Button>
             ) : canResume ? (
               <div className="hidden md:contents">
@@ -1194,7 +1187,7 @@ export default function TaskDetail() {
                 variant="ghost"
                 size="icon"
                 className="md:hidden hover:text-danger-ink"
-                aria-label={activeRun?.status === 'cancelling' || cancelling ? cancelActionLabel : tr('ui.taskDetail.cancelTask')}
+                aria-label={activeRun?.status === 'cancelling' || cancelling ? cancelActionLabel : tr('ui.taskDetail.stopRun')}
                 onClick={cancel}
                 disabled={cancelActionDisabled}
               >
@@ -1209,6 +1202,7 @@ export default function TaskDetail() {
                 <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 5l11 7-11 7V5z" /></svg>
               </Button>
             )}
+            <DesktopMoreMenu actions={mobileActions.filter((action) => action.key === 'schedule')} />
             <MobileHeaderActions id="task-actions" actions={mobileActions} />
             {actionStatus && <span role="status" className="sr-only">{actionStatus}</span>}
           </div>
@@ -1218,13 +1212,32 @@ export default function TaskDetail() {
           <p role="alert" className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
         )}
 
-        {taskId && <TaskArtifacts taskId={taskId} refreshKey={`${task?.status ?? ""}:${(runs || []).map((r) => `${r.id}:${r.status}`).join(",")}`} />}
+        <div role="tablist" aria-label={tr('ui.taskDetail.taskViews')} className="flex flex-none gap-5 border-b border-line px-4 md:px-6">
+          {([[false, tr('ui.taskDetail.resultTab')], [true, tr('ui.taskDetail.settingsTab')]] as const).map(([on, label]) => (
+            <button
+              key={String(on)}
+              type="button"
+              role="tab"
+              aria-selected={showAutomation === on}
+              onClick={() => setShowAutomation(on)}
+              className={cn(
+                '-mb-px min-h-11 border-b-2 text-[13.5px] transition-colors md:min-h-0 md:py-2',
+                showAutomation === on ? 'border-accent font-medium text-fg' : 'border-transparent text-fg-dim hover:text-fg',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
         {showAutomation && taskId && (
-          <div className="max-h-[55vh] flex-none overflow-y-auto">
+          <div className="flex-1 overflow-y-auto">
             <AutomationPanel taskId={taskId} task={task} onChanged={() => refetch({ silent: true })} />
           </div>
         )}
+
+        <div className={cn('min-h-0 flex-1 flex-col', showAutomation ? 'hidden' : 'flex')}>
+        {taskId && <TaskArtifacts taskId={taskId} refreshKey={`${task?.status ?? ""}:${(runs || []).map((r) => `${r.id}:${r.status}`).join(",")}`} />}
 
         {selectedRun && (
           <button
@@ -1245,7 +1258,21 @@ export default function TaskDetail() {
         )}
 
         {/* Steps panel for the selected run */}
-        {selectedRun && plan.length > 0 && runStepSelectors()}
+        {selectedRun && plan.length > 0 && (
+          <>
+            <button
+              type="button"
+              aria-expanded={stepsShown}
+              onClick={() => setStepsOpen(!stepsShown)}
+              className="hidden flex-none items-center gap-2 border-b border-line px-6 py-2 text-left text-[13px] text-fg-dim transition-colors hover:text-fg md:flex"
+            >
+              <span aria-hidden className={cn('transition-transform', stepsShown && 'rotate-90')}>▸</span>
+              {selectedRunIsLive ? tr('ui.taskDetail.howItIsGoing') : tr('ui.taskDetail.howItGotThere')}
+              <span className="tnum">{tr('ui.taskDetail.stepsOf', { stepsDone, length: plan.length })}</span>
+            </button>
+            {stepsShown && runStepSelectors()}
+          </>
+        )}
 
         {(selectedRun?.error || selectedRunFailureLabel) && (
           <div role="alert" className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
@@ -1258,9 +1285,15 @@ export default function TaskDetail() {
           <TaskApprovals taskId={taskId} runId={selectedRun.id} live={selectedRunIsLive} />
         )}
 
-        {selectedRunUsage.length > 0 && (
-          <div className="mx-6 mt-2 hidden flex-wrap gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim md:flex" aria-label={tr('ui.taskDetail.runUsage')}>
-            {selectedRunUsage.map((item) => <span key={item}>{item}</span>)}
+        {selectedRun && (selectedRunSummary || selectedRunUsage.length > 0) && (
+          <div className="mx-6 mt-2 hidden flex-wrap items-baseline gap-x-3 gap-y-1 text-[12.5px] text-fg-dim md:flex" aria-label={tr('ui.taskDetail.runUsage')}>
+            {selectedRunSummary && <span>{selectedRunSummary}</span>}
+            {selectedRunUsage.length > 0 && (
+              <button type="button" aria-expanded={usageOpen} onClick={() => setUsageOpen((v) => !v)} className="underline-offset-2 hover:text-fg hover:underline">
+                {usageOpen ? tr('ui.taskDetail.hideDetails') : tr('ui.taskDetail.details')}
+              </button>
+            )}
+            {usageOpen && selectedRunUsage.map((item) => <span key={item} className="tnum">{item}</span>)}
           </div>
         )}
 
@@ -1374,6 +1407,7 @@ export default function TaskDetail() {
               </div>
             )
           )}
+        </div>
         </div>
       </div>
     </div>

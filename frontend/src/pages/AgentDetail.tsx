@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils';
 import {
   TABS,
   tabsFor,
+  groupsFor,
+  partLabel,
   draftFrom,
   draftProblem,
   handleFor,
@@ -32,6 +34,7 @@ import ConnectionsTab from '@/components/agent/ConnectionsTab';
 import TasksTab from '@/components/agent/TasksTab';
 import TeamsTab from '@/components/agent/TeamsTab';
 import SharingTab from '@/components/agent/SharingTab';
+import { modelName } from '@/lib/plain';
 import { tr } from '@/lib/i18n';
 
 const TAB_VIEWS: Record<TabId, (props: TabProps) => JSX.Element> = {
@@ -92,13 +95,22 @@ export default function AgentDetail() {
   // On narrow screens the tab row scrolls; keep the open tab in view.
   const ready = draft !== null;
   useEffect(() => {
-    if (ready) tabRefs.current[tabParam || 'overview']?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    if (!ready) return;
+    const section = tabParam || 'overview';
+    const button = Object.entries(tabRefs.current).find(([id]) => id === section)?.[1]
+      ?? document.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
+    button?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    // A link to a section further down its tab lands on that section.
+    document.getElementById(`agent-part-${section}`)?.scrollIntoView?.({ block: 'start' });
   }, [tabParam, ready]);
 
   if (tabParam === 'edit') return <Navigate to={`/agents/${agentId}/general`} replace />;
   const role = agent?.my_role || 'owner';
-  const tabs = tabsFor(role);
-  const tab: TabId = isTab(tabParam) && tabs.some((t) => t.id === tabParam) ? tabParam : 'overview';
+  const tabs = groupsFor(role);
+  // The address may name any section; the tab is the group that holds it.
+  const part: TabId = isTab(tabParam) && tabsFor(role).some((t) => t.id === tabParam) ? tabParam : 'overview';
+  const group = tabs.find((t) => t.parts.includes(part)) ?? tabs[0];
+  const tab: TabId = group.id;
   const goTo = (next: TabId) => navigate(next === 'overview' ? `/agents/${agentId}` : `/agents/${agentId}/${next}`);
 
   const save = async () => {
@@ -171,7 +183,6 @@ export default function AgentDetail() {
     ...(role === 'owner' ? [{ key: 'delete', label: tr('ui.agentDetail.deleteAgent'), destructive: true, onSelect: remove }] : []),
   ];
   const running = overview?.stats.running_chats || 0;
-  const View = TAB_VIEWS[tab];
   const props: TabProps = {
     agent, draft, update, overview: overview || null, overviewError,
     refreshOverview: () => refetchOverview({ silent: true }), options: options || null, catalog: catalog || [], goTo,
@@ -206,7 +217,7 @@ export default function AgentDetail() {
               <div className="mt-0.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[13px] text-fg-dim">
                 <span className="font-mono text-[12px]">{handleFor(agent.name)}</span>
                 <span>
-                  {PROVIDER_LABELS[agent.llm?.provider || ''] || agent.llm?.provider || '—'} · <span className="font-mono text-[12px]">{agent.llm?.model || '—'}</span>
+                  {PROVIDER_LABELS[agent.llm?.provider || ''] || agent.llm?.provider || '—'} · <span title={agent.llm?.model || undefined}>{agent.llm?.model ? modelName(agent.llm.model) : '—'}</span>
                 </span>
                 {running > 0 && (
                   <span className="inline-flex items-center gap-1.5 text-ok">
@@ -250,7 +261,15 @@ export default function AgentDetail() {
           </div>
 
           <div id="agent-tab-panel" role="tabpanel" aria-labelledby={`agent-tab-${tab}`} className="mt-5 md:mt-6">
-            <View {...props} />
+            {group.parts.map((id, index) => {
+              const View = TAB_VIEWS[id];
+              return (
+                <section key={id} id={`agent-part-${id}`} className={cn(index > 0 && 'mt-10 border-t border-line pt-7')}>
+                  {group.parts.length > 1 && <h2 className="mb-4 text-[16px] font-semibold tracking-tight">{partLabel(id)}</h2>}
+                  <View {...props} />
+                </section>
+              );
+            })}
           </div>
         </div>
       </div>
