@@ -51,6 +51,7 @@ import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 import { setViewingChat } from '@/lib/chatPresence';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
 import { useIsPhone } from '@/hooks/useIsPhone';
+import { ACCEPT_ATTR, DOC_EXT, MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES, type Attachment } from '@/lib/chatAttachments';
 import { tr, dateLocale } from '@/lib/i18n';
 import ComputerChip from '@/components/ComputerChip';
 import { PcScreenPanel } from '@/components/PcScreen';
@@ -106,26 +107,8 @@ const isWideScreen = () => typeof window === 'undefined' || !window.matchMedia |
 const STOP_RECONCILE_DELAY_MS = 4_000;
 
 // ── Attachments ──
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
-const MAX_FILES = 20;
 /** Id prefix for messages held on the page until a new chat has its id. */
 const HELD_PREFIX = 'held-';
-
-// Accepted attachments: images + common document types. Keep DOC_EXT and
-// ACCEPT_ATTR in sync — `accept` filters the file picker; addFiles re-checks so
-// drag-drop/paste can't slip other types in.
-const DOC_EXT = /\.(pdf|txt|md|markdown|csv|tsv|docx?|xlsx?|pptx?|rtf|odt|ods|odp|json|log)$/i;
-const ACCEPT_ATTR = 'image/*,.pdf,.txt,.md,.markdown,.csv,.tsv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.rtf,.odt,.ods,.odp,.json,.log';
-
-interface Attachment {
-  id: string;
-  kind: 'image' | 'file';
-  name: string;
-  mime: string;
-  file: File;
-  previewUrl?: string;
-}
 
 type EditSource =
   | { type: 'artifact'; artifact: ToolArtifact }

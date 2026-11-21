@@ -4039,6 +4039,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.teamChat.askEveryone": "Preguntar a todos",
   "ui.teamChat.askName": "Preguntar a {name}",
   "ui.teamChat.askedBy": "Preguntado por",
+  "ui.teamChat.attachPicturesOrDocuments": "Adjuntar imágenes o documentos",
   "ui.teamChat.chattingWithTeam": "Chateando con el equipo {name}. Abrir el equipo",
   "ui.teamChat.couldNotLoadThisTeam": "No se pudo cargar este equipo.",
   "ui.teamChat.couldNotOpenThisChat": "No se pudo abrir este chat.",

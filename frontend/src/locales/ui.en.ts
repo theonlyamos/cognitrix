@@ -4038,6 +4038,7 @@ const uiEn = {
   "ui.teamChat.askEveryone": "Ask everyone",
   "ui.teamChat.askName": "Ask {name}",
   "ui.teamChat.askedBy": "Asked by",
+  "ui.teamChat.attachPicturesOrDocuments": "Attach pictures or documents",
   "ui.teamChat.chattingWithTeam": "Chatting with the {name} team. Open the team",
   "ui.teamChat.couldNotLoadThisTeam": "Could not load this team.",
   "ui.teamChat.couldNotOpenThisChat": "Could not open this chat.",

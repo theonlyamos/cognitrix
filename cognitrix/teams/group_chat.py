@@ -189,6 +189,9 @@ def visible_text(entry: dict[str, Any]) -> str:
     kind = entry.get('type', 'text')
     if role == 'user' and kind == 'text':
         return str(entry.get('content') or '').strip()
+    if role == 'user' and kind == 'image':
+        # The picture itself is shown to whoever answers the message it came with.
+        return '[Attached a picture]'
     if role == 'assistant' and kind == 'text' and not entry.get('tool_calls'):
         if entry.get('turn_error'):
             return ''
@@ -431,6 +434,57 @@ def transcript_entry(message: str) -> dict[str, Any]:
         'speaker': 'You',
         'timestamp': now_iso(),
     }
+
+
+def attachment_entries(
+    images: Sequence[dict[str, Any]],
+    files: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Transcript entries for what the person attached to a message: one per
+    picture, and one note listing the files agents may read. The shapes match
+    a chat with one agent (``Session._run_turn``)."""
+    from pathlib import Path
+
+    from cognitrix.media.documents import DOCUMENT_HISTORY_MARKER
+    from cognitrix.tools.utils import ArtifactRef
+
+    stamp = now_iso()
+    mine = {'speaker_id': USER_SPEAKER, 'speaker': 'You', 'timestamp': stamp}
+    entries: list[dict[str, Any]] = []
+    for image in images:
+        artifact = ArtifactRef.model_validate(image).model_dump()
+        entries.append({
+            'role': 'User',
+            'type': 'image',
+            'content': f"[Current image artifact: {artifact['id']}]",
+            'artifact': artifact,
+            **mine,
+        })
+    paths: list[str] = []
+    names: list[str] = []
+    for item in files:
+        value = str(item.get('path') or '')
+        relative = Path(value)
+        if (
+            value
+            and not relative.is_absolute()
+            and not relative.drive
+            and '..' not in relative.parts
+            and len(relative.parts) >= 3
+            and relative.parts[0] == 'uploads'
+        ):
+            paths.append(relative.as_posix())
+            names.append(str(item.get('name') or relative.name)[:200])
+    if paths:
+        entries.append({
+            'role': 'User',
+            'type': 'text',
+            'content': DOCUMENT_HISTORY_MARKER + '\n' + '\n'.join(paths),
+            # What the person called the files, for showing the chat again.
+            'attachment_names': names,
+            **mine,
+        })
+    return entries
 
 
 def chat_title(chat: Sequence[dict[str, Any]]) -> str:

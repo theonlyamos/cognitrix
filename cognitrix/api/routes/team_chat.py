@@ -12,7 +12,7 @@ import logging
 import weakref
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from cognitrix.agents import Agent
@@ -145,8 +145,41 @@ async def delete_team_chat(team_id: str, session_id: str, user=Depends(get_curre
     run = chat_runs.get_run(_run_key(user), str(session.id))
     if run is not None and run.running:
         raise HTTPException(status_code=409, detail='Stop the chat before deleting it')
-    await Session.delete_many({'id': str(session.id)})
+    await _delete_chat(session, _run_agent_id(team_id))
     return {'status': 'deleted'}
+
+
+async def _delete_chat(session: Session, team_agent: str) -> None:
+    """Delete the chat and, when it has uploads, the files stored with it."""
+    from cognitrix import session_ownership as ownerships
+
+    session_id = str(session.id)
+    owner = str(session.user_id or '')
+    binding = await ownerships.SessionOwnership.find_one({'session_id': session_id})
+    if binding is None:
+        await Session.delete_many({'id': session_id})
+        return
+    if binding.user_id != owner or binding.agent_id != team_agent:
+        raise HTTPException(status_code=404, detail='Chat not found')
+    from cognitrix.api.routes.sessions import cleanup_owned_session_resources
+
+    try:
+        if binding.state == ownerships.OwnershipState.ACTIVE:
+            token = await ownerships.begin_delete(session_id, owner, team_agent)
+        else:
+            token = await ownerships.resume_lifecycle(
+                session_id, owner, team_agent, ownerships.OwnershipState.DELETING,
+            )
+    except (ownerships.OwnershipNotFound, ownerships.OwnershipConflict) as exc:
+        raise HTTPException(status_code=409, detail='This chat is busy. Try again.') from exc
+    await cleanup_owned_session_resources(
+        session_id=token.session_id,
+        user_id=token.user_id,
+        agent_id=token.agent_id,
+        generation=token.generation,
+    )
+    await Session.delete_many({'id': session_id})
+    await ownerships.finish_delete(token)
 
 
 class TeamChatUpdate(BaseModel):
@@ -188,36 +221,63 @@ async def stop_team_chat(team_id: str, session_id: str, user=Depends(get_current
 
 
 class TeamChatMessage(BaseModel):
-    message: str
+    message: str = ''
     session_id: str | None = None
     reasoning_effort: str | None = None
 
 
 @team_chat_api.post('/{team_id}/chats', status_code=202)
-async def send_team_chat(team_id: str, body: TeamChatMessage, user=Depends(get_current_user)):
-    message = (body.message or '').strip()
-    if not message:
-        raise HTTPException(status_code=400, detail='message is required')
-    if len(message) > MAX_MESSAGE_CHARS:
-        raise HTTPException(status_code=400, detail='message is too long')
-    team, members = await _team_and_members(team_id, user)
-    if not members:
-        raise HTTPException(status_code=400, detail='This team has no agents yet')
+async def send_team_chat(team_id: str, request: Request, user=Depends(get_current_user)):
+    """Send a message to the team. JSON, or multipart with a ``payload`` JSON
+    part and ``files`` parts (the same shape as a chat with one agent)."""
+    from pydantic import ValidationError
 
-    run_key = _run_key(user)
-    if body.session_id:
-        lock = _send_lock(str(body.session_id))
-        async with lock:
-            session = await _owned_chat(team_id, body.session_id, user)
-            running = chat_runs.get_run(run_key, str(session.id))
-            if running is not None and running.running:
-                raise HTTPException(
-                    status_code=409,
-                    detail='The team is still answering the last message',
+    from cognitrix.api.routes.agents import _chat_request_parts
+    from cognitrix.media.staging import cleanup_staged_attachments, stage_upload_files
+
+    async with _chat_request_parts(request) as (data, upload_files):
+        try:
+            body = TeamChatMessage(**{k: data.get(k) for k in TeamChatMessage.model_fields if k in data})
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail='Invalid message') from exc
+        message = (body.message or '').strip()
+        if not message and not upload_files:
+            raise HTTPException(status_code=400, detail='message is required')
+        if len(message) > MAX_MESSAGE_CHARS:
+            raise HTTPException(status_code=400, detail='message is too long')
+        team, members = await _team_and_members(team_id, user)
+        if not members:
+            raise HTTPException(status_code=400, detail='This team has no agents yet')
+
+        run_key = _run_key(user)
+        staged = None
+        try:
+            if body.session_id:
+                lock = _send_lock(str(body.session_id))
+                async with lock:
+                    session = await _owned_chat(team_id, body.session_id, user)
+                    running = chat_runs.get_run(run_key, str(session.id))
+                    if running is not None and running.running:
+                        raise HTTPException(
+                            status_code=409,
+                            detail='The team is still answering the last message',
+                        )
+                    if upload_files:
+                        staged = await stage_upload_files(
+                            upload_files, user_key=run_key, stream_id=_run_agent_id(team_id),
+                        )
+                    return await _start_turn(session, team, members, message, run_key, body, staged)
+            session = Session(team_id=str(team.id), user_id=_owner(user), group_chat=True)
+            if upload_files:
+                staged = await stage_upload_files(
+                    upload_files, user_key=run_key, stream_id=_run_agent_id(team_id),
                 )
-            return await _start_turn(session, team, members, message, run_key, body)
-    session = Session(team_id=str(team.id), user_id=_owner(user), group_chat=True)
-    return await _start_turn(session, team, members, message, run_key, body)
+            return await _start_turn(session, team, members, message, run_key, body, staged)
+        except BaseException:
+            # The turn never started, so nothing else will remove the upload.
+            if staged is not None:
+                await cleanup_staged_attachments(staged)
+            raise
 
 
 async def _start_turn(
@@ -227,6 +287,7 @@ async def _start_turn(
     message: str,
     run_key: str,
     body: TeamChatMessage,
+    staged: Any = None,
 ) -> dict[str, Any]:
     """Save the user's message and register the run before anything can yield
     to a second send for the same chat (the caller holds its lock)."""
@@ -257,6 +318,7 @@ async def _start_turn(
         run=run,
         run_key=run_key,
         effort=normalize_reasoning_effort(body.reasoning_effort) or None,
+        staged=staged,
     ))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
@@ -272,7 +334,15 @@ async def _run_turn(
     run: chat_runs.ChatRun,
     run_key: str,
     effort: str | None,
+    staged: Any = None,
 ) -> None:
+    from cognitrix.media import MediaOwnership
+    from cognitrix.media.context import (
+        MediaTurnContext,
+        reset_media_turn_context,
+        set_media_turn_context,
+    )
+    from cognitrix.media.staging import cleanup_staged_attachments, rollback_promoted_attachments
     from cognitrix.providers.base import turn_reasoning_effort
     from cognitrix.questions.broker import QuestionTurnContext, question_turn_ctx
     from cognitrix.safety.approval_gate import web_turn_ctx
@@ -299,11 +369,20 @@ async def _run_turn(
                 session_id=session_id,
                 user_id=run_key,
                 agent_id=str(agent.id),
+                document_capabilities=uploads.capabilities,
                 host_process_mode=signed_in_host_process_mode(),
             ),
         )
 
     terminal: dict[str, Any] = {'type': 'turn_complete', 'content': '', 'session_id': session_id}
+    # What the person attached belongs to the chat, not to one agent: every
+    # agent that answers this message sees the pictures and may read the files.
+    ownership = MediaOwnership(
+        session_id=session_id,
+        user_id=str(session.user_id or run_key),
+        agent_id=_run_agent_id(str(team.id)),
+    )
+    uploads = _TurnUploads()
     approval_token = web_turn_ctx.set({
         'emit': emit,
         'session_id': session_id,
@@ -319,7 +398,16 @@ async def _run_turn(
         user_key=run_key,
     ))
     effort_token = turn_reasoning_effort.set(effort)
+    media_token = None
     try:
+        if staged is not None:
+            await _take_in_uploads(session, staged, ownership, uploads, emit)
+        media_token = set_media_turn_context(MediaTurnContext(
+            ownership=ownership,
+            current_images=list(uploads.images),
+            selected_image=None,
+            vision_data_uri_cache={},
+        ))
         await group_chat.run_group_turn(
             session, team, members, message, emit=emit, run_agent=run_agent,
         )
@@ -327,10 +415,102 @@ async def _run_turn(
         terminal = {'type': 'turn_stopped', 'content': '', 'session_id': session_id}
     except Exception as exc:
         logger.exception('Group chat turn failed')
-        run.record({'type': 'error', 'content': str(exc), 'session_id': session_id})
+        run.record({
+            'type': 'error',
+            'content': _UPLOAD_FAILED if isinstance(exc, _UploadFailed) else str(exc),
+            'session_id': session_id,
+        })
         # The error event above already told the page; end the run normally.
     finally:
+        if media_token is not None:
+            reset_media_turn_context(media_token)
         turn_reasoning_effort.reset(effort_token)
         question_turn_ctx.reset(question_token)
         web_turn_ctx.reset(approval_token)
+        try:
+            if uploads.promoted is not None and not uploads.adopted:
+                await rollback_promoted_attachments(uploads.promoted, ownership)
+        except BaseException:
+            logger.exception('Failed to roll back team chat attachments')
+        try:
+            if staged is not None:
+                await cleanup_staged_attachments(staged)
+        except BaseException:
+            logger.exception('Failed to clean staged team chat attachments')
         run.finish(terminal)
+
+
+_UPLOAD_FAILED = 'The attached files could not be read. Send them again.'
+
+
+class _UploadFailed(Exception):
+    pass
+
+
+class _TurnUploads:
+    """What one message carried, once it is stored with the chat."""
+
+    def __init__(self) -> None:
+        self.promoted: Any = None
+        self.adopted = False
+        self.images: list[Any] = []
+        self.capabilities: tuple[Any, ...] = ()
+
+
+async def _bind_chat(ownership) -> None:
+    """Uploads are counted against the chat's owner record. A team chat gets
+    its record the first time someone attaches something."""
+    from cognitrix import session_ownership as ownerships
+
+    try:
+        await ownerships.require_active_owned(
+            ownership.session_id, ownership.user_id, ownership.agent_id,
+        )
+    except ownerships.OwnershipNotFound:
+        await ownerships.claim_new(ownership.session_id, ownership.user_id, ownership.agent_id)
+
+
+async def _take_in_uploads(session: Session, staged, ownership, uploads: _TurnUploads, emit) -> None:
+    """Store the staged files with the chat, write them into the transcript
+    after the person's message, and only then count them as kept."""
+    from cognitrix.media.document_capabilities import load_turn_document_capabilities
+    from cognitrix.media.documents import document_assets
+    from cognitrix.media.staging import (
+        promote_staged_attachments,
+        release_promoted_attachment_reservation,
+    )
+
+    try:
+        await _bind_chat(ownership)
+        uploads.promoted = promoted = await promote_staged_attachments(staged, ownership)
+        uploads.images = list(promoted.image_refs)
+        documents = list(promoted.document_paths)
+        document_ids = [str(item['id']) for item in documents if item.get('id')]
+        uploads.capabilities = await load_turn_document_capabilities(
+            ownership, fresh_document_ids=tuple(document_ids),
+        )
+        entries = group_chat.attachment_entries(
+            [ref.model_dump() for ref in uploads.images], documents,
+        )
+        if entries:
+            start = len(session.chat)
+            session.update_history(entries)
+            try:
+                await asyncio.shield(session.save())
+            except BaseException:
+                del session.chat[start:]
+                raise
+        uploads.adopted = True
+        release_promoted_attachment_reservation(promoted)
+        if document_ids:
+            await document_assets.mark_documents_adopted(document_ids, ownership)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception('Could not store team chat attachments')
+        raise _UploadFailed() from exc
+    await emit({
+        'type': 'attachments_ingested',
+        'artifacts': [ref.model_dump() for ref in uploads.images],
+        'document_count': len(uploads.promoted.document_paths),
+    })

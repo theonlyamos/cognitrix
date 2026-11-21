@@ -10,7 +10,8 @@ import { AgentBadge } from '@/components/StartChat';
 import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { insertTranscript } from '@/lib/voice';
-import { composerBtn } from '@/components/composerStyles';
+import { composerBtn, composerIconBtn } from '@/components/composerStyles';
+import { ACCEPT_ATTR, checkFiles, type Attachment } from '@/lib/chatAttachments';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import { parseChatEntries, toChatMessages, type BackendChatEntry } from '@/lib/transcript';
 import { cn } from '@/lib/utils';
@@ -66,8 +67,30 @@ const EVERYONE: Member = { id: '*', name: 'Everyone', handle: 'all', lead: false
 let nextId = 0;
 const newId = () => `gc-${Date.now()}-${nextId++}`;
 
+const UPLOAD_NOTE = '[User uploaded files, readable with your file tools:]';
+
 function toMessages(entries: BackendChatEntry[]): ChatMessage[] {
-  return toChatMessages(parseChatEntries(entries), { speakers: true });
+  // The note that tells agents where attached files are is shown to the
+  // person as file names on the message it came with, as it was when sent.
+  const shown: BackendChatEntry[] = [];
+  for (const entry of entries) {
+    const content = typeof entry.content === 'string' ? entry.content : '';
+    if (String(entry.role).toLowerCase() !== 'user' || !content.startsWith(UPLOAD_NOTE)) { shown.push(entry); continue; }
+    const given = (entry as { attachment_names?: unknown }).attachment_names;
+    const names = Array.isArray(given) && given.length
+      ? given.map(String)
+      : content.slice(UPLOAD_NOTE.length).split('\n').map((line) => line.trim().split('/').pop() || '').filter(Boolean);
+    const label = `📎 ${names.join(', ')}`;
+    let at = shown.length - 1;
+    while (at >= 0 && String(shown[at].role).toLowerCase() === 'user' && shown[at].type === 'image') at -= 1;
+    const before = at >= 0 ? shown[at] : undefined;
+    if (before && String(before.role).toLowerCase() === 'user' && (before.type ?? 'text') === 'text' && typeof before.content === 'string') {
+      shown[at] = { ...before, content: `${before.content}${before.content ? '\n' : ''}${label}` };
+    } else {
+      shown.push({ ...entry, content: label });
+    }
+  }
+  return toChatMessages(parseChatEntries(shown), { speakers: true });
 }
 
 /** The @word being typed right before the cursor, if any. */
@@ -128,6 +151,25 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
   chatIdRef.current = chatId;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Files waiting to go with the next message (pictures are shown to the agents, documents can be read by them).
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  const addFiles = useCallback((list: FileList | File[]) => {
+    const incoming = Array.from(list);
+    if (!incoming.length) return;
+    const { added, error } = checkFiles(incoming, attachmentsRef.current);
+    setUploadError(error);
+    if (added.length) setAttachments((prev) => [...prev, ...added]);
+  }, []);
+  const dropPreview = (a: Attachment) => { if (a.previewUrl && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(a.previewUrl); };
+  const removeAttachment = (id: string) => {
+    setUploadError(null);
+    setAttachments((prev) => prev.filter((a) => { if (a.id === id) dropPreview(a); return a.id !== id; }));
+  };
 
   // Voice input: the transcript goes in at the cursor, ready to edit.
   const voice = useVoiceInput({
@@ -271,6 +313,24 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
           return prev;
         });
         break;
+      case 'attachments_ingested': {
+        const pictures = (event.artifacts || [])
+          .filter((artifact) => artifact && typeof artifact.id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(artifact.id)
+            && typeof artifact.mime_type === 'string' && artifact.mime_type.startsWith('image/'))
+          .map((artifact) => ({ ...artifact, origin: 'uploaded' as const }));
+        if (!pictures.length) break;
+        setMessages((prev) => {
+          for (let i = prev.length - 1; i >= 0; i -= 1) {
+            if (prev[i].role !== 'user') continue;
+            const have = new Set((prev[i].artifacts || []).map((x) => x.id));
+            const fresh = pictures.filter((x) => !have.has(x.id));
+            if (!fresh.length) return prev;
+            return [...prev.slice(0, i), { ...prev[i], artifacts: [...(prev[i].artifacts || []), ...fresh] }, ...prev.slice(i + 1)];
+          }
+          return prev;
+        });
+        break;
+      }
       case 'status':
         if (event.content) setStatus(event.content);
         break;
@@ -312,19 +372,31 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || running) return;
+    const files = attachments;
+    if ((!text && files.length === 0) || running) return;
     setSendError(null);
+    setUploadError(null);
     setStatus(null);
     setRunning(true);
     baseRef.current = messages;
-    setMessages([...messages, { id: newId(), role: 'user', content: text }]);
+    // Keep a record of what was attached in the message on screen.
+    const shown = files.length ? `${text}${text ? '\n' : ''}📎 ${files.map((a) => a.name).join(', ')}` : text;
+    setMessages([...messages, { id: newId(), role: 'user', content: shown }]);
     setInput('');
+    setAttachments([]);
     setMention(null);
     try {
-      const res = await api.post<{ session_id: string; run_id: string }>(`/teams/${teamId}/chats`, {
-        message: text,
-        ...(chatId ? { session_id: chatId } : {}),
-      });
+      const payload = { message: text, ...(chatId ? { session_id: chatId } : {}) };
+      let res;
+      if (files.length) {
+        const form = new FormData();
+        form.append('payload', new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+        for (const a of files) form.append('files', a.file, a.name);
+        res = await api.post<{ session_id: string; run_id: string }>(`/teams/${teamId}/chats`, form);
+        files.forEach(dropPreview);
+      } else {
+        res = await api.post<{ session_id: string; run_id: string }>(`/teams/${teamId}/chats`, payload);
+      }
       const sid = res.data.session_id;
       if (sid !== chatId) {
         chatIdRef.current = sid;
@@ -336,9 +408,10 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
       setRunning(false);
       setMessages(baseRef.current);
       setInput(text);
+      setAttachments(files);
       setSendError(errorMessage(err, tr('ui.teamChat.couldNotSendTheMessage')));
     }
-  }, [chatId, input, refresh, messages, running, setParams, teamId]);
+  }, [attachments, chatId, input, refresh, messages, running, setParams, teamId]);
 
   const stop = useCallback(async () => {
     if (!chatId) return;
@@ -447,7 +520,37 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
           ))}
         </div>
       )}
-      <div className="relative rounded-2xl border border-line bg-panel shadow-[0_6px_24px_rgba(0,0,0,0.06)] transition-colors focus-within:border-fg-dim dark:shadow-[0_6px_24px_rgba(0,0,0,0.35)]">
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
+        className={cn(
+          'relative rounded-2xl border bg-panel shadow-[0_6px_24px_rgba(0,0,0,0.06)] transition-colors dark:shadow-[0_6px_24px_rgba(0,0,0,0.35)]',
+          dragOver ? 'border-accent' : 'border-line focus-within:border-fg-dim',
+        )}
+      >
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 border-b border-line px-3 pb-1 pt-2.5">
+            {attachments.map((a) => (
+              <span key={a.id} className="inline-flex max-w-full items-center gap-1.5 rounded border border-line bg-panel-2 py-1 pl-1 pr-1.5 font-mono text-[10.5px]">
+                {a.kind === 'image' && a.previewUrl ? (
+                  <img src={a.previewUrl} alt="" className="h-8 w-8 flex-none rounded-sm object-cover" />
+                ) : (
+                  <svg className="h-4 w-4 flex-none text-fg-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                )}
+                <span className="truncate text-fg" title={a.name}>{a.name}</span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(a.id)}
+                  aria-label={tr('ui.home.removeName', { name: a.name })}
+                  className="grid h-11 w-11 flex-none place-items-center text-fg-dim transition-colors hover:text-danger-ink md:h-auto md:w-auto"
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {voice.active && <VoiceBar voice={voice} />}
         <textarea
           ref={inputRef}
@@ -457,6 +560,11 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
           onChange={(e) => { setInput(e.target.value); updateMention(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
           onSelect={(e) => updateMention(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
           onBlur={() => setMention(null)}
+          onPaste={(e) => {
+            // Pasted pictures become attachments; pasted text goes in as text.
+            const pictures = Array.from(e.clipboardData.files || []).filter((f) => f.type.startsWith('image/'));
+            if (pictures.length) { e.preventDefault(); addFiles(pictures); }
+          }}
           onKeyDown={(e) => {
             if (menuOpen) {
               if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex((i) => Math.min(i + 1, options.length - 1)); return; }
@@ -476,6 +584,16 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
           className={cn('block min-h-11 max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[15px] text-fg outline-none placeholder:text-fg-dim focus-visible:outline-none', voice.active && '!hidden')}
         />
         <div className={cn('flex min-w-0 items-center gap-0.5 px-2 pb-2 pt-1', voice.active && '!hidden')}>
+          <button
+            type="button"
+            disabled={members.length === 0}
+            onClick={() => fileInputRef.current?.click()}
+            aria-label={tr('ui.composerMenu.attachFiles')}
+            title={tr('ui.teamChat.attachPicturesOrDocuments')}
+            className={composerIconBtn}
+          >
+            <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+          </button>
           <span className="flex min-w-0 flex-none items-center gap-1.5 pl-1 pr-1 text-[13px] font-medium text-fg-dim">
             <AgentBadge name={info.team.name} team />
             <span className="hidden max-w-[10rem] truncate sm:inline">{info.team.name}</span>
@@ -501,7 +619,7 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
           {!voice.active && !running && <MicButton voice={voice} className="rounded-lg" />}
           <button
             onClick={() => { if (running) void stop(); else void send(); }}
-            disabled={!running && !input.trim()}
+            disabled={!running && !input.trim() && attachments.length === 0}
             aria-label={running ? tr('ui.teamChat.stopTheTeam') : tr('ui.teamChat.send')}
             className={cn(
               'grid h-11 w-11 flex-none place-items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 hover:brightness-105 md:h-8 md:w-8',
@@ -515,7 +633,17 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
             )}
           </button>
         </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={ACCEPT_ATTR}
+          className="hidden"
+          aria-label={tr('ui.composerMenu.attachFiles')}
+          onChange={(e) => { addFiles(e.target.files || []); e.target.value = ''; }}
+        />
       </div>
+      {uploadError && <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{uploadError}</div>}
       {sendError && <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{sendError}</div>}
       <VoiceNotice voice={voice} />
       {empty && (
