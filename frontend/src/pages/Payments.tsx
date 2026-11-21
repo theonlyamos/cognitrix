@@ -191,19 +191,22 @@ function SettingsCard({ state, agents, onSaved }: { state: State; agents: AgentL
       setError(errorMessage(e, tr('ui.payments.couldNotSave')));
     }
   };
+  // An empty saved list is from before agents were picked one by one: it meant all of them.
+  const may = (id: string) => s.agent_ids.length === 0 || s.agent_ids.includes(id);
   const toggleAgent = (id: string) => {
-    const all = s.agent_ids.length === 0;
-    const next = all ? agents.map((a) => a.id).filter((a) => a !== id) : s.agent_ids.includes(id)
-      ? s.agent_ids.filter((a) => a !== id) : [...s.agent_ids, id];
-    void save({ agent_ids: next.length === agents.length ? [] : next });
+    const now = agents.map((a) => a.id).filter(may);
+    void save({ agent_ids: now.includes(id) ? now.filter((a) => a !== id) : [...now, id] });
   };
 
   return (
     <div className="flex flex-col gap-3 text-[13px]">
+      <p className="text-[13.5px] leading-relaxed text-fg-dim">{tr('ui.payments.howItWorks')}</p>
       <label className="flex items-center gap-2">
         <input type="checkbox" checked={s.enabled} onChange={(e) => void save({ enabled: e.target.checked })} className="h-4 w-4 accent-[var(--accent)]" />
         <span><b>{tr('ui.payments.letAgentsAskToPay')}</b> <span className="text-fg-dim">{tr('ui.payments.everyPaymentStillWaitsFor')}</span></span>
       </label>
+      {s.enabled && (
+      <>
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
           {tr('ui.payments.currency')}
@@ -229,12 +232,15 @@ function SettingsCard({ state, agents, onSaved }: { state: State; agents: AgentL
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             {agents.map((a) => (
               <label key={a.id} className="flex items-center gap-1.5">
-                <input type="checkbox" checked={s.agent_ids.length === 0 || s.agent_ids.includes(a.id)} onChange={() => toggleAgent(a.id)} className="h-4 w-4 accent-[var(--accent)]" />
+                <input type="checkbox" checked={may(a.id)} onChange={() => toggleAgent(a.id)} className="h-4 w-4 accent-[var(--accent)]" />
                 {a.name}
               </label>
             ))}
           </div>
+          {!agents.some((a) => may(a.id)) && <p className="mt-1 text-[12.5px] text-fg-dim">{tr('ui.payments.tickAnAgent')}</p>}
         </fieldset>
+      )}
+      </>
       )}
       {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
     </div>
@@ -295,6 +301,7 @@ export default function Payments() {
                 <SettingsCard key={JSON.stringify(data.settings)} state={data} agents={agents} onSaved={() => refetch({ silent: true })} />
               </div>
             </section>
+            {(data.settings.enabled || data.cards.length > 0) && (
             <section className="flex flex-col gap-2">
               <h2 className="font-mono text-[11px] tracking-wide text-fg-dim">{tr('ui.payments.cards')}</h2>
               <div className="flex flex-col gap-3 rounded-[10px] border border-line bg-panel px-4 py-3.5">
@@ -308,9 +315,11 @@ export default function Payments() {
                     ))}
                   </ul>
                 )}
-                <AddCard onAdded={() => refetch({ silent: true })} />
+                {data.settings.enabled && <AddCard onAdded={() => refetch({ silent: true })} />}
               </div>
             </section>
+            )}
+            {(data.settings.enabled || history.length > 0) && (
             <section className="flex flex-col gap-2">
               <h2 className="font-mono text-[11px] tracking-wide text-fg-dim">{tr('ui.payments.history')}</h2>
               {history.length === 0 ? (
@@ -328,6 +337,7 @@ export default function Payments() {
                 </ul>
               )}
             </section>
+            )}
           </div>
         )}
       </div>

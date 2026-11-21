@@ -112,9 +112,9 @@ const es: Messages = {
   'login.create': 'Crea una',
   'login.inviteOnly': '¿Eres nuevo? Pide un enlace de invitación a un administrador de este servidor.',
   'login.terms': 'al iniciar sesión aceptas los términos y la política de privacidad',
-  'login.heroTitle1': 'Pon a trabajar a tus agentes',
-  'login.heroTitle2': 'de verdad.',
-  'login.heroBody': 'Crea, ejecuta y coordina agentes LLM — chat, tareas de varios pasos y equipos — desde una sola consola pensada para el teclado.',
+  'login.heroTitle1': 'Tu propio equipo',
+  'login.heroTitle2': 'de agentes de IA.',
+  'login.heroBody': 'Habla con ellos, encárgales trabajos y deja que trabajen mientras no estás. Preguntan antes de hacer algo arriesgado.',
 
   'signup.kicker': 'CREAR CUENTA',
   'signup.title': 'Empezar',

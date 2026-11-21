@@ -42,6 +42,7 @@ export default function Login() {
     if (initialCode) window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }, [initialCode]);
   const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotState, setForgotState] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
 
   useEffect(() => {
@@ -128,10 +129,7 @@ export default function Login() {
           </p>
         </div>
 
-        <div className="relative font-mono text-[11px] text-fg-dim space-y-1.5">
-          <div className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-accent" />{' '}{tr('ui.login.providersOpenrouterOpenaiGoogleGroq')}</div>
-          <div className="text-fg-dim/70">{tr('ui.login.statusReadyApiV1Ws')}</div>
-        </div>
+        <span aria-hidden />
       </aside>
 
       {/* Form column */}
@@ -185,7 +183,7 @@ export default function Login() {
               <div className="space-y-1.5">
                 <label htmlFor="password" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">{t('auth.password')}</label>
                 <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••" required autoComplete="current-password" />
+                  required autoComplete="current-password" />
               </div>
 
               {error && (
@@ -203,9 +201,12 @@ export default function Login() {
             </form>
             )}
 
-            <details className="mt-5 text-sm text-fg-dim">
-              <summary className="cursor-pointer select-none hover:text-fg">{t('login.forgot')}</summary>
-              {options.password_reset_by_email ? (
+            <div className="mt-5 text-sm text-fg-dim">
+              <button type="button" aria-expanded={forgotOpen} onClick={() => setForgotOpen((v) => !v)}
+                className="min-h-11 text-accent-ink underline-offset-2 hover:underline md:min-h-0">
+                {t('login.forgot')}
+              </button>
+              {!forgotOpen ? null : options.password_reset_by_email ? (
                 forgotState === 'sent' ? (
                   <p role="status" className="mt-2 leading-relaxed">
                     {t('login.forgot.sent')}
@@ -228,7 +229,7 @@ export default function Login() {
                   <code className="rounded bg-panel-2 px-1 py-0.5 font-mono text-[12px] text-fg">cognitrix reset-password you@example.com</code>.
                 </p>
               )}
-            </details>
+            </div>
 
             {options.signup_open ? (
               <p className="mt-6 text-sm text-fg-dim">

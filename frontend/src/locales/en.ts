@@ -113,9 +113,9 @@ const en = {
   'login.create': 'Create one',
   'login.inviteOnly': 'New here? Ask an admin of this server for an invitation link.',
   'login.terms': 'by signing in you agree to the terms & privacy policy',
-  'login.heroTitle1': 'Run agents',
-  'login.heroTitle2': 'like you mean it.',
-  'login.heroBody': 'Build, run and orchestrate LLM agents — chat, multi-step tasks and teams — from one keyboard-first console.',
+  'login.heroTitle1': 'Your own team',
+  'login.heroTitle2': 'of AI agents.',
+  'login.heroBody': 'Chat with them, hand them jobs and let them work while you are away. They ask before anything risky.',
 
   'signup.kicker': 'CREATE ACCOUNT',
   'signup.title': 'Get started',

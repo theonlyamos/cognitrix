@@ -101,6 +101,7 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Hit[] | null>(null);
+  const [addingLink, setAddingLink] = useState(false);
   const reading = collection.documents.some((d) => d.status === 'queued');
 
   // Files are read in the background: look again until none is waiting.
@@ -185,12 +186,16 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-[15px] font-semibold">{collection.name}</h2>
           <p className="text-[12px] text-fg-dim">
-            {collection.description || trn(collection.documents.length, 'ui.count.documents_one', 'ui.count.documents_other')}
+            {trn(collection.documents.length, 'ui.count.documents_one', 'ui.count.documents_other')}
+            {collection.description ? ` · ${collection.description}` : ''}
           </p>
         </div>
         <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" aria-label={tr('ui.knowledge.addDocumentsToName', { name: collection.name })} onChange={upload} />
         <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => fileInput.current?.click()}>
           {busy ? tr('ui.knowledge.adding') : tr('ui.knowledge.addDocuments')}
+        </Button>
+        <Button type="button" size="sm" variant="outline" aria-expanded={addingLink} onClick={() => setAddingLink((v) => !v)}>
+          {tr('ui.knowledge.addALink')}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={removeCollection}>{tr('ui.knowledge.delete')}</Button>
       </div>
@@ -230,7 +235,7 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
           ))}
         </ul>
       )}
-      <AddWebPage collectionId={collection.id} onAdded={onChanged} onError={setError} />
+      {addingLink && <AddWebPage collectionId={collection.id} onAdded={() => { setAddingLink(false); onChanged(); }} onError={setError} />}
       {collection.documents.some((d) => d.status === 'ready') && (
         <form onSubmit={search} className="flex gap-2 border-t border-line px-4 py-3">
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr('ui.knowledge.tryASearchTheWay')} aria-label={tr('ui.knowledge.searchName', { name: collection.name })} />
