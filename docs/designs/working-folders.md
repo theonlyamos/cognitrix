@@ -45,6 +45,29 @@ chat for the rest of the turn and later turns.
 come from. Without it the desktop app allows anywhere that isn't protected, and
 a web server allows only folders inside its working folder.
 
+## AGENTS.md
+
+Every chat, task run and CLI turn follows the AGENTS.md files of its working
+folders (`cognitrix/common/agents_md.py`), read the way Codex reads them:
+
+- In each folder the first of `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`,
+  `.cursorrules` counts.
+- For a folder inside a git repository, the files from the repository root
+  down to the folder all go into the system message, root first, so the
+  closest one comes last and wins. Parent folders are only read where the
+  install allows folders (never above the home folder or in a protected place).
+- Subfolders with their own file are listed. The first time a chat reads or
+  changes a file under one, that file's instructions come back with the Read,
+  Write or Edit result.
+- At most 32 KiB goes into the prompt.
+- Run in sandbox uses the host folders' files (they are copied in). A paired
+  PC reads the AGENTS.md of its first shared folder on the PC itself; deeper
+  ones come back with Read results there too.
+- A project's instructions that were read from the same file aren't repeated.
+
+The folder picker shows "Follows AGENTS.md" under each folder
+(`GET /folders/instructions?path=`).
+
 ## Not built yet
 
 - Server-side folder browser and admin "allowed folders" screen (web mode).

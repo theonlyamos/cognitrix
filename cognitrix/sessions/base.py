@@ -171,8 +171,13 @@ def _with_folder_block(prompt, folders, sandbox: tuple | None = None) -> Any:
     """Add the working-folders block to the system message. With Run in
     sandbox (``sandbox`` is (agent id, user id)), the block says the shell and
     files are in the sandbox and the folders can be copied in."""
-    if not isinstance(prompt, list) or (not folders and sandbox is None):
+    if not isinstance(prompt, list):
         return prompt
+    if not folders and sandbox is None:
+        # CLI and API turns work in the app's working folder: its AGENTS.md
+        # still applies.
+        block = _agents_md_block(())
+        return _with_note(prompt, block) if block else prompt
     if isinstance(sandbox, dict) and sandbox.get('device'):
         # A paired PC: its own shared folders, not the chat's.
         from cognitrix.computer.paired.turn import device_prompt
@@ -180,15 +185,34 @@ def _with_folder_block(prompt, folders, sandbox: tuple | None = None) -> Any:
     elif sandbox is not None:
         from cognitrix.common.sandbox_work import sandbox_prompt
         block = sandbox_prompt(folders, *sandbox)
+        # The folders are copied into the sandbox: their AGENTS.md comes along.
+        block = '\n\n'.join(b for b in (block, _agents_md_block(folders)) if b)
     else:
         from cognitrix.common.folders import folder_prompt
-        block = folder_prompt(folders)
+        block = '\n\n'.join(b for b in (folder_prompt(folders), _agents_md_block(folders)) if b)
     if not block:
         return prompt
     if prompt and isinstance(prompt[0], dict) and prompt[0].get('role') == 'system' \
             and isinstance(prompt[0].get('content'), str):
         return [{**prompt[0], 'content': prompt[0]['content'] + '\n\n' + block}, *prompt[1:]]
     return [{'role': 'system', 'content': block}, *prompt]
+
+
+def _agents_md_block(folders) -> str:
+    """AGENTS.md instructions from the turn's working folders (the app's
+    working folder when the turn has none). A project's instructions that
+    were read from the same file aren't repeated."""
+    try:
+        from cognitrix.common.agents_md import instructions_block
+        from cognitrix.common.folders import legacy_default_folders
+        from cognitrix.projects.context import get as _turn_project
+
+        project = _turn_project()
+        skip = [project.instructions] if project is not None and project.instructions else []
+        return instructions_block(tuple(folders) or legacy_default_folders(), skip_texts=skip)
+    except Exception:
+        logger.debug('AGENTS.md unavailable', exc_info=True)
+        return ''
 
 
 def _with_computer_note(prompt) -> Any:
@@ -919,6 +943,12 @@ class Session(Model):
         sandbox_for_prompt: Any = (
             (agent.id, getattr(tool_context, 'user_id', None) or self.user_id) if turn_sandbox else None)
         if turn_device:
+            try:
+                # The AGENTS.md in the PC's first shared folder, read there.
+                from cognitrix.common.agents_md import pc_instructions
+                turn_device = {**turn_device, 'agents_md': await pc_instructions(turn_device)}
+            except Exception:
+                logger.debug('Could not read AGENTS.md on the PC', exc_info=True)
             sandbox_for_prompt = {'device': turn_device}
             try:
                 from cognitrix.computer.paired.turn import tools_for

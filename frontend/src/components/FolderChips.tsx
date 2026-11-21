@@ -3,11 +3,13 @@ import { errorMessage } from '@/lib/api';
 import { isDesktop } from '@/lib/desktop';
 import {
   checkFolder,
+  folderInstructions,
   folderName,
   pickFolder,
   recentFolders,
   rememberFolder,
   withPrimary,
+  type FolderInstructions,
   type WorkFolder,
 } from '@/lib/folders';
 import { cn } from '@/lib/utils';
@@ -24,6 +26,31 @@ const FolderIcon = ({ size = 12 }: { size?: number }) => (
 const ChevronIcon = () => (
   <svg aria-hidden width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="hidden opacity-60 sm:block"><path d="m6 9 6 6 6-6" /></svg>
 );
+
+/** "Follows AGENTS.md": the instruction files agents in this folder follow. */
+export function AgentsMdNote({ path, className }: { path: string; className?: string }) {
+  const [info, setInfo] = useState<FolderInstructions | null>(null);
+  useEffect(() => {
+    let live = true;
+    void folderInstructions(path).then((r) => { if (live) setInfo(r); });
+    return () => { live = false; };
+  }, [path]);
+  if (!info || (info.files.length === 0 && info.nested === 0)) return null;
+  const fileName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+  const parts: string[] = [];
+  if (info.files.length === 1) parts.push(tr('ui.folderChips.followsFile', { name: fileName(info.files[0]) }));
+  else if (info.files.length > 1) parts.push(tr('ui.folderChips.followsFiles', { count: info.files.length }));
+  if (info.nested > 0) parts.push(tr('ui.folderChips.nestedInstructions', { count: info.nested }));
+  return (
+    <span
+      data-testid="agents-md-note"
+      className={cn('block truncate font-mono text-[10.5px] text-fg-dim', className)}
+      title={[tr('ui.folderChips.agentsMdHint'), ...info.files].join('\n')}
+    >
+      {parts.join(' · ')}
+    </span>
+  );
+}
 
 interface Props {
   folders: WorkFolder[];
@@ -204,6 +231,7 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
                             {f.primary && folders.length > 1 && <span className="ml-1.5 font-mono text-[10px] text-fg-dim">{tr('ui.folderChips.primary')}</span>}
                           </span>
                           <span className="block truncate font-mono text-[10.5px] text-fg-dim" title={f.path}>{f.path}</span>
+                          <AgentsMdNote path={f.path} />
                           {!f.primary && (
                             <button type="button" disabled={busy} onClick={() => void update(withPrimary(folders, f.path))}
                               className="min-h-8 text-[11.5px] text-fg-dim underline-offset-2 hover:text-fg hover:underline md:min-h-0">
@@ -273,6 +301,7 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
             {menu === f.path && (
               <div role="menu" className="absolute bottom-full left-0 z-30 mb-1.5 w-64 rounded-lg border border-line bg-panel p-1.5 shadow-lg">
                 <div className="truncate px-2 py-1 font-mono text-[10.5px] text-fg-dim" title={f.path}>{f.path}</div>
+                <AgentsMdNote path={f.path} className="px-2 pb-1" />
                 <button role="menuitem" type="button" className="w-full rounded px-2 py-1.5 text-left text-[12.5px] hover:bg-panel-2"
                   onClick={() => { setMenu(null); void update(folders.map((x) => x.path === f.path ? { ...x, access: write ? 'read' : 'write' } : x)); }}>
                   {write ? tr('ui.folderChips.makeReadOnly') : tr('ui.folderChips.allowWritingReadWrite')}

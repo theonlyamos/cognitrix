@@ -9,6 +9,8 @@ vi.mock('@/lib/folders', async (importOriginal) => {
   return {
     ...real,
     checkFolder: vi.fn(async (path: string, access: 'read' | 'write') => ({ path, access, name: 'docs', primary: false })),
+    folderInstructions: vi.fn(async (path: string) => (
+      path === '/work/app' ? { files: ['/work/AGENTS.md', '/work/app/AGENTS.md'], nested: 2 } : { files: [], nested: 0 })),
     browseFolders: vi.fn(async (path?: string | null) => {
       if (!path) return { path: null, parent: null, entries: [{ name: '/srv/work', path: '/srv/work', writable: true }], truncated: false };
       if (path === '/srv/work') {
@@ -25,6 +27,17 @@ const FOLDERS: WorkFolder[] = [
 ];
 
 describe('FolderChips', () => {
+  it('shows which AGENTS.md files a folder follows', async () => {
+    const user = userEvent.setup();
+    render(<FolderChips folders={FOLDERS} onChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /app/ }));
+    const note = await screen.findByTestId('agents-md-note');
+    expect(note.textContent).toBe('Follows 2 instruction files · 2 subfolders have their own');
+    expect(note.getAttribute('title')).toContain('/work/app/AGENTS.md');
+    await user.click(screen.getByRole('button', { name: /notes/ }));
+    expect(screen.queryByTestId('agents-md-note')).toBeNull();
+  });
+
   it('switches a folder to read & write and back', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
