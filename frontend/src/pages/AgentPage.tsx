@@ -306,8 +306,8 @@ export default function AgentPage() {
 
       <Field label={tr('ui.agentPage.whatIsItFor')}>
         <Textarea rows={2} maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={tr('ui.agentPage.whatIsItForPlaceholder')} />
-        <p className="mt-1.5 text-[12px] text-fg-dim">{tr('ui.agentPage.whatIsItForHint')}</p>
       </Field>
+      <p className="-mt-4 text-[12px] text-fg-dim">{tr('ui.agentPage.whatIsItForHint')}</p>
 
       <Field label={tr('ui.agentPage.howShouldItWork')} hint={tr('ui.agentPage.howShouldItWorkHint')}>
         <Textarea rows={editing ? 8 : 4} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder={tr('ui.agentPage.howShouldItWorkPlaceholder')} />
@@ -404,7 +404,7 @@ export default function AgentPage() {
           type="range" min={0} max={1} step={0.05} value={temperature}
           onChange={(e) => setTemperature(Number(e.target.value))}
           disabled={noTemperature}
-          aria-label={tr('ui.agentPage.temperature_0a90')}
+          aria-label={tr('ui.agentPage.creativity')}
           className="h-2 w-full cursor-pointer appearance-none rounded-full bg-panel-2 accent-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
         />
         {noTemperature && (

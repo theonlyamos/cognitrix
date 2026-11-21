@@ -27,7 +27,7 @@ describe('ChatModelPicker', () => {
     render(<ChatModelPicker agentLlm={LLM} value={null} onChange={onChange} />);
     await user.click(screen.getByRole('button', { name: 'Model: gpt-6.1-sol (agent default). Change' }));
     await user.click(await screen.findByRole('tab', { name: 'Anthropic' }));
-    await user.click(await screen.findByRole('option', { name: 'claude-opus-5-5' }));
+    await user.click(await screen.findByRole('option', { name: 'Claude Opus 5.5' }));
     expect(onChange).toHaveBeenCalledWith({ provider: 'anthropic', model: 'claude-opus-5-5' });
   });
 
@@ -36,7 +36,7 @@ describe('ChatModelPicker', () => {
     const onChange = vi.fn();
     render(<ChatModelPicker agentLlm={LLM} value={{ provider: 'openai', model: 'gpt-5.5' }} onChange={onChange} />);
     await user.click(screen.getByRole('button', { name: 'Model: gpt-5.5. Change' }));
-    await user.click(screen.getByRole('option', { name: 'gpt-6.1-sol' }));
+    await user.click(screen.getByRole('option', { name: 'GPT-6.1 Sol' }));
     expect(onChange).toHaveBeenLastCalledWith(null);
     await user.click(screen.getByRole('button', { name: 'Model: gpt-5.5. Change' }));
     await waitFor(() => expect(apiGet).toHaveBeenCalledWith('/providers/chat-options'));
@@ -49,7 +49,7 @@ describe('ChatModelPicker', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('shortens provider-prefixed names', () => {
-    expect(shortModel('anthropic/claude-sonnet-5.5')).toBe('claude-sonnet-5.5');
+  it('shows a readable name for a provider-prefixed model', () => {
+    expect(shortModel('anthropic/claude-sonnet-5.5')).toBe('Claude Sonnet 5.5');
   });
 });

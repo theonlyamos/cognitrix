@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Box as BoxIcon, FolderKanban as ProjectIcon, Monitor as PcIcon, Pin as PinIcon } from 'lucide-react';
+import { Box as BoxIcon, FolderKanban as ProjectIcon, Monitor as PcIcon, Pin as PinIcon, Plus } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
@@ -67,7 +67,7 @@ export default function Projects() {
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
       <PageHeader title={tr('ui.projects.projects')} subtitle={trn(count, 'ui.projects.count_one', 'ui.projects.count_other')}>
-        <Button size="sm" onClick={() => setCreating(true)}>{tr('ui.projects.newProject')}</Button>
+        <Button size="sm" onClick={() => setCreating(true)}><Plus size={15} strokeWidth={2.2} aria-hidden className="mr-1.5 flex-none" />{tr('ui.projects.newProject')}</Button>
       </PageHeader>
       <div className="flex flex-none flex-wrap items-center gap-2 border-b border-line px-4 py-2.5 md:px-6">
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr('ui.projects.search')}

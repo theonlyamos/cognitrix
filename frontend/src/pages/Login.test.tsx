@@ -25,7 +25,7 @@ describe('Login with a sign-in code', () => {
     post.mockResolvedValue({ data: { user: { name: 'Ada', email: 'ada@example.com' }, access_token: 'tok' } });
     show();
     fireEvent.click(await screen.findByRole('tab', { name: 'Sign-in code' }));
-    const input = screen.getByLabelText('CODE FROM A SIGNED-IN DEVICE');
+    const input = screen.getByLabelText('Code from a signed-in device');
     fireEvent.change(input, { target: { value: 'kxrt4m9p' } });
     expect(input).toHaveValue('KXRT-4M9P');
     fireEvent.click(screen.getByRole('button', { name: /Sign in/ }));
@@ -36,7 +36,7 @@ describe('Login with a sign-in code', () => {
   it('fills in the code from a scanned QR link and takes it out of the address', async () => {
     window.history.replaceState(null, '', '/#signin-code=KXRT4M9P');
     show();
-    expect(await screen.findByLabelText('CODE FROM A SIGNED-IN DEVICE')).toHaveValue('KXRT-4M9P');
+    expect(await screen.findByLabelText('Code from a signed-in device')).toHaveValue('KXRT-4M9P');
     expect(window.location.hash).toBe('');
     expect(post).not.toHaveBeenCalled();
   });
@@ -47,7 +47,7 @@ describe('Login with a sign-in code', () => {
     }));
     show();
     fireEvent.click(await screen.findByRole('tab', { name: 'Sign-in code' }));
-    fireEvent.change(screen.getByLabelText('CODE FROM A SIGNED-IN DEVICE'), { target: { value: 'AAAABBBB' } });
+    fireEvent.change(screen.getByLabelText('Code from a signed-in device'), { target: { value: 'AAAABBBB' } });
     fireEvent.click(screen.getByRole('button', { name: /Sign in/ }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(login).not.toHaveBeenCalled();

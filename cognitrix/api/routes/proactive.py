@@ -50,6 +50,23 @@ async def _main_view(owner: str) -> dict[str, Any] | None:
             'checkins': bool(settings['enabled']), 'every_minutes': settings['every_minutes']}
 
 
+async def _token_price(owner: str) -> float | None:
+    """Dollars for a million tokens read by the main assistant's model, so the
+    page can put a rough cost beside its token counts. None when unknown."""
+    from cognitrix.assistant.setup import main_assistant
+    from cognitrix.usage import pricing
+
+    try:
+        agent = await main_assistant(owner)
+        llm = getattr(agent, 'llm', None)
+        if llm is None:
+            return None
+        per_token = pricing.cost(await pricing.load(), str(llm.provider or ''), str(llm.model or ''), {'prompt_tokens': 1})
+        return None if per_token is None else round(per_token * 1_000_000, 4)
+    except Exception:
+        return None
+
+
 @proactive_api.get('/proactivity')
 async def get_proactivity(ctx: AuthContext = Depends(jwt_only)):
     from cognitrix.common.clock import client_timezone
@@ -62,6 +79,7 @@ async def get_proactivity(ctx: AuthContext = Depends(jwt_only)):
         'browser_timezone': client_timezone.get() or '',
         'week': await proactivity.week(owner),
         'today_tokens': await proactivity.tokens_today(owner),
+        'token_price': await _token_price(owner),
         'main_assistant': main,
         'needs_setup': main is None or not (main['primary'] and main['checkins']),
         'levels': list(proactivity.LEVELS),

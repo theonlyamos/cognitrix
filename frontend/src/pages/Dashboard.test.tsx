@@ -65,8 +65,9 @@ describe('Dashboard', () => {
   it('greets the person and shows empty states', async () => {
     renderDashboard();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Ada');
-    expect(await screen.findByText("You're all caught up.")).toBeInTheDocument();
     expect(await screen.findByText(/No chats yet/)).toBeInTheDocument();
+    // Nothing waiting: the card is left out instead of saying so twice.
+    expect(screen.queryByText("You're all caught up.")).toBeNull();
   });
 
   it('puts a spoken question in the ask bar, then opens chat with it', async () => {

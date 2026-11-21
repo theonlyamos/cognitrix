@@ -119,7 +119,7 @@ export function DesktopMoreMenu({ actions }: { actions: readonly MobileHeaderAct
         variant="outline"
         size="icon"
         className="h-8 w-8"
-        aria-label={tr('ui.mobileHeaderActions.moreActions')}
+        aria-label={tr('ui.mobileHeaderActions.more')}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}

@@ -1126,7 +1126,7 @@ export default function TaskDetail() {
           </Link>
           <div className="min-w-0 overflow-hidden">
             <div className="hidden md:block"><Trail steps={[{ label: tr('ui.taskDetail.tasks'), to: '/tasks' }]} /></div>
-            <h1 className="truncate text-[15px] font-semibold tracking-tight">{task?.title || tr('ui.taskDetail.task')}</h1>
+            <h1 className="text-[14px] font-semibold leading-tight tracking-tight max-md:line-clamp-2 md:truncate md:text-[15px]">{task?.title || tr('ui.taskDetail.task')}</h1>
           </div>
           </div>
           <span className="sr-only md:not-sr-only"><StatusPill status={isLive ? 'running' : status} /></span>
@@ -1250,7 +1250,7 @@ export default function TaskDetail() {
             onClick={() => setMobileRunsOpen(true)}
           >
             <span className={cn('flex-none', RUN_BADGE[selectedRun.status] || 'text-fg-dim')}>
-              {selectedRun.status}
+              {statusLabel(selectedRun.status)}
             </span>
             <span className="flex-none tnum">{tr('ui.taskDetail.stepsdoneLengthSteps', { stepsDone, length: plan.length })}</span>
             <span aria-hidden className="ml-auto flex-none text-fg">›</span>

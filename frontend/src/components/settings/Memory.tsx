@@ -315,7 +315,7 @@ function kindLabel(kind: string) {
 }
 
 function scopeLabel(m: SavedMemory) {
-  return m.scope === 'global' ? 'GLOBAL' : (m.agent_name || 'ONE AGENT').toUpperCase();
+  return m.scope === 'global' ? tr('ui.settings.memory.allAgents_8ed4') : (m.agent_name || 'ONE AGENT').toUpperCase();
 }
 
 function origin(m: SavedMemory) {

@@ -458,7 +458,7 @@ export default function Meetings() {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title={tr('ui.meetings.meetings')} subtitle={tr('ui.meetings.sendAnAgentIntoA')}>
+      <PageHeader title={tr('ui.meetings.meetings')} subtitle={meetings.length > 0 ? tr('ui.meetings.sendAnAgentIntoA') : undefined}>
         <Button type="button" size="sm" variant="outline" disabled={joining || (data ? !data.voice_ready : true)} onClick={() => setJoining(true)}>
           {tr('ui.meetings.joinACall')}
         </Button>

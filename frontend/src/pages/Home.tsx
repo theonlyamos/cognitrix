@@ -2274,7 +2274,7 @@ export default function Home() {
           {!voice.active && !liveVoice && !(busy && input.trim()) && (
             <>
               {activeSessionId && (
-                <SideQuestionButton onClick={() => setSideOpen((v) => !v)} active={sideOpen} className="rounded-lg" />
+                <SideQuestionButton onClick={() => setSideOpen((v) => !v)} active={sideOpen} className="rounded-lg max-sm:hidden" />
               )}
               <LiveVoiceButton onClick={() => setLiveVoice(true)} disabled={!isConnected} className="rounded-lg" />
               <MicButton voice={voice} className="rounded-lg" />

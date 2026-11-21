@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { errorMessage } from '@/lib/api';
 import { enableProactive, getProactivity, saveProactivity, type Proactivity, type ProactivityLevel } from '@/lib/proactive';
 import { Group, Segmented, SettingRow, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
+import { money } from '@/lib/plain';
 import { tr } from '@/lib/i18n';
 
 const timeClass = 'h-10 rounded-lg border border-line bg-panel-2 px-2 font-mono text-[13px] outline-none focus:border-accent md:h-9';
@@ -15,6 +16,13 @@ function levelDetail(level: ProactivityLevel): string {
     case 'eager': return tr('ui.settings.assistant.checkInsTheBriefMeeting');
     default: return tr('ui.settings.assistant.checkInsTheMorningBrief');
   }
+}
+
+/** ", about $0.12": a rough cost at the assistant's model price, or nothing when unknown. */
+function about(tokens: number, pricePerMillion: number | null | undefined): string {
+  if (!pricePerMillion || !tokens) return '';
+  const words = money((tokens / 1_000_000) * pricePerMillion);
+  return words ? `, about ${words}` : '';
 }
 
 function tokensText(n: number): string {
@@ -130,7 +138,8 @@ export function AssistantSettings() {
             <input type="number" inputMode="numeric" min={0} max={data.limits.max_pushes} aria-label={tr('ui.settings.assistant.alertsADay')} value={draft.max_pushes}
               disabled={off} onChange={(e) => setDraft((d) => ({ ...d, max_pushes: e.target.value }))} className={numberClass} />
           </SettingRow>
-          <SettingRow label={tr('ui.settings.assistant.dailyTokenLimit')} detail={tr('ui.settings.assistant.forWorkYouDidnT')}>
+          <SettingRow label={tr('ui.settings.assistant.dailyTokenLimit')}
+            detail={`${tr('ui.settings.assistant.forWorkYouDidnT')}${about(Number(draft.daily_tokens) || 0, data.token_price).replace(/^, /, ' ')}`}>
             <input type="number" inputMode="numeric" min={0} max={data.limits.daily_tokens} step={10000} aria-label={tr('ui.settings.assistant.dailyTokenLimit')}
               value={draft.daily_tokens} disabled={off}
               onChange={(e) => setDraft((d) => ({ ...d, daily_tokens: e.target.value }))} className={numberClass} />
@@ -149,8 +158,8 @@ export function AssistantSettings() {
       <SubHeading>{tr('ui.settings.assistant.thisWeek')}</SubHeading>
       <Group>
         <SettingRow label={tr('ui.settings.assistant.tokensUsed')}
-          detail={`${tokensText(data.today_tokens)} today${data.daily_tokens ? ` of ${tokensText(data.daily_tokens)}` : ''}. See what that costs in Settings › Usage.`}>
-          <span className="font-mono text-[13px]">{tokensText(data.week.tokens)}</span>
+          detail={`${tokensText(data.today_tokens)} today${data.daily_tokens ? ` of ${tokensText(data.daily_tokens)}` : ''}${about(data.today_tokens, data.token_price)}. The exact figures are in Settings › Usage.`}>
+          <span className="font-mono text-[13px]">{tokensText(data.week.tokens)}{about(data.week.tokens, data.token_price)}</span>
         </SettingRow>
         <SettingRow label={tr('ui.settings.assistant.checkIns')}
           detail={tr('ui.settings.assistant.skippedSkippedBecauseNothingHad', { skipped: data.week.skipped, value: data.backoff > 1 ? ` Checking in ${data.backoff}x less often after several "not useful" answers.` : '' })}>

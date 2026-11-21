@@ -45,6 +45,7 @@ describe('Knowledge web pages', () => {
 
   it('adds a page or a site section', async () => {
     render(<MemoryRouter><Knowledge /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a link' }));
     fireEvent.change(await screen.findByLabelText('Web page address'), { target: { value: 'https://example.com/docs/' } });
     fireEvent.change(screen.getByLabelText('How much of the site to read'), { target: { value: '10' } });
     fireEvent.change(screen.getByLabelText('How often to read it again'), { target: { value: '1' } });

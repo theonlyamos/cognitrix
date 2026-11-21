@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 from cognitrix.sessions import titles
 
-
 CHAT = [
     {'role': 'user', 'type': 'text', 'content': 'Give me a 5-step plan to launch a weekly newsletter'},
     {'role': 'assistant', 'type': 'tool_calls', 'content': '', 'tool_calls': [{'name': 'Search'}]},

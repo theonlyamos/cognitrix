@@ -252,9 +252,24 @@ describe('final accessibility contracts', () => {
   it('names every TaskPage step and schedule control while retaining group names', async () => {
     renderTaskPage();
 
-    expect(screen.getByRole('textbox', { name: /TITLE/ })).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: /DESCRIPTION/ })).toBeInTheDocument();
-    expect(screen.getByRole('group', { name: /STEPS/ })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /What should get done/ })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /Who does it/ })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'When' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Later' }));
+    expect(screen.getByLabelText('Schedule time')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Repeats' }));
+    const howOften = screen.getByRole('combobox', { name: 'How often' });
+    await userEvent.selectOptions(howOften, 'hours');
+    expect(screen.getByRole('spinbutton', { name: 'Interval value' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Interval unit' })).toBeInTheDocument();
+    await userEvent.selectOptions(howOften, 'custom');
+    expect(screen.getByRole('textbox', { name: 'Cron expression' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /More options/ }));
+    expect(screen.getByRole('textbox', { name: /Title/ })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: /Steps/ })).toBeInTheDocument();
 
     const addStep = screen.getByRole('button', { name: /add step/i });
     expect(addStep).toHaveClass('min-h-11', 'md:min-h-0');
@@ -267,42 +282,21 @@ describe('final accessibility contracts', () => {
       'md:h-8',
       'md:w-8',
     );
-    expect(screen.getByRole('combobox', { name: 'TEAM' })).toBeInTheDocument();
-    expect(screen.getByRole('group', { name: /ASSIGNED AGENTS/ })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: /Agents \(/ })).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /^Agent One\b/ })).toBeInTheDocument();
-    expect(screen.getByRole('group', { name: 'SCHEDULE' })).toBeInTheDocument();
-
-    const scheduleType = screen.getByRole('combobox', { name: 'Schedule type' });
-    await userEvent.selectOptions(scheduleType, 'once');
-    expect(screen.getByLabelText('Schedule time')).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: 'Schedule enabled' })).toBeInTheDocument();
-
-    await userEvent.selectOptions(scheduleType, 'interval');
-    expect(screen.getByRole('spinbutton', { name: 'Interval value' })).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Interval unit' })).toBeInTheDocument();
-
-    await userEvent.selectOptions(scheduleType, 'cron');
-    expect(screen.getByRole('textbox', { name: 'Cron expression' })).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: 'Auto-start when created' })).toBeInTheDocument();
   });
 
-  it('keeps the TaskPage schedule-enabled label touch-sized on mobile', async () => {
+  it('keeps the TaskPage more-options disclosure touch-sized on mobile', () => {
     renderTaskPage();
-    await userEvent.selectOptions(
-      screen.getByRole('combobox', { name: 'Schedule type' }),
-      'once',
-    );
 
-    expect(screen.getByRole('checkbox', { name: 'Schedule enabled' }).closest('label')).toHaveClass(
-      'min-h-11',
-      'md:min-h-0',
-    );
+    expect(screen.getByRole('button', { name: /More options/ })).toHaveClass('min-h-11', 'md:min-h-0');
   });
 
-  it('keeps the TaskPage auto-start label touch-sized on mobile', () => {
+  it('keeps the TaskPage helpers label touch-sized on mobile', async () => {
     renderTaskPage();
+    await userEvent.click(screen.getByRole('button', { name: /More options/ }));
 
-    expect(screen.getByRole('checkbox', { name: 'Auto-start when created' }).closest('label')).toHaveClass(
+    expect(screen.getByRole('checkbox', { name: /Let it call in helpers/ }).closest('label')).toHaveClass(
       'min-h-11',
       'md:min-h-0',
     );
@@ -683,6 +677,8 @@ describe('final accessibility contracts', () => {
     }));
     renderTaskDetail();
 
+    // A finished run shows its result first; the steps open on request.
+    await userEvent.click(await screen.findByRole('button', { name: /How it got there/ }));
     const synthesis = await screen.findByRole('button', { name: /synthesis/i });
     const step = document.querySelector<HTMLButtonElement>('button[title^="Research"]');
     expect(step).not.toBeNull();
@@ -748,6 +744,7 @@ describe('final accessibility contracts', () => {
     harness.apiGet.mockResolvedValue({ data: [] });
     renderTaskDetail();
 
+    await userEvent.click(await screen.findByRole('button', { name: /How it got there/ }));
     expect(await screen.findByText('unverified')).toBeVisible();
     expect(screen.getByRole('button', {
       name: /Generate image.*Image Tool Tester.*unverified/i,
@@ -778,8 +775,8 @@ describe('final accessibility contracts', () => {
     renderTaskDetail();
 
     expect(await screen.findByText('waiting for a worker to pick up the run…')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cancel task' })).toBeInTheDocument();
-    expect(screen.getAllByText('queued').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Stop run' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Starting').length).toBeGreaterThan(0);
   });
 
   it('loads older task runs without adding them to the live polling resource', async () => {
@@ -844,6 +841,7 @@ describe('final accessibility contracts', () => {
 
     expect(await screen.findByText('Worker lost')).toBeInTheDocument();
     expect(screen.getByText('lease expired')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(screen.getByText(/1,250 \/ 2,000 tokens/)).toBeInTheDocument();
     expect(screen.getByText(/3 \/ 5 LLM calls/)).toBeInTheDocument();
     expect(screen.getByText(/2 \/ 4 tool calls/)).toBeInTheDocument();
@@ -1006,6 +1004,7 @@ describe('final accessibility contracts', () => {
       agent_name: 'Researcher',
       data: { turn_id: 'ephemeral-completed-attempt:1', content: 'temporary live text' },
     }));
+    await userEvent.click(await screen.findByRole('button', { name: /How it got there/ }));
     const step = await screen.findByRole('button', { name: /Create brief.*Researcher/ });
     await userEvent.click(step);
 
@@ -2001,7 +2000,7 @@ describe('final accessibility contracts', () => {
     harness.resources.set('/tools', { data: [] });
     renderAgentPage();
 
-    expect(screen.getByRole('button', { name: /ADVANCED/ })).toHaveClass(
+    expect(screen.getByRole('button', { name: /More options/ })).toHaveClass(
       'min-h-11',
       'md:min-h-0',
     );
