@@ -9,6 +9,9 @@ on:
     paths:
       - 'sandbox/desktop/**'
       - 'cognitrix/computer/**'
+      # The image carries the app's CLI at the package's version (see the
+      # Dockerfile), so a version bump rebuilds it.
+      - 'pyproject.toml'
       - '.github/workflows/sandbox-image.yml'
   release:
     types: [published]
@@ -36,6 +39,7 @@ jobs:
           tags="$image:latest,$image:sha-${GITHUB_SHA::12}"
           if [ "${{ github.event_name }}" = "release" ]; then tags="$tags,$image:${{ github.event.release.tag_name }}"; fi
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "version=$(sed -n 's/^version = \"\(.*\)\"/\1/p' pyproject.toml | head -1)" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -43,3 +47,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            COGNITRIX_VERSION=${{ steps.tags.outputs.version }}
