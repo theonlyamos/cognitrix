@@ -610,6 +610,15 @@ class _SnapshotBoundTool(MCPTool):
             if not isinstance(definition, Mapping):
                 continue
             expected = expected_types.get(definition.get("type"))
+            if expected in (list, dict) and isinstance(value, str):
+                # Models often send a list or object as JSON text; take it
+                # when it parses to the declared type.
+                try:
+                    parsed = json.loads(value)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, expected):
+                    value = params[name] = parsed
             if expected is not None and not isinstance(value, expected):
                 raise ValueError(f"Invalid type for parameter: {name}")
             if "enum" in definition and value not in definition["enum"]:

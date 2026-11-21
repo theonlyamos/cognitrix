@@ -1034,3 +1034,57 @@ async def test_check_in_step_is_not_graded_by_the_quality_gate(
     row = (await _steps(queued.id))[0]
     assert row.status == TaskRunStepStatus.DONE
     assert row.result.text == "Nothing new since the last check-in."
+
+
+@pytest.mark.asyncio
+async def test_brief_run_that_did_not_publish_the_brief_fails(
+    orchestration_db,
+    monkeypatch,
+):
+    """A morning-brief run whose Publish Brief never succeeded used to show as completed."""
+    from cognitrix.safety.permissions import read_only_run
+    from cognitrix.tasks import standing
+
+    agent = _agent()
+    task = _task(agent)
+    task.standing_agent_id = agent.id
+    queued = await _queued(task.id, trigger_kind="brief")
+    _common_stubs(monkeypatch)
+
+    class Executor:
+        def __init__(self, _snapshot, **_kwargs):
+            self.denied_tools = []
+            self.succeeded_tools = []
+
+        async def execute(self, prompt, *, tool_context=None, attempt=1):
+            return StepResult(text="I couldn't publish the brief.")
+
+    async def owner(_task):
+        return agent
+
+    async def context(_task, _agent, _run=None):
+        return "check-in context"
+
+    async def not_published(_run):
+        return False
+
+    async def record_status(_task, _status, **_kwargs):
+        return None
+
+    monkeypatch.setattr(orchestrator, "TaskStepExecutor", Executor)
+    monkeypatch.setattr(orchestrator, "_add_automation_tools", lambda *_a, **_k: None)
+    monkeypatch.setattr(orchestrator, "_brief_published", not_published)
+    monkeypatch.setattr(orchestrator, "_set_task_status", record_status)
+    monkeypatch.setattr(standing, "standing_agent", owner)
+    monkeypatch.setattr(standing, "run_context", context)
+
+    token = read_only_run.set("")
+    try:
+        with pytest.raises(Exception, match="morning brief was not published"):
+            await orchestrator.run(task, run_record=queued)
+    finally:
+        read_only_run.reset(token)
+
+    stored = await TaskRun.get(queued.id)
+    assert stored is not None and stored.status != TaskRunStatus.COMPLETED
+    assert (await _steps(queued.id))[0].status == TaskRunStepStatus.FAILED
