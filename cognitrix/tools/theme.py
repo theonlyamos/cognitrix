@@ -39,6 +39,69 @@ def _variant(background: str, text: str, accent: str, label: str) -> dict | None
     return {'background': background, 'text': text, 'accent': accent}
 
 
+# Fallback artwork for a theme an agent made without a drawing: the built-in
+# drawing whose mood fits the theme's name, else its accent colour.
+_ARTWORK_WORDS: dict[str, tuple[str, ...]] = {
+    'skyline': ('city', 'tokyo', 'neon', 'cyber', 'synth', 'urban', 'metro', 'street', 'midnight', 'retro wave',
+                'vapor', 'arcade', 'tower'),
+    'aurora': ('aurora', 'nord', 'north', 'arctic', 'polar', 'ice', 'icy', 'frost', 'snow', 'winter', 'glacier',
+               'ocean', 'sea', 'wave', 'lake', 'mountain', 'forest', 'pine', 'mint', 'teal'),
+    'dunes': ('dune', 'desert', 'sand', 'sun', 'solar', 'sunset', 'sunrise', 'dawn', 'dusk', 'beach', 'summer',
+              'autumn', 'fall', 'harvest', 'warm', 'amber', 'copper', 'terracotta', 'coffee', 'mocha', 'earth'),
+    'blueprint': ('blueprint', 'grid', 'engineer', 'code', 'terminal', 'hacker', 'matrix', 'tech', 'circuit',
+                  'graph', 'lab', 'science', 'space'),
+    'halftone': ('contrast', 'mono', 'noir', 'comic', 'print', 'paper', 'ink', 'newspaper', 'grayscale', 'greyscale',
+                 'black', 'minimal'),
+    'moon-cat': ('cat', 'kitten', 'moon', 'cozy', 'cosy', 'cute', 'pastel', 'candy', 'latte', 'lavender',
+                 'rose', 'sakura', 'blossom', 'dream', 'sleep', 'night', 'halloween', 'haunted', 'spooky'),
+}
+
+
+def _hue(color: str) -> float | None:
+    """The hue (0-360) of a #rrggbb colour, or None for greys."""
+    hex_ = themes.normalize_hex(color)
+    if not hex_:
+        return None
+    r, g, b = (int(hex_[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    hi, lo = max(r, g, b), min(r, g, b)
+    if hi - lo < 0.08:
+        return None
+    if hi == r:
+        h = ((g - b) / (hi - lo)) % 6
+    elif hi == g:
+        h = (b - r) / (hi - lo) + 2
+    else:
+        h = (r - g) / (hi - lo) + 4
+    return h * 60
+
+
+def fitting_artwork(name: str, accent: str = '') -> str:
+    """A built-in drawing that suits a theme, from its name, else its accent colour."""
+    words = f' {themes.slugify(name).replace("-", " ")} '
+    for art, keys in _ARTWORK_WORDS.items():
+        if any(f' {k}' in words for k in keys):
+            return art
+    hue = _hue(accent)
+    if hue is None:
+        return 'halftone'
+    if hue < 60 or hue >= 330:
+        return 'dunes'
+    if hue < 200:
+        return 'aurora'
+    if hue < 260:
+        return 'skyline'
+    return 'moon-cat'
+
+
+_DRAW_NEXT = ('Next, without waiting to be asked: draw artwork that fits this theme and its mood, and set it '
+              'with set_theme action "artwork" (svg, name{theme}). Use the theme words (accent, fg, warn, ...) as '
+              'colours. Skip this only if the person said they want no artwork.')
+
+
+def _draw_note(theme_name: str, reason: str) -> str:
+    return f'\n{reason} ' + _DRAW_NEXT.format(theme=f', theme "{theme_name}"')
+
+
 def _describe(state: dict) -> str:
     custom = state['themes']
     mode = state['mode'] or 'each device chooses'
@@ -47,9 +110,10 @@ def _describe(state: dict) -> str:
 
 
 def _changed(name: str, before: dict, after: dict, *, replaced: dict | None = None,
-             created: str | None = None, artwork: dict | None = None) -> ToolOutcome:
+             created: str | None = None, artwork: dict | None = None, note: str = '') -> ToolOutcome:
     """The result line the chat reads (ThemeNotice): what Undo needs is after "Previous:".
-    ``theme`` is a definition this call overwrote; ``created`` a theme it added."""
+    ``theme`` is a definition this call overwrote; ``created`` a theme it added. ``note``
+    (for the agent, on the lines after) is ignored by the chat."""
     previous: dict = {'mode': before['mode'], 'light': before['light'], 'dark': before['dark']}
     if replaced:
         previous['theme'] = replaced
@@ -58,7 +122,7 @@ def _changed(name: str, before: dict, after: dict, *, replaced: dict | None = No
     if artwork is not None:
         previous['artwork'] = artwork
     return ToolOutcome.success(
-        f'Theme changed: {name} ({_describe(after)}). Previous: {json.dumps(previous)}')
+        f'Theme changed: {name} ({_describe(after)}). Previous: {json.dumps(previous)}{note}')
 
 
 @tool(category=THEME_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws'])
@@ -73,12 +137,17 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
     action:
     - "list": the themes they can use and which are in use now.
     - "apply": use a theme (theme: its name or id). Built-in themes: Signal (default), Nord,
-      Solarized, Catppuccin, Tokyo Night, High contrast. Optionally also set mode.
+      Solarized, Catppuccin, Tokyo Night, High contrast (each has its own artwork). Optionally also
+      set mode.
     - "mode": switch mode only (mode: "light", "dark" or "system" to follow the computer).
     - "create": make a new theme from colours and use it (name, plus hex colours for the light
       version, the dark version, or both: *_background, *_text, *_accent). The app derives panels,
       borders and secondary colours and keeps text readable. contrast: 0-100 (default 50).
-      Saving under an existing name replaces that theme.
+      Saving under an existing name replaces that theme (keeping its artwork unless you give new).
+      ALWAYS give svg too: a drawing that fits the theme's mood (see "artwork" for the rules). The
+      person expects every theme an agent makes or changes to come with fitting artwork, without
+      asking for it. Only leave it out if they said they want no artwork (then artwork: "none").
+      Without svg the theme gets the closest built-in drawing and you are asked to draw one.
     - "artwork": the picture shown at the top of their sidebar and above new chats. Either pick a
       built-in one (artwork: signal, aurora, dunes, moon-cat, skyline, halftone, blueprint; "none" to
       hide it; "default" for the theme's own), or draw one: svg = a complete <svg viewBox="0 0 400 160">
@@ -90,8 +159,10 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
       opacity for softer tones. Keep it under 24 KB. Applies to the themes in use, or to `theme`.
       strength: 20-100 (default 85). Every drawing is kept in their library ("list" shows them), so
       artwork can also be the name of a saved drawing to bring it back.
-      "create" also takes svg (with name) to give the new theme its own drawing.
-    Only change the theme when the person asks for it."""
+      "create" also takes svg (with name) to give the new theme its own drawing, or artwork (a
+      built-in or saved drawing's name, or "none").
+    Only change the theme when the person asks for it. When they do (create, change or set a theme),
+    make sure it ends up with fitting artwork; no image key is needed, you draw it as svg."""
     user_id = _owner()
     if not user_id:
         return ToolOutcome.failure('no_owner', 'Themes can only be changed in a chat with a signed-in person.')
@@ -183,7 +254,10 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
                 light=theme_id if 'light' in modes else None,
                 dark=theme_id if 'dark' in modes else None,
             )
-            return _changed(themes.theme_name(theme_id, custom), before, after)
+            note = ''
+            if themes.theme_artwork(theme_id, await themes.get_settings(user_id)) is None:
+                note = _draw_note(themes.theme_name(theme_id, custom), 'This theme has no artwork yet.')
+            return _changed(themes.theme_name(theme_id, custom), before, after, note=note)
 
         if action == 'create':
             label = str(name or theme or '').strip()
@@ -196,16 +270,50 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
                 raw['light'] = light
             if dark:
                 raw['dark'] = dark
-            if str(svg or '').strip():
-                raw['artwork'] = {'svg': svg, 'name': str(name or label).strip()[:48] or 'Drawing'}
-                if strength:
-                    raw['artwork']['strength'] = strength
             existing = themes.find_theme(label, custom)
             if existing in themes.BUILT_IN_THEMES:
                 existing = None
                 raw['name'] = f'{label} (custom)'
             replaced = next((t for t in custom if t['id'] == existing), None) if existing else None
+            note = ''
+            art_name = str(name or label).strip()[:48] or 'Drawing'
+            choice = str(artwork or '').strip()
+            art: dict | None = None
+            if str(svg or '').strip():
+                try:
+                    art = themes.clean_artwork({'svg': svg, 'name': art_name})
+                except themes.ThemeError as exc:
+                    # Keep the colours; the agent fixes the drawing with action "artwork".
+                    note = _draw_note(raw['name'], f'The drawing was not used ({exc}). Gave the theme a built-in one for now.')
+            elif choice.lower() in ('none', 'off', 'hide', 'no'):
+                art = {'id': 'none'}
+            elif choice:
+                slug = choice.lower().replace(' ', '-')
+                found = next((k for k, v in themes.ARTWORK_NAMES.items() if slug in (k, v.lower().replace(' ', '-'))), None)
+                saved_art = None if found else themes.find_drawing(choice, await themes.get_settings(user_id))
+                if found:
+                    art = {'id': found}
+                elif saved_art:
+                    art = {'svg': saved_art['svg'], 'name': saved_art['name']}
+            chosen_art = art is not None  # the agent picked this drawing (not kept or a fallback)
+            if art is None and replaced and replaced.get('artwork') and not note:
+                art = replaced['artwork']  # changing a theme's colours keeps its drawing
+            if art is None:
+                variant = raw.get('dark') or raw.get('light') or {}
+                art = {'id': fitting_artwork(label, variant.get('accent', ''))}
+                if not note:
+                    note = _draw_note(raw['name'], f'The theme has the built-in {themes.ARTWORK_NAMES[art["id"]]} '
+                                                   'artwork for now.')
+            if strength and art.get('id') != 'none':
+                art = {**art, 'strength': strength}
+            raw['artwork'] = art
             saved, _ = await themes.save_theme(user_id, raw, theme_id=existing)
+            # Artwork chosen for this theme earlier (action "artwork", Settings) would hide the new
+            # choice, so it goes; Undo puts it back.
+            previous_art = None
+            if chosen_art and before['artwork'].get(saved['id']):
+                previous_art = {saved['id']: before['artwork'][saved['id']]}
+                await themes.set_artwork(user_id, saved['id'], None)
             modes = tuple(m for m in ('light', 'dark') if saved.get(m))
             if mode and mode not in themes.MODES:
                 return ToolOutcome.failure('bad_mode', 'mode must be "light", "dark" or "system".')
@@ -217,7 +325,7 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
                 dark=saved['id'] if 'dark' in modes else None,
             )
             return _changed(saved['name'], before, after, replaced=replaced,
-                            created=None if replaced else saved['id'])
+                            created=None if replaced else saved['id'], artwork=previous_art, note=note)
     except themes.ThemeError as exc:
         return ToolOutcome.failure('bad_theme', str(exc))
     return ToolOutcome.failure('bad_action', 'action must be "list", "apply", "mode", "create" or "artwork".')

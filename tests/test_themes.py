@@ -160,7 +160,7 @@ async def test_set_theme_tool_applies_lists_and_creates(db):
 
         done = _text(await _tool(action='apply', theme='tokyo night', mode='dark'))
         assert done.startswith('Theme changed: Tokyo Night')
-        previous = json.loads(done.split('Previous: ', 1)[1])
+        previous = json.loads(done.split('Previous: ', 1)[1].split('\n', 1)[0])
         assert previous == {'mode': '', 'light': 'signal', 'dark': 'signal'}
         state = themes.project(await themes.get_settings(str(amy.id)))
         assert (state['light'], state['dark'], state['mode']) == ('tokyo-night', 'tokyo-night', 'dark')
@@ -168,14 +168,14 @@ async def test_set_theme_tool_applies_lists_and_creates(db):
         made = _text(await _tool(action='create', name='Forest', dark_background='#0f1a14',
                                  dark_text='#e0f0e6', dark_accent='#5ad17a'))
         assert made.startswith('Theme changed: Forest')
-        assert json.loads(made.split('Previous: ', 1)[1])['created'] == 'forest'
+        assert json.loads(made.split('Previous: ', 1)[1].split('\n', 1)[0])['created'] == 'forest'
         state = themes.project(await themes.get_settings(str(amy.id)))
         assert state['dark'] == 'forest' and state['light'] == 'tokyo-night' and state['mode'] == 'dark'
 
         again = _text(await _tool(action='create', name='Forest', dark_background='#0f1a14',
                                   dark_text='#e0f0e6', dark_accent='#ff0000'))
         assert again.startswith('Theme changed: Forest')
-        undo = json.loads(again.split('Previous: ', 1)[1])
+        undo = json.loads(again.split('Previous: ', 1)[1].split('\n', 1)[0])
         assert undo['theme']['dark']['accent'] == '#5ad17a' and 'created' not in undo
         state = themes.project(await themes.get_settings(str(amy.id)))
         assert len(state['themes']) == 1 and state['themes'][0]['dark']['accent'] == '#ff0000'
@@ -302,6 +302,21 @@ async def test_theme_artwork_api(db):
         app.dependency_overrides.pop(jwt_only, None)
 
 
+async def test_fitting_artwork_follows_the_name_then_the_accent():
+    from cognitrix.tools.theme import fitting_artwork
+
+    assert fitting_artwork('Desert Sunset') == 'dunes'
+    assert fitting_artwork('Tokyo Night') == 'skyline'
+    assert fitting_artwork('Arctic') == 'aurora'
+    assert fitting_artwork('Cozy cat') == 'moon-cat'
+    assert fitting_artwork('Hacker terminal') == 'blueprint'
+    assert fitting_artwork('Mine', '#ff9b40') == 'dunes'
+    assert fitting_artwork('Mine', '#2fb3a0') == 'aurora'
+    assert fitting_artwork('Mine', '#3060ff') == 'skyline'
+    assert fitting_artwork('Mine', '#c060ff') == 'moon-cat'
+    assert fitting_artwork('Mine', '#808080') == 'halftone'
+
+
 async def test_set_theme_tool_draws_and_picks_artwork(db):
     from cognitrix import themes
 
@@ -314,14 +329,14 @@ async def test_set_theme_tool_draws_and_picks_artwork(db):
 
         drawn = _text(await _tool(action='artwork', svg=lighthouse, name='Lighthouse'))
         assert drawn.startswith('Theme changed: Lighthouse artwork on Nord')
-        assert json.loads(drawn.split('Previous: ', 1)[1])['artwork'] == {'nord': None}
+        assert json.loads(drawn.split('Previous: ', 1)[1].split('\n', 1)[0])['artwork'] == {'nord': None}
         state = themes.project(await themes.get_settings(str(amy.id)))
         assert state['artwork']['nord']['name'] == 'Lighthouse' and state['dark'] == 'nord'
 
         picked = _text(await _tool(action='artwork', artwork='Moon cat', theme='solarized'))
         assert picked.startswith('Theme changed: Moon cat artwork on Solarized')
         hidden = _text(await _tool(action='artwork', artwork='none'))
-        assert json.loads(hidden.split('Previous: ', 1)[1])['artwork']['nord']['name'] == 'Lighthouse'
+        assert json.loads(hidden.split('Previous: ', 1)[1].split('\n', 1)[0])['artwork']['nord']['name'] == 'Lighthouse'
         assert 'no artwork' in _text(await _tool(action='artwork', artwork='Mona Lisa')).lower()
         assert 'not valid' in _text(await _tool(action='artwork', svg='<svg nope')).lower()
 
@@ -402,3 +417,64 @@ def test_artwork_transforms_do_not_backtrack():
     start = time.monotonic()
     assert themes.clean_artwork_attribute('transform', 'scale()' + ' scale()' * 400 + '!') is None
     assert time.monotonic() - start < 0.5
+
+
+async def test_themes_agents_make_always_get_artwork(db):
+    """Asked to make or change a theme, the agent gives it artwork without being asked."""
+    from cognitrix import themes
+
+    amy = await _user('Amy', 'amy@example.com')
+    uid = str(amy.id)
+    hill = '<svg viewBox="0 0 400 160"><path d="M0 160 Q200 60 400 160Z" fill="accent"/></svg>'
+    with _as(amy):
+        # No drawing given: the closest built-in one, and the agent is told to draw one next.
+        made = _text(await _tool(action='create', name='Desert Sunset', dark_background='#1a120c',
+                                 dark_text='#fff1dd', dark_accent='#ff9b40'))
+        first, note = made.split('\n', 1)
+        assert first.startswith('Theme changed: Desert Sunset') and json.loads(first.split('Previous: ', 1)[1])
+        assert 'Dunes' in note and 'action "artwork"' in note and 'theme "Desert Sunset"' in note
+        state = themes.project(await themes.get_settings(uid))
+        assert state['themes'][0]['artwork'] == {'id': 'dunes'}
+
+        # Its drawing then goes on.
+        drawn = _text(await _tool(action='artwork', svg=hill, name='Hill', theme='Desert Sunset'))
+        assert drawn.startswith('Theme changed: Hill artwork') and '\n' not in drawn
+
+        # With a drawing: no note, and changing the colours later keeps it.
+        made = _text(await _tool(action='create', name='Hills', light_background='#ffffff',
+                                 light_text='#111111', light_accent='#2a7', svg=hill))
+        assert '\n' not in made
+        again = _text(await _tool(action='create', name='Hills', light_background='#fafafa',
+                                  light_text='#111111', light_accent='#2a7'))
+        assert '\n' not in again
+        hills = next(t for t in themes.project(await themes.get_settings(uid))['themes'] if t['id'] == 'hills')
+        assert hills['artwork']['name'] == 'Hills'
+
+        # A broken drawing keeps the theme, with a built-in drawing and a note to fix it.
+        broken = _text(await _tool(action='create', name='Broken', dark_background='#000000',
+                                   dark_text='#ffffff', dark_accent='#3060ff', svg='<svg nope'))
+        assert broken.startswith('Theme changed: Broken') and 'was not used' in broken
+        broken_theme = next(t for t in themes.project(await themes.get_settings(uid))['themes'] if t['id'] == 'broken')
+        assert broken_theme['artwork'] == {'id': 'skyline'}
+
+        # A new choice for a theme replaces artwork picked for it before (Undo brings that back).
+        await _tool(action='artwork', artwork='blueprint', theme='hills')
+        swapped = _text(await _tool(action='create', name='Hills', light_background='#fafafa',
+                                    light_text='#111111', light_accent='#2a7', artwork='none'))
+        assert json.loads(swapped.split('Previous: ', 1)[1])['artwork'] == {'hills': {'id': 'blueprint'}}
+        row = await themes.get_settings(uid)
+        assert themes.theme_artwork('hills', row) == {'id': 'none'}
+
+        # Asked for no artwork: none, and no note.
+        plain = _text(await _tool(action='create', name='Plain', dark_background='#000000',
+                                  dark_text='#ffffff', dark_accent='#888888', artwork='none'))
+        assert '\n' not in plain
+
+        # Applying a theme with no artwork (made before this) asks for a drawing; built-ins have their own.
+        row = await themes.get_settings(uid)
+        custom = json.loads(row.themes)
+        custom.append({'name': 'Old', 'id': 'old', 'contrast': 50,
+                       'dark': {'background': '#000000', 'text': '#ffffff', 'accent': '#ff0000'}})
+        await themes._save(uid, {'themes': json.dumps(custom)})
+        assert 'no artwork yet' in _text(await _tool(action='apply', theme='Old'))
+        assert '\n' not in _text(await _tool(action='apply', theme='Nord'))

@@ -9,10 +9,10 @@ export interface ThemeChange {
   previous: ThemeUndo;
 }
 
-/** A Set Theme tool result: "Theme changed: Nord (light: …). Previous: {...}". */
+/** A Set Theme tool result: "Theme changed: Nord (light: …). Previous: {...}", maybe with a note for the agent on later lines. */
 export function themeChange(toolName: string, result?: string | null): ThemeChange | null {
   if (!result || toolName.replace(/_/g, ' ').trim().toLowerCase() !== 'set theme') return null;
-  const m = /^Theme changed: ([\s\S]+?) \([^)]*\)\. Previous: (\{.*\})\s*$/.exec(result.trim());
+  const m = /^Theme changed: ([\s\S]+?) \([^)]*\)\. Previous: (\{.*\})(?:\n[\s\S]*)?$/.exec(result.trim());
   if (!m) return null;
   try {
     const previous = JSON.parse(m[2]) as ThemeChange['previous'];
