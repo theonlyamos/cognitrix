@@ -5,11 +5,11 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from cognitrix.memory.chroma_store import ChromaMemoryStore
 from cognitrix.sessions.context import SlidingWindowContextManager
 
 if TYPE_CHECKING:
     from cognitrix.agents.base import Agent
+    from cognitrix.memory.chroma_store import ChromaMemoryStore
     from cognitrix.sessions.base import Session
 
 logger = logging.getLogger('cognitrix.log')
@@ -21,6 +21,15 @@ INCOGNITO_NOTE = (
     "say it won't be kept because the chat is incognito. Don't write it to a file, notes or "
     "any other place instead."
 )
+
+
+def _chromadb_installed() -> bool:
+    from importlib.util import find_spec
+
+    try:
+        return find_spec('chromadb') is not None
+    except (ImportError, ValueError):
+        return False
 
 
 class ImportanceScorer:
@@ -128,6 +137,11 @@ class HybridContextManager(BaseContextManager):
         # Check if vector store is disabled via environment variable
         import os
         self._vector_store_disabled = os.environ.get('DISABLE_VECTOR_STORE', '').lower() == 'true'
+        # The sandboxed computer's copy of the CLI is installed without
+        # chromadb (sandbox/desktop/Dockerfile): no vector store there.
+        if not self._vector_store_disabled and not _chromadb_installed():
+            logger.info("chromadb isn't installed; long-term vector memory is off")
+            self._vector_store_disabled = True
 
         if self._vector_store_disabled:
             logger.info("Vector store disabled via DISABLE_VECTOR_STORE env var")
@@ -135,18 +149,20 @@ class HybridContextManager(BaseContextManager):
         logger.info(f"HybridContextManager initialized (lazy) for agent: {agent_id}")
 
     @property
-    def long_term(self) -> ChromaMemoryStore | None:
+    def long_term(self) -> 'ChromaMemoryStore | None':
         """Lazy-initialize ChromaDB-backed long-term memory store (sync)."""
         if self._vector_store_disabled:
             return None
 
         if self._chroma_store is None:
+            from cognitrix.memory.chroma_store import ChromaMemoryStore
+
             self._chroma_store = ChromaMemoryStore(
                 collection_name=self._chroma_config['collection_name']
             )
         return self._chroma_store
 
-    async def _ensure_long_term(self) -> ChromaMemoryStore | None:
+    async def _ensure_long_term(self) -> 'ChromaMemoryStore | None':
         """Async-safe long-term store accessor.
 
         First use constructs ChromaMemoryStore, which loads the ONNX embedding model
@@ -160,6 +176,8 @@ class HybridContextManager(BaseContextManager):
             return self._chroma_store
         async with self._long_term_lock:
             if self._chroma_store is None:
+                from cognitrix.memory.chroma_store import ChromaMemoryStore
+
                 self._chroma_store = await asyncio.to_thread(
                     ChromaMemoryStore,
                     collection_name=self._chroma_config['collection_name'],

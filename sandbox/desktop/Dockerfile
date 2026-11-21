@@ -84,6 +84,22 @@ RUN for i in $(seq -w 1 64); do \
         && usermod -aG "cgx$i" agent || exit 1; \
     done
 
+# The app's own CLI (`cognitrix`, and `cognitrix-python` for scripts that
+# import the package), built from this same source so it matches the engine
+# of this commit or release. Its own venv; long-term vector memory (chromadb)
+# is left out to keep the image small. No keys or sign-ins are in the image: a
+# command that runs it gets the person's model keys at run time, as
+# placeholders the key proxy fills in (cognitrix_cli_env in
+# cognitrix/common/sandbox_work.py).
+COPY pyproject.toml README.md /tmp/cognitrix-src/
+COPY cognitrix/ /tmp/cognitrix-src/cognitrix/
+COPY sandbox/desktop/cognitrix-cli/ /tmp/cognitrix-cli/
+RUN sh /tmp/cognitrix-cli/install.sh /tmp/cognitrix-src /opt/cognitrix-cli \
+    && install -m 755 /tmp/cognitrix-cli/cognitrix /tmp/cognitrix-cli/cognitrix-python /usr/local/bin/ \
+    && rm -rf /tmp/cognitrix-src /tmp/cognitrix-cli /root/.cache
+ARG COGNITRIX_VERSION=dev
+LABEL cognitrix.cli-version="${COGNITRIX_VERSION}"
+
 USER agent
 WORKDIR /home/agent
 # Files, downloads, browser profiles, Apps (~/.cognitrix-apps) and the agents'
