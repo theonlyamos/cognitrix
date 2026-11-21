@@ -319,3 +319,37 @@ async def test_setup_can_leave_check_ins_off(db, monkeypatch):  # noqa: F811
     with pytest.raises(HTTPException) as exc:
         await proactive.brief_now(_ctx(user))
     assert exc.value.status_code == 409
+
+
+# ---------------------------------------------------------------- brief in a task run
+
+def test_publish_brief_items_reach_the_tool_in_a_task_run():
+    """In a task run the tool's arguments are checked against its stored schema.
+    "Invalid type for parameter: items" refused every brief: the schema said a
+    list of strings, and models send the list of objects as JSON text."""
+    import json
+
+    from cognitrix.tasks.runtime import _SnapshotBoundTool
+    from cognitrix.tools.base import ToolManager
+
+    tool = ToolManager.get_by_name('publish_brief')
+    schema = tool.to_dict_format()
+    assert schema['function']['parameters']['properties']['items']['items'] == {'type': 'object'}
+    bound = _SnapshotBoundTool(tool, schema)
+    items = [{'section': 'today', 'text': '10:00 call', 'why': 'calendar'}]
+    assert bound.validate_parameters({'summary': 's', 'items': items})['items'] == items
+    assert bound.validate_parameters({'summary': 's', 'items': json.dumps(items)})['items'] == items
+    with pytest.raises(ValueError, match='Invalid type for parameter: items'):
+        bound.validate_parameters({'summary': 's', 'items': 'not json'})
+
+
+async def test_a_brief_run_that_published_nothing_is_not_completed(db):  # noqa: F811
+    from cognitrix.assistant import brief
+    from cognitrix.tasks.orchestrator import _brief_published
+
+    user = await _user()
+    run = SimpleNamespace(id='run-brief-1')
+    assert not await _brief_published(run)
+    await brief.publish(str(user.id), SimpleNamespace(id='a1', name='Jarvis'), 'run-brief-1',
+                        '2026-11-21', 'Nothing needs you.', [])
+    assert await _brief_published(run)

@@ -1039,6 +1039,17 @@ async def _cancel_unfinished_steps(
         )
 
 
+async def _brief_published(run: TaskRun) -> bool:
+    """True when Publish Brief stored a brief for this run."""
+    from cognitrix.assistant.brief import Brief
+
+    try:
+        return await Brief.find_one({'run_id': str(run.id)}) is not None
+    except Exception:
+        logger.debug('Could not look up the brief for run %s', run.id, exc_info=True)
+        return True  # don't fail a run on a lookup problem
+
+
 async def _execute_compiled_steps(
     task: 'Task',
     run: TaskRun,
@@ -1183,6 +1194,15 @@ async def _execute_compiled_steps(
                 # notes, alerts and offers it leaves, and "nothing needs you"
                 # is a valid outcome. Grading its short summary failed good
                 # check-ins, and a retry repeated the whole check-in.
+                # The morning brief does have one: a brief run that never
+                # published it failed, whatever its text says.
+                if (getattr(run, 'trigger_kind', None) == 'brief'
+                        and row.step_index == max(by_index)
+                        and not await _brief_published(run)):
+                    raise StepFailure(
+                        "The morning brief was not published: Publish Brief never succeeded in this run",
+                        result=last_result,
+                    )
                 return last_result
             try:
                 async def record_evaluation_retry() -> None:
