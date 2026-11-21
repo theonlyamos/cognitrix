@@ -68,6 +68,20 @@ describe('ComputerPanel', () => {
     await waitFor(() => expect(rfb.made.length).toBe(1));
   });
 
+  it("takes over the desktop an agent asked for, once", async () => {
+    lib.sandboxStatus.mockResolvedValue({
+      enabled: true, running: true,
+      desktops: [{ name: 'a1', display: ':1', held_by: null, running: true }, { name: 'b2', display: ':2', held_by: null, running: true }],
+    });
+    lib.takeOver.mockResolvedValue('full');
+    const started = vi.fn();
+    render(<ComputerPanel agents={agents} focusAgentId="A1" takeOverRequest={{ desktop: 'b2', at: 1 }} onTakeOverStarted={started} onClose={() => {}} />);
+    await waitFor(() => expect(lib.takeOver).toHaveBeenCalledWith('b2'));
+    expect(started).toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: 'Hand back' })).toBeInTheDocument();
+    expect(lib.takeOver).toHaveBeenCalledTimes(1);
+  });
+
   it('explains how to turn it on when it is off', async () => {
     lib.sandboxStatus.mockResolvedValue({ enabled: false, running: false, desktops: [] });
     render(<ComputerPanel agents={agents} onClose={() => {}} />);

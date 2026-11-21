@@ -4286,6 +4286,12 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.whatsNew.versionVersion_bd01": "VERSION {version}",
   "ui.whatsNew.whatSNew": "NOUVEAUTÉS",
   "ui.whatsNew.whatSNewInCognitrix": "Nouveautés de Cognitrix",
+  "ui.takeover.tag": "À vous",
+  "ui.takeover.title": "{name} a besoin que vous preniez la main sur son ordinateur",
+  "ui.takeover.anAgent": "L'agent",
+  "ui.takeover.hint": "Appuyez sur Prendre la main, faites-le à l'écran, puis appuyez sur Rendre la main. L'agent attend jusque-là. Passez si vous ne le ferez pas.",
+  "ui.takeover.takeOver": "Prendre la main",
+  "ui.takeover.skip": "Passer",
 };
 
 export default ui;

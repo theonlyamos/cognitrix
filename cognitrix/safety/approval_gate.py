@@ -23,6 +23,24 @@ logger = logging.getLogger('cognitrix.log')
 # giving an agent a new folder or write access widens what it can touch.
 _NEVER_AUTO_APPROVED = frozenset({'request_folder', 'copy_back_from_sandbox'})
 
+# How long a request to take over the agent's computer waits for Take over or
+# Skip (other approvals wait the gate's usual timeout).
+TAKEOVER_ANSWER_TIMEOUT = 30 * 60.0
+
+
+def _takeover_target(tool_call, scope: str | None) -> dict:
+    """What a Take over card needs: the agent's desktop and the reason."""
+    desktop = 'main'
+    try:
+        from cognitrix.computer.sandbox import desktop_name, note_takeover_asked
+        from cognitrix.projects.context import sandbox_identity
+
+        desktop = desktop_name(sandbox_identity(scope))
+        note_takeover_asked(desktop)
+    except Exception:
+        logger.debug('No desktop for a take-over request', exc_info=True)
+    return {'desktop': desktop, 'reason': str((tool_call.params or {}).get('reason') or '')[:200]}
+
 
 def _normal_name(name: str) -> str:
     return str(name or '').strip().lower().replace(' ', '_')
@@ -260,6 +278,9 @@ class ApprovalGate:
         # Taking over the person's screen, mouse and keyboard is asked every
         # time: no remembered answer, auto-approve or reviewer stands in.
         always_ask = bool({'screen_takeover', 'person_takeover'} & set(risk.categories or []))
+        # The person may be away for a while before they can take over.
+        if 'person_takeover' in (risk.categories or []):
+            timeout = max(timeout, TAKEOVER_ANSWER_TIMEOUT)
 
         if not person_only and not always_ask and scoped in self.permanent_cache:
             return ApprovalResult(approved=True, cached=True)
@@ -666,6 +687,10 @@ class ApprovalGate:
                 'full_shell': person_only,
                 # Asked every time (a screen takeover): no "for session" button.
                 **({'always_ask': True} if must_ask else {}),
+                # The agent asks the person to take over its computer: the
+                # card's Take over opens that desktop with them in control.
+                **({'takeover': _takeover_target(tool_call, scope)}
+                   if 'person_takeover' in (risk.categories or []) else {}),
                 # A background action in an app window: the card offers
                 # "allow <app> in this chat" and "always allow <app>".
                 **({'app': {'key': tool_call.app, 'label': _app_label(tool_call.app)}} if tool_call.app else {}),

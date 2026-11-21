@@ -139,6 +139,8 @@ interface ApprovalRequest {
   always_ask?: boolean;
   /** "Always allow": the tool for this agent, or commands starting like this one on this computer. */
   always?: { kind: 'tool' | 'command'; label: string; computer?: string };
+  /** The agent asks you to take over its computer (Ask To Take Over). */
+  takeover?: { desktop: string; reason: string };
 }
 
 export default function Home() {
@@ -344,6 +346,8 @@ export default function Home() {
   // The agents' sandboxed computer (one desktop per agent), when the server has it on.
   const [sandboxOn, setSandboxOn] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
+  // Take over on an agent's request: the computer panel opens with you in control of this desktop.
+  const [takeOverRequest, setTakeOverRequest] = useState<{ desktop: string; at: number } | null>(null);
   // The artifact open beside the chat (same place as the computer panel), and
   // whether it is expanded to fill the window.
   const [artifactOpen, setArtifactOpen] = useState<string | null>(null);
@@ -2497,7 +2501,35 @@ export default function Home() {
             />
           )}
 
-          {approvals.map((a) => (
+          {approvals.map((a) => a.takeover ? (
+            <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
+              <PanelCard
+                tag={<>{tr('ui.takeover.tag')}</>}
+                title={tr('ui.takeover.title', { name: currentAgent?.name || tr('ui.takeover.anAgent') })}
+                subtitle={a.takeover.reason || undefined}
+                footer={(
+                  <>
+                    <PanelButton
+                      kind="primary"
+                      onClick={() => {
+                        const desktop = a.takeover?.desktop || 'main';
+                        void respondApproval(a.request_id, true);
+                        closeArtifact(); closeAppView(); closeChanges();
+                        setTakeOverRequest({ desktop, at: Date.now() });
+                        setComputerOpen(true);
+                      }}
+                    >
+                      {tr('ui.takeover.takeOver')}
+                    </PanelButton>
+                    <span className="grow" />
+                    <PanelButton onClick={() => respondApproval(a.request_id, false)}>{tr('ui.takeover.skip')}</PanelButton>
+                  </>
+                )}
+              >
+                <p className="text-[12.5px] leading-relaxed text-fg-dim">{tr('ui.takeover.hint')}</p>
+              </PanelCard>
+            </div>
+          ) : (
             <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
               <PanelCard
                 tone="danger"
@@ -2601,6 +2633,8 @@ export default function Home() {
           <ComputerPanel
             agents={agents.map((a) => ({ id: String(a.id), name: a.name }))}
             focusAgentId={agentId}
+            takeOverRequest={takeOverRequest}
+            onTakeOverStarted={() => setTakeOverRequest(null)}
             onClose={closeRightSide}
             onBack={sidebarOpen ? () => setComputerOpen(false) : undefined}
           />
