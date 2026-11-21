@@ -237,6 +237,10 @@ async def test_ask_to_take_over_waits_for_take_over_and_hand_back(monkeypatch):
     # Nobody took over in time / never handed back.
     assert await tools.wait_for_hand_back(lambda: None, wait_s=0.05, poll_s=0.01) == 'not_taken'
     assert await tools.wait_for_hand_back(lambda: 'the person', wait_s=0.05, poll_s=0.01) == 'still_held'
+    # A take over that ended before the first check (or between checks) still counts.
+    assert await tools.wait_for_hand_back(lambda: None, handed_back=lambda: True, wait_s=5, poll_s=0) == 'handed_back'
+    # It waits on a person, so it doesn't hold one of the shared execution slots.
+    assert tools.ask_to_take_over.occupies_execution_slot is False
 
     # The tool itself: checks the agent's own desktop until it is handed back.
     class Box:
@@ -253,6 +257,15 @@ async def test_ask_to_take_over_waits_for_take_over_and_hand_back(monkeypatch):
     monkeypatch.setattr(tools, '_TAKEOVER_POLL_S', 0)
     out = (await tools.ask_to_take_over.run(reason='Sign in')).content
     assert 'handed the computer back' in out
+
+    # Taken over and handed back after the card was shown but before the tool looked.
+    from cognitrix.computer import sandbox as sandbox_pkg
+    sandbox_pkg.note_takeover_asked('c3')
+    sandbox_pkg.note_handed_back('c3')
+    idle = type('D', (), {'box': type('B', (), {'desktops': lambda self: [{'name': 'c3', 'held_by': None}]})(),
+                          'desktop': 'c3'})()
+    monkeypatch.setattr(tools, '_driver', lambda actor, computer: idle)
+    assert 'handed the computer back' in (await tools.ask_to_take_over.run(reason='Sign in')).content
 
 
 def test_take_over_request_always_asks_a_person(monkeypatch):
@@ -371,7 +384,10 @@ def test_take_over_returns_the_full_password(api):
     data = client.post('/computer/sandbox/desktops/agent-a/hold', json={}).json()
     assert data == {'ok': True, 'held_by': 'Amos', 'password': 'fullpass'}
     assert box.requests[-1] == ('POST', '/desktops/agent-a/hold', {'by': 'Amos'})
+    from cognitrix.computer import sandbox as sandbox_pkg
+    before = sandbox_pkg.handed_back_at('agent-a') or 0
     assert client.post('/computer/sandbox/desktops/agent-a/release').json() == {'ok': True}
+    assert (sandbox_pkg.handed_back_at('agent-a') or 0) > before  # a waiting Ask To Take Over sees it
 
 
 def test_bad_desktop_name_is_refused(api):

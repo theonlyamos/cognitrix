@@ -327,14 +327,15 @@ def _desktop_held_by(driver: Any) -> str | None:
     return None
 
 
-async def wait_for_hand_back(held_by: Any, *, wait_s: float = TAKEOVER_WAIT_S,
+async def wait_for_hand_back(held_by: Any, *, handed_back: Any = None, wait_s: float = TAKEOVER_WAIT_S,
                              poll_s: float = _TAKEOVER_POLL_S) -> str:
     """Wait until the person has taken over the desktop and handed it back.
 
     Returns 'handed_back', 'not_taken' (nobody took over in time) or
     'still_held' (taken over, not handed back in time). ``held_by`` is a
     blocking call returning who holds the desktop; a failed check counts as
-    no change.
+    no change. ``handed_back`` says whether a hand back was recorded since the
+    request, which catches a take over that ended before (or between) checks.
     """
     deadline = time.monotonic() + wait_s
     taken = False
@@ -345,14 +346,15 @@ async def wait_for_hand_back(held_by: Any, *, wait_s: float = TAKEOVER_WAIT_S,
             holder = 'unknown' if taken else None
         if holder:
             taken = True
-        elif taken:
+        elif taken or (handed_back is not None and handed_back()):
             return 'handed_back'
         if time.monotonic() >= deadline:
             return 'still_held' if taken else 'not_taken'
         await asyncio.sleep(poll_s)
 
 
-@tool(category='system')
+# Waits on a person, so it holds no execution slot (like Ask User).
+@tool(category='system', occupies_execution_slot=False)
 async def ask_to_take_over(reason: str, *, parent: Any | None = None):
     """Ask the person to take over your computer for a step only they should do: signing in, a 2FA code, a
     CAPTCHA, a payment or anything private. They see your reason with a Take over button, do it on your screen,
@@ -378,7 +380,16 @@ async def ask_to_take_over(reason: str, *, parent: Any | None = None):
         return ToolOutcome.failure('computer_use', str(exc))
     finally:
         current_actor.reset(token)
-    outcome = await wait_for_hand_back(lambda: _desktop_held_by(driver))
+    from cognitrix.computer.sandbox import handed_back_at, takeover_asked_at
+
+    asked = takeover_asked_at(driver.desktop) or time.monotonic()
+
+    def handed_back() -> bool:
+        when = handed_back_at(driver.desktop)
+        return when is not None and when >= asked
+
+    outcome = await wait_for_hand_back(lambda: _desktop_held_by(driver), handed_back=handed_back,
+                                       poll_s=_TAKEOVER_POLL_S)
     minutes = int(TAKEOVER_WAIT_S // 60)
     if outcome == 'not_taken':
         return ToolOutcome.failure(

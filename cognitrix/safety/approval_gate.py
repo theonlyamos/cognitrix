@@ -32,10 +32,11 @@ def _takeover_target(tool_call, scope: str | None) -> dict:
     """What a Take over card needs: the agent's desktop and the reason."""
     desktop = 'main'
     try:
-        from cognitrix.computer.sandbox import desktop_name
+        from cognitrix.computer.sandbox import desktop_name, note_takeover_asked
         from cognitrix.projects.context import sandbox_identity
 
         desktop = desktop_name(sandbox_identity(scope))
+        note_takeover_asked(desktop)
     except Exception:
         logger.debug('No desktop for a take-over request', exc_info=True)
     return {'desktop': desktop, 'reason': str((tool_call.params or {}).get('reason') or '')[:200]}

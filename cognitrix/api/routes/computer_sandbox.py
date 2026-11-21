@@ -42,7 +42,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from cognitrix.common.security import AuthContext, jwt_only
-from cognitrix.computer.sandbox import check_name
+from cognitrix.computer.sandbox import check_name, note_handed_back
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +280,8 @@ async def hold(name: str, body: HoldBody | None = None, ctx: AuthContext = Depen
 async def release(name: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     box = await _box(ctx)
     out = await run_in_threadpool(box.request, 'POST', f'/desktops/{_desktop(name)}/release')
+    if out.get('ok'):
+        note_handed_back(_desktop(name))
     return {'ok': bool(out.get('ok'))}
 
 
@@ -342,6 +344,7 @@ async def teach_stop(name: str, body: TeachStopBody | None = None,
     result = _call_out(out)
     if body is None or body.hand_back:
         await run_in_threadpool(box.call, 'POST', f'/desktops/{name}/release')
+        note_handed_back(name)
     steps = result.get('steps') or []
     return {'steps': steps, 'text': steps_as_text(steps), 'truncated': bool(result.get('truncated')),
             'seconds': result.get('seconds')}

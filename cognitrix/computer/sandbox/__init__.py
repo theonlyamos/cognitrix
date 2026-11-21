@@ -23,6 +23,7 @@ import base64
 import io
 import os
 import re
+import time
 from dataclasses import asdict
 from typing import Any
 
@@ -42,6 +43,29 @@ def desktop_name(raw: Any) -> str:
     if not _NAME.match(text):
         text = 'd-' + text[:46]
     return text
+
+
+# Ask To Take Over: when an agent asked for a desktop to be taken over, and
+# when a person last handed it back (in this process), so the waiting tool
+# sees a take over that finished before it started looking.
+_takeover_asked: dict[str, float] = {}
+_handed_back: dict[str, float] = {}
+
+
+def note_takeover_asked(desktop: str) -> None:
+    _takeover_asked[desktop] = time.monotonic()
+
+
+def note_handed_back(desktop: str) -> None:
+    _handed_back[desktop] = time.monotonic()
+
+
+def takeover_asked_at(desktop: str) -> float | None:
+    return _takeover_asked.get(desktop)
+
+
+def handed_back_at(desktop: str) -> float | None:
+    return _handed_back.get(desktop)
 
 
 def check_name(name: str) -> str:
