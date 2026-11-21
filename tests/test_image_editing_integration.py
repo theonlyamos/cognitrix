@@ -268,6 +268,11 @@ def integration_harness(tmp_path, monkeypatch):
 
     conversation = _ConversationProvider()
     monkeypatch.setattr(LLMManager, "generate_response", staticmethod(conversation.generate))
+    # The background chat title is its own model call; these tests read the
+    # turn's prompts, so keep that call out of the scripted conversation.
+    from cognitrix.sessions import titles as chat_titles
+
+    monkeypatch.setattr(chat_titles, "schedule", lambda *_args, **_kwargs: None)
 
     llm = LLM(provider="openai", base_url="http://provider.invalid", api_key="key", model="model")
     agent = Agent(
