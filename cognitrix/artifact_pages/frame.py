@@ -135,6 +135,19 @@ RUNTIME = r"""
     document.documentElement.style.cursor = '';
     parent.postMessage({cognitrix: 1, type: 'picked', anchor: {x: e.pageX / s.w, y: e.pageY / s.h, text: text}}, '*');
   }, true);
+  // Links to other sites leave the frame: a new tab on the web, the default
+  // browser in the desktop app. A page loaded inside the frame would just
+  // show a blank box (most sites refuse to be framed).
+  document.addEventListener('click', function(e){
+    if (picking || e.defaultPrevented) return;
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a || a.hasAttribute('download')) return;
+    var href = a.getAttribute('href') || '';
+    if (/^(https?:|mailto:)/i.test(href) && a.target !== '_blank') {
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+    }
+  });
   function drawPins(pins){
     if (!document.body) return;
     if (!pinLayer) {

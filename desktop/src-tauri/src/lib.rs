@@ -15,7 +15,7 @@ mod update;
 
 use serde::{Deserialize, Serialize};
 use tauri::{
-    webview::{PermissionKind, PermissionResponse},
+    webview::{NewWindowResponse, PermissionKind, PermissionResponse},
     AppHandle, Emitter, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     WindowEvent,
 };
@@ -51,10 +51,29 @@ fn allow_navigation(app: &AppHandle, url: &Url) -> bool {
     if local_app || engine || url.scheme() == "about" || url.scheme() == "blob" || url.scheme() == "data" {
         return true;
     }
-    if matches!(url.scheme(), "http" | "https" | "mailto") {
+    open_in_browser(app, url);
+    false
+}
+
+/// Web and mail links leave the app for the default browser or mail app.
+/// Every other scheme (file:, javascript:, custom protocols) is dropped.
+fn is_browser_link(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https" | "mailto")
+}
+
+fn open_in_browser(app: &AppHandle, url: &Url) {
+    if is_browser_link(url) {
         let _ = app.opener().open_url(url.as_str(), None::<&str>);
     }
-    false
+}
+
+/// A page asked for a new window: a `target="_blank"` link in a chat reply,
+/// an artifact or an app, or `window.open`. The webview would otherwise drop
+/// it silently, so the link opens in the default browser instead and no bare
+/// webview window appears.
+fn open_new_window(app: &AppHandle, url: &Url) -> NewWindowResponse<tauri::Wry> {
+    open_in_browser(app, url);
+    NewWindowResponse::Deny
 }
 
 /// Voice input in the chat box records the microphone. These windows only
@@ -80,7 +99,11 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .visible(false)
         .background_color(tauri::window::Color(11, 12, 14, 255))
         .additional_browser_args(BROWSER_ARGS)
-        .on_navigation(move |url| allow_navigation(&handle, url))
+        .on_navigation({
+            let handle = handle.clone();
+            move |url| allow_navigation(&handle, url)
+        })
+        .on_new_window(move |url, _| open_new_window(&handle, &url))
         .on_permission_request(|_, kind| permission_for(kind))
         .build()
 }
@@ -100,7 +123,11 @@ fn build_quick_window(app: &AppHandle, base: &str) -> tauri::Result<WebviewWindo
         .visible(false)
         .background_color(tauri::window::Color(17, 19, 21, 255))
         .additional_browser_args(BROWSER_ARGS)
-        .on_navigation(move |url| allow_navigation(&handle, url))
+        .on_navigation({
+            let handle = handle.clone();
+            move |url| allow_navigation(&handle, url)
+        })
+        .on_new_window(move |url, _| open_new_window(&handle, &url))
         .on_permission_request(|_, kind| permission_for(kind))
         .build()
 }
@@ -282,14 +309,13 @@ pub(crate) fn open_engine_log(app: &AppHandle) {
 
 // ---------- Commands the UI calls (window.__TAURI_INTERNALS__.invoke) ----------
 
-/// Open a page in the default browser: Google/GitHub sign-in can't run inside
-/// the app window. Only https pages and the local engine are allowed.
+/// Open a link in the default browser (or mail app): Google/GitHub sign-in,
+/// and links clicked in chat replies. Only http, https and mailto links.
 #[tauri::command]
 fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     let parsed = Url::parse(&url).map_err(|e| e.to_string())?;
-    let engine = parsed.scheme() == "http" && parsed.host_str() == Some("127.0.0.1");
-    if parsed.scheme() != "https" && !engine {
-        return Err("Only https pages can be opened".into());
+    if !is_browser_link(&parsed) {
+        return Err("Only web and mail links can be opened".into());
     }
     app.opener()
         .open_url(parsed.as_str(), None::<&str>)
@@ -493,7 +519,11 @@ async fn open_app_window(app: AppHandle, slug: String, title: Option<String>) ->
         .center()
         .background_color(tauri::window::Color(11, 12, 14, 255))
         .additional_browser_args(BROWSER_ARGS)
-        .on_navigation(move |url| allow_navigation(&handle, url))
+        .on_navigation({
+            let handle = handle.clone();
+            move |url| allow_navigation(&handle, url)
+        })
+        .on_new_window(move |url, _| open_new_window(&handle, &url))
         .build()
         .map(|_| ())
         .map_err(|e| e.to_string())
