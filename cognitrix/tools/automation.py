@@ -197,7 +197,7 @@ BRIEF_TOOL_CATEGORY = 'brief'
 
 @tool(category=BRIEF_TOOL_CATEGORY, retryable=False, max_attempts=1,
       approval_mode='assigned_only')
-async def publish_brief(summary: str, items: list | str) -> ToolOutcome:
+async def publish_brief(summary: str, items: list[dict] | str) -> ToolOutcome:
     """Publish the person's morning brief. Call it once, at the end of a morning-brief run.
     summary: one or two sentences on the day ("Two replies owed and a 10:00 call; nothing is stuck.").
     items: a list of at most 8 objects {"section", "text", "why", "link"}:

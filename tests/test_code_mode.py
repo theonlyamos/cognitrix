@@ -288,3 +288,35 @@ async def test_tools_called_from_a_script_keep_the_callers_context():
         reset_execution_context(token)
     assert outcome.status == 'success', outcome.text
     assert outcome.text.count('user-1|read') == 2
+
+
+async def test_a_check_in_can_use_code_mode_but_still_cannot_change_anything(monkeypatch):
+    """A standing assistant's check-in (the morning brief) is read-only. Find
+    Tools and Run Code change nothing themselves, so they run; every call a
+    script makes is still checked, so a change from a script is refused."""
+    from cognitrix.safety import permissions
+    from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
+    from cognitrix.safety.permissions import decide_tool_call, read_only_block
+
+    # Stand-in for a reading tool like Read or Grep.
+    monkeypatch.setattr(permissions, 'READ_ONLY_TOOLS', permissions.READ_ONLY_TOOLS | {'list_files'})
+    low = RiskAssessment(RiskLevel.LOW, [], '', 1.0)
+    find_tools = ToolManager.get_by_name('find_tools')
+    agent = _agent([list_files, delete_everything, _run_code()], permission_level='allow')
+    token = permissions.read_only_run.set('check-ins can only look')
+    try:
+        for meta in (find_tools, _run_code()):
+            decision = decide_tool_call(agent, meta, {}, low)
+            assert read_only_block(decision, meta, {}).action == 'run', meta.name
+
+        outcome = await _run(agent, 'return await tools.list_files({folder: "."});')
+        assert outcome.status == 'success', outcome.text
+        assert 'a.py' in outcome.text
+
+        CALLS.clear()
+        outcome = await _run(agent, 'return await tools.delete_everything({confirm: true});')
+        assert outcome.status == 'error'
+        assert 'check-ins can only look' in outcome.text
+        assert CALLS == []
+    finally:
+        permissions.read_only_run.reset(token)

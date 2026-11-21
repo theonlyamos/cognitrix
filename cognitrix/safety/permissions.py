@@ -272,6 +272,13 @@ READ_ONLY_TOOLS = frozenset({
     # the check-in's own notes, alerts and offers
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me', 'offer_help',
     'publish_brief', 'upcoming_calls',
+    # Code mode's meta tools change nothing themselves. Find Tools only
+    # loads schemas; every call a Run Code script makes goes back through
+    # the agent loop (and this check) in the same read-only context, so a
+    # change from inside a script is still refused. Without them an agent
+    # with code mode or on-demand tools could do nothing in a check-in,
+    # which failed every morning brief.
+    'find_tools', 'run_code',
 })
 
 
