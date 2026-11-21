@@ -134,3 +134,28 @@ async def test_watch_in_a_project_belongs_to_it_unless_turned_off(db, monkeypatc
     watch = (await pr_watch.PullRequestWatch.find({}))[0]
     assert watch.project_id == str(project.id)
     assert 'the project "Web app"' in watch.instructions
+
+
+async def test_background_create_and_wrapped_create_tool(db, monkeypatch):
+    gh = GitHub(monkeypatch)
+    _fresh(gh)
+    await _github_row()
+    await _chat()
+    pr_autowatch._creating_shells.clear()
+    # gh pr create in the background: the link only shows in Bash Output.
+    started = await _run('Bash', {'command': 'gh pr create --fill', 'run_in_background': True},
+                         "Started. Read its output with Bash Output (shell_id='bg7') and stop it with Kill Shell.")
+    assert 'watching' not in started.text
+    outcome = await _run('Bash Output', {'shell_id': 'bg7'}, f'status: done\n{URL}')
+    assert 'now watching acme/app#7' in outcome.text
+
+
+async def test_run_mcp_tool_create_without_a_link(db, monkeypatch):
+    gh = GitHub(monkeypatch)
+    _fresh(gh)
+    await _github_row()
+    await _chat()
+    args = {'server': 'GitHub', 'tool_name': 'create_pull_request', 'arguments': {'owner': 'acme', 'repo': 'app'}}
+    assert pr_autowatch.maybe_opened('Run Mcp Tool', '{"number": 7}', args)
+    outcome = await _run('Run Mcp Tool', args, '{"number": 7}')
+    assert 'now watching acme/app#7' in outcome.text

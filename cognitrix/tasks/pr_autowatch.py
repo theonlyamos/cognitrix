@@ -54,6 +54,41 @@ _SKIP_TOOLS = re.compile(
 
 _in_flight: set[tuple[str, str, int]] = set()
 
+_SHELL_ID = re.compile(r"shell_id='([^']+)'")
+BACKGROUND_KEEP_SECONDS = 6 * 3600
+MAX_BACKGROUND = 200
+_creating_shells: dict[str, float] = {}
+"""Background commands that create a pull request (shell id -> when), so the
+link Bash Output shows later still counts as opened."""
+
+
+def _said(args: dict[str, Any], text: str) -> str:
+    pieces: list[str] = []
+    _strings({k: v for k, v in args.items() if k not in ('parent', 'interface', 'approved')}, pieces)
+    return '\n'.join(pieces) + '\n' + (text or '')
+
+
+def remember_background(args: dict[str, Any] | None, text: str) -> None:
+    """A create command started in the background: its link comes later."""
+    import time
+
+    args = args if isinstance(args, dict) else {}
+    match = _SHELL_ID.search(text or '')
+    if not match or not _CREATE_SIGNAL.search(_said(args, '')):
+        return
+    now = time.monotonic()
+    for key, at in list(_creating_shells.items()):
+        if now - at > BACKGROUND_KEEP_SECONDS:
+            _creating_shells.pop(key, None)
+    if len(_creating_shells) >= MAX_BACKGROUND:
+        _creating_shells.pop(next(iter(_creating_shells)), None)
+    _creating_shells[match.group(1)] = now
+
+
+def _background_created(args: dict[str, Any]) -> bool:
+    shell_id = str(args.get('shell_id') or '')
+    return bool(shell_id) and shell_id in _creating_shells
+
 
 def _strings(value: Any, out: list[str], depth: int = 0) -> None:
     if depth > 4 or len(out) > 50:
@@ -112,17 +147,17 @@ def opened_pull_requests(tool_name: str, args: dict[str, Any] | None,
         return refs[:1], True
     if _SKIP_TOOLS.search(name.replace(' ', '_')) and not re.search(r'bash|shell|output', name, re.IGNORECASE):
         return [], False
-    pieces: list[str] = []
-    _strings({k: v for k, v in args.items() if k not in ('parent', 'interface', 'approved')}, pieces)
-    said = '\n'.join(pieces) + '\n' + (text or '')
-    if not _CREATE_SIGNAL.search(said):
+    if not _CREATE_SIGNAL.search(_said(args, text)) and not _background_created(args):
         return [], False
     return _refs(text)[:MAX_PER_CALL], False
 
 
-def maybe_opened(tool_name: str, text: str) -> bool:
+def maybe_opened(tool_name: str, text: str, args: dict[str, Any] | None = None) -> bool:
     """Cheap first look, so most tool calls cost nothing."""
-    return bool(_CREATE_TOOL.search(str(tool_name or ''))) or _URL.search(text or '') is not None
+    args = args if isinstance(args, dict) else {}
+    nested = str(args.get('tool_name') or args.get('tool') or '')  # Run Mcp Tool
+    return (bool(_CREATE_TOOL.search(str(tool_name or ''))) or bool(_CREATE_TOOL.search(nested))
+            or _URL.search(text or '') is not None)
 
 
 async def _enabled(owner: str) -> bool:
@@ -209,7 +244,8 @@ async def after_tool(tool_name: str, args: dict[str, Any] | None, text: str) -> 
 
     Returns a note to add to the tool's result ('' for none). Never raises."""
     try:
-        if not maybe_opened(tool_name, text):
+        remember_background(args, text)
+        if not maybe_opened(tool_name, text, args):
             return ''
         refs, certain = opened_pull_requests(tool_name, args, text)
         if not refs:

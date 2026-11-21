@@ -191,8 +191,6 @@ async def _watch_opened_pull_requests(tool: Any, params: dict[str, Any], outcome
     from cognitrix.tasks import pr_autowatch
 
     name = str(getattr(tool, 'name', '') or '')
-    if not pr_autowatch.maybe_opened(name, outcome.text):
-        return outcome
     note = await pr_autowatch.after_tool(name, params, outcome.text)
     if not note:
         return outcome
