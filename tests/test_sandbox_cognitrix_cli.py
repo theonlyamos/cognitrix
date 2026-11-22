@@ -90,7 +90,8 @@ def test_agent_is_told_about_the_cli():
 
 def test_image_installs_the_cli_from_this_source_without_keys():
     dockerfile = (ROOT / 'sandbox/desktop/Dockerfile').read_text()
-    assert 'COPY pyproject.toml README.md /tmp/cognitrix-src/' in dockerfile
+    assert 'source=pyproject.toml,target=/tmp/cognitrix-src/pyproject.toml' in dockerfile
+    assert 'source=cognitrix,target=/tmp/cognitrix-src/cognitrix' in dockerfile
     assert 'cognitrix-cli/install.sh /tmp/cognitrix-src /opt/cognitrix-cli' in dockerfile
     assert 'API_KEY' not in dockerfile.split('cognitrix-cli/install.sh')[1].split('USER agent')[0]
     install = (ROOT / 'sandbox/desktop/cognitrix-cli/install.sh').read_text()

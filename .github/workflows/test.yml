@@ -16,6 +16,12 @@ jobs:
         run: docker build --tag cognitrix:test .
       - name: Build the agents' sandbox computer image
         run: docker build --file sandbox/desktop/Dockerfile --tag cognitrix-desktop:test .
+      # Printed so a change that grows the image shows up in the check's log.
+      - name: Sandbox image size and tools
+        run: |
+          docker image inspect -f 'Sandbox image size: {{.Size}} bytes' cognitrix-desktop:test
+          docker run --rm --user agent --entrypoint sh cognitrix-desktop:test -c \
+            'node --version && claude --version && codex --version && gemini --version && command -v agy uv pnpm && cognitrix --version'
       - name: Sandbox image starts a desktop
         run: |
           docker run -d --name sbx -e COGNITRIX_SANDBOX_TOKEN=ci-token -p 127.0.0.1:8790:8790 \
