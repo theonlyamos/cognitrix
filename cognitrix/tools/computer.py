@@ -224,27 +224,49 @@ async def show_screenshot(window_id: int, caption: str = '', computer: str = AGE
     """
     from cognitrix.produced_files import service
     from cognitrix.produced_files.sources import SourceError
+    from cognitrix.tools.utils import current_execution_context
 
-    actor = _actor(parent)
+    on_pc = bool(getattr(current_execution_context(), 'device', None))
+    title, controls = '', ''
+    if on_pc:
+        # The chat works on a paired PC: the window ids are that PC's. Its
+        # look also refreshes the control numbers there, so the agent gets
+        # the new list back with the picture.
+        from cognitrix.computer.paired.turn import look_on_pc
 
-    def grab():
-        token = current_actor.set(actor)
+        looked = await look_on_pc(window_id)
+        if isinstance(looked, str):
+            return ToolOutcome.failure('computer_use', looked)
+        controls, png = looked
+        if png is None:
+            return ToolOutcome.failure('no_image', controls or f"Couldn't take a screenshot of window {window_id}.")
+        from PIL import Image
+        image = Image.open(io.BytesIO(png))
+    else:
+        actor = _actor(parent)
+
+        def grab():
+            token = current_actor.set(actor)
+            try:
+                driver = _driver(actor, computer)
+                # Looked at under a viewer of its own, so the agent's own
+                # look stays its latest: if this one replaced the window's
+                # controls, the agent's next action is refused as out of date
+                # (look again) instead of using an old number on a new control.
+                image = driver.look(window_id, None, 1, viewer=('show_screenshot', _viewer(parent)))[0]
+                win = driver.backend.window(int(window_id))
+                return image, (win.title if win else '')
+            finally:
+                current_actor.reset(token)
+
         try:
-            driver = _driver(actor, computer)
-            image = driver.look(window_id, None, 1, viewer=_viewer(parent))[0]
-            win = driver.backend.window(int(window_id))
-            return image, (win.title if win else '')
-        finally:
-            current_actor.reset(token)
-
-    try:
-        image, title = await asyncio.to_thread(grab)
-    except _Refused as exc:
-        return exc.outcome
-    except Unsupported as exc:
-        return ToolOutcome.failure('unsupported', str(exc))
-    except DriverError as exc:
-        return ToolOutcome.failure('computer_use', str(exc))
+            image, title = await asyncio.to_thread(grab)
+        except _Refused as exc:
+            return exc.outcome
+        except Unsupported as exc:
+            return ToolOutcome.failure('unsupported', str(exc))
+        except DriverError as exc:
+            return ToolOutcome.failure('computer_use', str(exc))
     if image is None:
         return ToolOutcome.failure('no_image', f"Couldn't take a screenshot of window {window_id}.")
     buf = io.BytesIO()
@@ -255,8 +277,12 @@ async def show_screenshot(window_id: int, caption: str = '', computer: str = AGE
     except SourceError as exc:
         return ToolOutcome.failure('not_shared', str(exc))
     what = f' of {title!r}' if title else ''
-    return ToolOutcome.success(f'Showed the person a screenshot{what} ({image.size[0]}x{image.size[1]}).',
-                               files=[service.ref(row)])
+    text = f'Showed the person a screenshot{what} ({image.size[0]}x{image.size[1]}).'
+    if controls:
+        text += f'\nThe window as it is now (use these numbers from here on):\n{controls}'
+    else:
+        text += ' Look at the window again (look_at_window) before you click or type in it.'
+    return ToolOutcome.success(text, files=[service.ref(row)])
 
 
 @tool(category='system')

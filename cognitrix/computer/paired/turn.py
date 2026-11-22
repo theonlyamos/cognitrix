@@ -192,6 +192,37 @@ def _unavailable(code: str, name: str) -> str:
     return f'Error: {code}'
 
 
+async def look_on_pc(window_id: int) -> tuple[str, bytes | None] | str:
+    """Look at a window on this turn's paired PC: (its text, PNG bytes of
+    the screenshot or None). A string is a reason it couldn't."""
+    import base64
+
+    from cognitrix.computer.paired import APPS
+    from cognitrix.computer.paired.hub import DeviceUnavailable, hub
+    from cognitrix.tools.utils import current_execution_context
+
+    ctx = current_execution_context()
+    device_id = getattr(ctx, 'device', None)
+    label = (hub.get(device_id).name if hub.get(device_id) else None) or _names.get(str(device_id)) or 'The PC'
+    try:
+        text, images = await hub.call_full(
+            device_id, 'Look At Window', {'window_id': int(window_id)}, power=APPS,
+            ctx={'session_id': ctx.session_id, 'agent_id': ctx.agent_id, 'task_id': ctx.task_id,
+                 'coords_normalized': _coords_normalized(), **_project_folders()},
+            timeout=CALL_TIMEOUT_S.get('Look At Window', DEFAULT_CALL_TIMEOUT_S))
+    except DeviceUnavailable as exc:
+        msg = str(exc)
+        return _unavailable(msg, label) if msg in ('offline', 'paused', f'no_{APPS}') else f'Error: {msg}'
+    for image in images:
+        head, _, data = image.partition(',')
+        if head.startswith('data:image/') and data:
+            try:
+                return text, base64.b64decode(data)
+            except ValueError:
+                continue
+    return text, None
+
+
 async def run_remote(tool: Any, params: dict[str, Any]) -> str | None:
     """Run ``tool`` on this turn's paired PC. None when the turn isn't on a PC
     or the tool doesn't run there (it then runs as usual)."""

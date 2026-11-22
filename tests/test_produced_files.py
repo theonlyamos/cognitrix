@@ -418,3 +418,56 @@ async def test_a_screenshot_that_was_cleared_out_says_so(db):
     await row.save()
     with pytest.raises(SourceError, match='no longer kept'):
         await service.local_path(row)
+
+
+async def test_a_screenshot_doesnt_hand_the_agent_new_control_numbers(db, monkeypatch):
+    """Show Screenshot looks under its own viewer: the agent's next action on
+    old numbers is refused as out of date instead of hitting another control."""
+    from cognitrix.computer import Driver
+    from cognitrix.computer.sandbox import client as sandbox_client
+    from cognitrix.tools.base import ToolManager
+    from cognitrix.tools.utils import reset_execution_context
+    from tests.test_background_computer_use import FakeBackend
+
+    driver = Driver(FakeBackend())
+    driver.settle_s = 0
+    monkeypatch.setenv('COGNITRIX_COMPUTER_SANDBOX', 'docker')
+    monkeypatch.setattr(sandbox_client, 'sandbox_driver', lambda actor=None: driver)
+    agent = SimpleNamespace(id='a1', name='Maker')
+    token = _as('u1', db, session_id='s1', agent_id='a1')
+    try:
+        await ToolManager.get_by_name('Look At Window').run(window_id=1, parent=agent)
+        shown = (await ToolManager.get_by_name('Show Screenshot').run(window_id=1, parent=agent)).outcome
+        click = await ToolManager.get_by_name('Click Element').run(window_id=1, element=0, parent=agent)
+    finally:
+        reset_execution_context(token)
+    assert 'Look at the window again' in shown.text
+    assert 'looked at again' in str(click.content)
+
+
+async def test_show_screenshot_on_a_paired_pc_uses_the_pc(db, monkeypatch):
+    import io as _io
+
+    from PIL import Image
+
+    from cognitrix.computer.paired import turn
+    from cognitrix.tools.base import ToolManager
+    from cognitrix.tools.utils import reset_execution_context
+
+    buf = _io.BytesIO()
+    Image.new('RGB', (100, 60), (1, 2, 3)).save(buf, format='PNG')
+    asked = []
+
+    async def fake_look(window_id):
+        asked.append(window_id)
+        return 'Window 5 Notes\nControls (1 of 1):\n[0] button "Save"', buf.getvalue()
+
+    monkeypatch.setattr(turn, 'look_on_pc', fake_look)
+    token = _as('u1', db, session_id='s1', device='pc-1')
+    try:
+        outcome = (await ToolManager.get_by_name('Show Screenshot').run(window_id=5, computer='person')).outcome
+    finally:
+        reset_execution_context(token)
+    assert asked == [5]
+    assert outcome.status == 'success' and outcome.files[0]['info']['width'] == 100
+    assert '[0] button "Save"' in outcome.text
