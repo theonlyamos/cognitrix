@@ -17,34 +17,43 @@ ENV DEBIAN_FRONTEND=noninteractive \
     QT_ACCESSIBILITY=1 \
     QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Node 22 comes from NodeSource, and its repo is added before everything else
+# is installed: noVNC's package depends on "nodejs", and without the repo apt
+# satisfies that with Debian's Node 18 (about 50 MB, never used).
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends \
         xvfb xauth openbox x11vnc novnc websockify x11-xserver-utils \
         dbus dbus-x11 at-spi2-core libatspi2.0-0 libgtk-3-bin \
         libxtst6 libxss1 libxcomposite1 \
         chromium firefox-esr \
         pulseaudio pulseaudio-utils ffmpeg \
         python3 python3-pil python3-xlib \
-        python3-venv python3-pip python3-dev sqlite3 git curl \
-        fonts-dejavu-core fonts-liberation xdg-utils ca-certificates tini procps \
-        xterm build-essential pkg-config ripgrep jq less zip unzip file openssh-client gnupg \
-    && rm -rf /var/lib/apt/lists/*
+        python3-venv python3-pip python3-dev sqlite3 git \
+        fonts-dejavu-core fonts-liberation xdg-utils tini procps \
+        xterm build-essential pkg-config ripgrep jq less zip unzip file openssh-client \
+        nodejs \
+    && test "$(dpkg-query -W -f='${Version}' nodejs | cut -d. -f1)" -ge 22 \
+    && ! dpkg -s libnode108 >/dev/null 2>&1 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Coding work (cognitrix/computer/sandbox/workspace.py): Node 22 with pnpm and
 # yarn, uv for Python, and the coding agent CLIs the Coding Agent tool runs
 # here (each signs in with the person's API key, passed per run; Antigravity
 # CLI uses the Gemini key, see AGY_SANDBOX_SETUP in cognitrix/common/sandbox_work.py). Other
 # toolchains (Go, Rust, Java) install into the home folder without root and
-# stay in the home volume.
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && corepack enable \
+# stay in the home volume. Left out to keep the image small: npm's and
+# node-gyp's download caches, and Codex's voice-mode helper (the sandbox has
+# no microphone).
+RUN corepack enable \
     && npm install -g --no-fund --no-audit @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
-    && npm cache clean --force \
+    && rm -rf /usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-*/vendor/*/codex-resources/voice \
+    && codex --version \
     && curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh \
     && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
-    && rm -rf /root/.cache/antigravity \
-    && test -x /usr/local/bin/agy
+    && test -x /usr/local/bin/agy \
+    && npm cache clean --force \
+    && rm -rf /root/.cache /root/.npm /tmp/* /tmp/.[!.]*
 ENV DISABLE_AUTOUPDATER=1 \
     NPM_CONFIG_PREFIX=/home/agent/.npm-global \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
@@ -91,12 +100,15 @@ RUN for i in $(seq -w 1 64); do \
 # command that runs it gets the person's model keys at run time, as
 # placeholders the key proxy fills in (cognitrix_cli_env in
 # cognitrix/common/sandbox_work.py).
-COPY pyproject.toml README.md /tmp/cognitrix-src/
-COPY cognitrix/ /tmp/cognitrix-src/cognitrix/
-COPY sandbox/desktop/cognitrix-cli/ /tmp/cognitrix-cli/
-RUN sh /tmp/cognitrix-cli/install.sh /tmp/cognitrix-src /opt/cognitrix-cli \
+# The source is mounted for this step only (not copied), so it isn't kept in
+# a layer of its own.
+RUN --mount=type=bind,source=pyproject.toml,target=/tmp/cognitrix-src/pyproject.toml,rw \
+    --mount=type=bind,source=README.md,target=/tmp/cognitrix-src/README.md,rw \
+    --mount=type=bind,source=cognitrix,target=/tmp/cognitrix-src/cognitrix,rw \
+    --mount=type=bind,source=sandbox/desktop/cognitrix-cli,target=/tmp/cognitrix-cli,rw \
+    sh /tmp/cognitrix-cli/install.sh /tmp/cognitrix-src /opt/cognitrix-cli \
     && install -m 755 /tmp/cognitrix-cli/cognitrix /tmp/cognitrix-cli/cognitrix-python /usr/local/bin/ \
-    && rm -rf /tmp/cognitrix-src /tmp/cognitrix-cli /root/.cache
+    && rm -rf /root/.cache
 ARG COGNITRIX_VERSION=dev
 LABEL cognitrix.cli-version="${COGNITRIX_VERSION}"
 
