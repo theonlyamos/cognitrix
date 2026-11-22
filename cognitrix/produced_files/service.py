@@ -157,6 +157,8 @@ async def local_path(row: ProducedFile) -> Path:
                 return path
         except ValueError:
             pass
+    if row.source == SERVER and not row.path:
+        raise SourceError(f'{row.name} is no longer kept (older files are removed to save space).')
     if row.source == SERVER:
         path = Path(row.path)
         if path.is_file() and not path.is_symlink():
@@ -254,6 +256,38 @@ async def share(paths: list[str], caption: str = '') -> tuple[list[ProducedFile]
     if rows:
         await _prune_rows(str(ctx.user_id))
     return rows, errors
+
+
+async def share_image(data: bytes, name: str, caption: str = '') -> ProducedFile:
+    """Keep an image made in memory (a screenshot) and return its row, shown
+    as a card like a shared file."""
+    from cognitrix.tools.utils import current_execution_context
+    ctx = current_execution_context()
+    if ctx.restricted or not ctx.user_id:
+        raise SourceError('Screenshots can only be shown in a chat or task that belongs to a person.')
+    if len(data) > storage.max_file_bytes():
+        raise SourceError('The screenshot is too big to keep.')
+    mime, kind = kinds.kind_of(name)
+    row = ProducedFile(
+        owner_id=str(ctx.user_id), agent_id=str(ctx.agent_id or ''),
+        session_id='' if ctx.task_id else str(ctx.session_id or ''), task_id=str(ctx.task_id or ''),
+        run_id=str(ctx.run_id or ''), name=storage.safe_name(name), path='', source=SERVER, mime_type=mime,
+        kind=kind, size_bytes=len(data), mtime=time.time(), shared=True, shown=True,
+        caption=str(caption or '')[:300], turn_at=_turn_started.get(turn_key(ctx.session_id, ctx.task_id), time.time()),
+        created=now(),
+    )
+    await row.save()
+
+    async def write(dest: Path) -> int:
+        await asyncio.to_thread(dest.write_bytes, data)
+        return len(data)
+    try:
+        await _store_from(row, write)
+    except BaseException:
+        await ProducedFile.delete_many({'id': str(row.id)})
+        raise
+    await _prune_rows(str(ctx.user_id))
+    return row
 
 
 async def _locate(source: str, where: Any, raw: str, ctx: Any) -> tuple[str, int, float]:

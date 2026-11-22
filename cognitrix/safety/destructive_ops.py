@@ -116,7 +116,7 @@ _KNOWN_LOW = frozenset({
     # asking the person a question, images, screenshots
     'ask_user', 'ask_question', 'generate_image', 'take_screenshot',
     # background computer use: looking and scrolling
-    'list_windows', 'look_at_window', 'scroll_window',
+    'list_windows', 'look_at_window', 'show_screenshot', 'scroll_window',
     # background shells: reading output or stopping a shell the agent started
     'bash_output', 'kill_shell',
     # live calls: following and leaving one the person already let it join
@@ -144,7 +144,7 @@ _DESKTOP_CONTROL = frozenset({
 # full-screen tools above always act on this machine's own screen.
 _SANDBOX_WINDOW_TOOLS = frozenset({
     'click_element', 'set_text', 'click_in_window', 'type_in_window', 'press_key_in_window', 'open_app',
-    'scroll_window', 'look_at_window', 'list_windows',
+    'scroll_window', 'look_at_window', 'show_screenshot', 'list_windows',
 })
 
 
