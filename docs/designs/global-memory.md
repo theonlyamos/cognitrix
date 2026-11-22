@@ -237,6 +237,32 @@ A background job, separate from the main assistant, that tidies one person's mem
 
 Routes: `GET/POST /memories/dream`, `POST /memories/dream/proposals/{id}`, `POST /memories/dream/{id}/undo`, `GET /memories/history`, `POST /memories/history/{id}/undo`, `GET/PUT /memories/profile`.
 
+## 8. Learning from finished chats (built Nov 2026)
+
+Each night, just before dream mode, a chat review (`cognitrix/memory/review.py`)
+reads chats and completed task runs that finished since the last review and
+keeps what later agents can use:
+
+- **Facts** about the person become memories (proposals under "Ask me first"
+  or "Only when I ask"; nothing when memory is off).
+- **Skills**: a completed job that is likely to come up again becomes one of
+  the person's own skills, written as the most direct way to do it (the steps
+  and commands that worked, without the dead ends, plus what the person
+  corrected). When one of their skills already covers the job, the review
+  improves that skill instead of adding a second one; a new skill that reads
+  like an existing one (same name, or a description at least 0.9 alike) is
+  dropped.
+- **Notes**: reference material the work turned up goes into a "Learned from
+  work" knowledge collection, added to the agent that did the work so its
+  Search Knowledge tool finds it.
+
+Each chat or task run is read once (a chat that grows by 6+ messages has only
+its new part read). Chats with a message in the last 2 hours (10 minutes for
+"Review now"), incognito, public-link and very short chats are skipped. One
+model call per piece of work on the main assistant's model, at most 10 per
+run, within the daily proactive token limit at night. Settings > Memory has
+the nightly switch, "Review now" and the list of what was kept, each with
+Remove (Undo for an improved skill or note). The Inbox says what was learned.
 ## 7. Backup to Notion (built Nov 2026)
 
 After every tidy that finishes (nightly or Tidy now), `cognitrix/memory/notion_backup.py` writes the person's memories and "About you" summary to one page, "Cognitrix memory backup", in their own Notion, through their Notion connected app (`mcp.notion.com`). The page's id is kept in the `NotionBackup` row, so later tidies replace that page instead of making new ones; without the row (a fresh install) the page is found again by its title.

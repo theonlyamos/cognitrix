@@ -12,6 +12,7 @@ import {
 import { Group, Segmented, SettingRow, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { tr } from '@/lib/i18n';
 import { AboutYouCard, DreamSection, MemoryHistory, NotionBackupSection } from '@/components/settings/MemoryDream';
+import { ReviewSection } from '@/components/settings/MemoryReview';
 
 interface AgentLite { id: string; name: string }
 
@@ -124,6 +125,7 @@ export function MemorySettings() {
 
       <AboutYouCard disabled={!settings.enabled} />
       <DreamSection enabled={settings.dream_enabled !== false} memoryOn={settings.enabled} onChanged={reload} />
+      <ReviewSection enabled={settings.review_enabled !== false} onChanged={reload} />
       <NotionBackupSection memoryOn={settings.enabled} refresh={data} onChanged={reload} />
 
       {pending.length > 0 && (

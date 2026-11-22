@@ -427,7 +427,7 @@ _MEMORY_MIGRATION_COLUMNS = (
 )
 
 _MEMORY_SETTINGS_MIGRATION_COLUMNS = (
-    ('dream_enabled', 'BOOLEAN'),
+    ('dream_enabled', 'BOOLEAN'), ('review_enabled', 'BOOLEAN'),
 )
 
 _OFFER_MIGRATION_COLUMNS = (

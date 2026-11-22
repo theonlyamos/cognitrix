@@ -27,6 +27,7 @@ const lib = vi.hoisted(() => ({
   saveMemoryProfile: vi.fn(),
   memoryHistory: vi.fn(),
   undoMemoryChange: vi.fn(),
+  reviewStatus: vi.fn(),
   notionBackupStatus: vi.fn(),
   setNotionBackup: vi.fn(),
   notionBackupNow: vi.fn(),
@@ -65,6 +66,7 @@ beforeEach(() => {
   lib.listMemories.mockResolvedValue(list([short, pnpm]));
   lib.legacyMemoryCount.mockResolvedValue(0);
   lib.dreamStatus.mockResolvedValue({ enabled: true, running: false, runs: [], proposals: [], hour: 3 });
+  lib.reviewStatus.mockResolvedValue({ enabled: true, running: false, runs: [], learned: [], hour: 3 });
   lib.getMemoryProfile.mockResolvedValue({ text: '', locked: false, updated: null, by_dream: false });
   lib.notionBackupStatus.mockResolvedValue(notionState({ connected: false }));
   lib.memoryHistory.mockResolvedValue([]);

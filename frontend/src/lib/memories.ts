@@ -39,6 +39,8 @@ export interface MemorySettings {
   auto_save: AutoSave;
   /** Dream mode: tidy memory each night. */
   dream_enabled?: boolean;
+  /** Chat review: learn from finished chats and tasks each night. */
+  review_enabled?: boolean;
 }
 
 export interface MemoryList {
@@ -242,6 +244,62 @@ export async function answerDreamProposal(id: string, approve: boolean, keepId?:
 
 export async function undoDream(id: string): Promise<number> {
   return (await api.post<{ undone: number }>(`/memories/dream/${encodeURIComponent(id)}/undo`)).data.undone;
+}
+
+// ---------------------------------------------------------------- chat review
+
+export interface ReviewRun {
+  id: string;
+  trigger: 'night' | 'manual' | string;
+  status: 'running' | 'done' | 'skipped' | 'failed';
+  started: string;
+  finished: string | null;
+  summary: string;
+  stats: Record<string, number>;
+  error?: string | null;
+}
+
+/** Something the chat review made or changed. */
+export interface LearnedItem {
+  id: string;
+  run_id: string;
+  kind: 'memory' | 'skill' | 'knowledge';
+  /** 'updated': an existing skill or note was improved; 'proposed': a memory waiting for your OK. */
+  action: 'created' | 'updated' | 'proposed';
+  target_id: string | null;
+  name: string | null;
+  description: string | null;
+  content: string;
+  source_kind: 'chat' | 'task' | string;
+  source_id: string | null;
+  source_title: string;
+  /** Where the chat or task opens in the app. */
+  source_link: string | null;
+  created: string;
+  removed: boolean;
+}
+
+export interface ReviewStatus {
+  enabled: boolean;
+  running: boolean;
+  runs: ReviewRun[];
+  learned: LearnedItem[];
+  /** Local hour the nightly review runs (with the tidy-up). */
+  hour: number;
+}
+
+export async function reviewStatus(): Promise<ReviewStatus> {
+  return (await api.get<ReviewStatus>('/memories/review')).data;
+}
+
+/** Review chats now: learn from finished chats and tasks right away. */
+export async function reviewNow(): Promise<ReviewRun> {
+  return (await api.post<ReviewRun>('/memories/review')).data;
+}
+
+/** Remove what the review made, or put an improved skill or note back as it was. */
+export async function removeLearned(id: string): Promise<LearnedItem> {
+  return (await api.post<LearnedItem>(`/memories/review/learned/${encodeURIComponent(id)}/remove`)).data;
 }
 
 // ---------------------------------------------------------------- Notion backup
