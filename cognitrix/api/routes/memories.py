@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from cognitrix.agents import access as agent_access
 from cognitrix.common.security import AuthContext, jwt_only
-from cognitrix.memory import dream, importer, review, saved
+from cognitrix.memory import dream, importer, notion_backup, review, saved
 
 memories_api = APIRouter(prefix='/memories')
 
@@ -64,6 +64,10 @@ class DeleteAll(BaseModel):
 
 class ImportBody(BaseModel):
     text: str
+
+
+class NotionBackupBody(BaseModel):
+    enabled: bool
 
 
 class PendingBody(BaseModel):
@@ -289,6 +293,44 @@ async def undo_dream(dream_id: str, ctx: AuthContext = Depends(jwt_only)):
     if run is None or str(run.user_id) != owner:
         raise HTTPException(status_code=404, detail='Dream not found')
     return {'undone': await dream.undo_dream(owner, dream_id)}
+
+
+async def _notion_state(owner: str) -> dict:
+    row = await notion_backup.get_state(owner)
+    return notion_backup.public_state(row, await notion_backup.find_connection(owner) is not None)
+
+
+@memories_api.get('/notion')
+async def notion_status(ctx: AuthContext = Depends(jwt_only)):
+    """The Notion backup: whether Notion is connected, and how the last backup went."""
+    return await _notion_state(_owner(ctx))
+
+
+@memories_api.put('/notion')
+async def notion_settings(body: NotionBackupBody, ctx: AuthContext = Depends(jwt_only)):
+    """Turn the backup after every tidy on or off."""
+    owner = _owner(ctx)
+    await notion_backup.set_enabled(owner, body.enabled)
+    return await _notion_state(owner)
+
+
+@memories_api.post('/notion/backup')
+async def notion_backup_now(ctx: AuthContext = Depends(jwt_only)):
+    """Back up now: write memories to the Notion page right away (replaces an older backup)."""
+    owner = _owner(ctx)
+    await notion_backup.backup(owner, trigger='manual')
+    return await _notion_state(owner)
+
+
+@memories_api.post('/notion/restore')
+async def notion_restore(ctx: AuthContext = Depends(jwt_only)):
+    """Bring memories back from the Notion backup page."""
+    owner = _owner(ctx)
+    try:
+        result = await notion_backup.restore(owner)
+    except notion_backup.BackupError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from None
+    return {**result, 'state': await _notion_state(owner)}
 
 
 @memories_api.post('/{memory_id}/approve')

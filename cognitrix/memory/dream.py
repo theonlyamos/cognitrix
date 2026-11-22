@@ -514,7 +514,20 @@ def _stale(row: DreamRun) -> bool:
 
 async def run_dream(user_id: str, trigger: str = 'manual', *, run: DreamRun | None = None,
                     llm: Any = None) -> DreamRun:
-    """One dream for one person. Returns the finished run row."""
+    """One dream for one person. Returns the finished run row.
+
+    A tidy that finished is followed by a backup to the person's Notion
+    (``notion_backup.after_tidy``), so their memory survives a reinstall."""
+    done = await _run_dream(user_id, trigger, run=run, llm=llm)
+    if done.status == DONE:
+        from cognitrix.memory import notion_backup
+
+        await notion_backup.after_tidy(str(user_id))
+    return done
+
+
+async def _run_dream(user_id: str, trigger: str = 'manual', *, run: DreamRun | None = None,
+                     llm: Any = None) -> DreamRun:
     from cognitrix import usage
     from cognitrix.assistant.proactivity import usage_sink
 

@@ -572,7 +572,26 @@ async def finish_sign_in(state: str | None, code: str | None, error: str | None 
     await _disconnect(flow.server_id)
     _results[flow.flow_id] = {**_results.get(flow.flow_id, {}), 'status': 'done', 'error': None,
                               'user': flow.user_key, 'server_id': flow.server_id, 'created': flow.created}
+    _after_connect(row, flow.user_key)
     return flow.app_name, None
+
+
+_after_tasks: set[asyncio.Task] = set()
+
+
+def _after_connect(row: Any, user_key: str) -> None:
+    """Things a newly connected app makes possible. Notion: offer to restore a memory backup
+    (a reinstalled app has no memories, and its last install backed them up there)."""
+    from cognitrix.memory import notion_backup
+
+    if not notion_backup.is_notion(row):
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(notion_backup.offer_restore(user_key))
+    except RuntimeError:
+        return
+    _after_tasks.add(task)
+    task.add_done_callback(_after_tasks.discard)
 
 
 async def _disconnect(server_id: str) -> None:

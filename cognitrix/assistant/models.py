@@ -4,6 +4,7 @@ from cognitrix.assistant.followups import MODELS as FOLLOWUP_MODELS
 from cognitrix.assistant.mail import MODELS as MAIL_MODELS
 from cognitrix.assistant.proactivity import MODELS as PROACTIVITY_MODELS
 from cognitrix.memory.dream import MODELS as DREAM_MODELS
+from cognitrix.memory.notion_backup import MODELS as NOTION_BACKUP_MODELS
 from cognitrix.memory.review import MODELS as REVIEW_MODELS
 from cognitrix.models.memory import MemoryChange, MemoryProfile
 
@@ -14,6 +15,7 @@ MODELS = (
     *MAIL_MODELS,
     *DREAM_MODELS,
     *REVIEW_MODELS,
+    *NOTION_BACKUP_MODELS,
     MemoryChange,
     MemoryProfile,
 )
