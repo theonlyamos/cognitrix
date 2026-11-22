@@ -161,7 +161,8 @@ class _Notion:
         text = text if isinstance(text, str) else json.dumps(text, default=str)
         failed = bool(getattr(getattr(result, 'result', None), 'isError', False))
         if failed or text.lstrip().startswith('Error:'):
-            logger.warning('Notion %s failed: %s', base, text[:500])
+            # The answer can hold page content (memories), so only its size is logged.
+            logger.warning('Notion %s failed (%d characters of error text)', base, len(text))
             raise BackupError('Notion could not save or read the backup page. Try again later.')
         return text
 
@@ -176,7 +177,7 @@ async def _open(user_id: str) -> _Notion:
     client = await get_dynamic_client()
     problem = await registry.prepare(client, config)
     if problem:
-        logger.info('Notion backup could not connect: %s', problem)
+        logger.info('Notion backup could not connect to the Notion app')
         raise BackupError('Notion needs you to sign in again. Press Connect next to Notion in Settings › Connected apps.',
                           NOT_CONNECTED)
     names = {str(t.get('name') or '') for t in await apps.list_tools(client, config)}
