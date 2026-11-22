@@ -260,6 +260,7 @@ export function NotionBackupSection({ memoryOn, refresh, onChanged }: { memoryOn
   let detail: string;
   if (!state.connected) detail = tr('ui.settings.memoryNotion.connectToKeepACopy');
   else if (state.status === 'restore_first') detail = tr('ui.settings.memoryNotion.restoreFirst');
+  else if (state.status === 'waiting_review') detail = tr('ui.settings.memoryNotion.waitingReview');
   else if (state.status === 'failed') detail = tr('ui.settings.memoryNotion.lastFailed');
   else if (state.status === 'not_connected') detail = tr('ui.settings.memoryNotion.signInAgain');
   else if (lastOk) detail = tr('ui.settings.memoryNotion.lastBackup', { timeAgo: lastOk, count: state.count });

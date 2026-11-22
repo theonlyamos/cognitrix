@@ -3315,6 +3315,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.settings.memoryNotion.restoreFirst": "Tu Notion tiene una copia más grande de otra instalación. Restáurala primero, o pulsa Hacer copia ahora para reemplazarla.",
   "ui.settings.memoryNotion.restored": "Restaurado desde Notion: {restored} nuevos, {already} ya estaban, {waiting} esperan tu aprobación abajo.",
   "ui.settings.memoryNotion.signInAgain": "Notion necesita que vuelvas a iniciar sesión antes de hacer la copia.",
+  "ui.settings.memoryNotion.waitingReview": "Algunas notas restauradas esperan tu aprobación abajo. La copia en Notion se queda como está hasta que respondas, o pulsa Hacer copia ahora.",
   "ui.settings.modelsAndKeys": "Modelos y claves",
   "ui.settings.notificationNotShown": "No se pudo mostrar la notificación.",
   "ui.settings.notifications": "Notificaciones",

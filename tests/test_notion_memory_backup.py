@@ -223,3 +223,84 @@ async def test_connecting_notion_on_a_fresh_install_offers_the_backup(db, notion
 
     # Someone who already has memories isn't asked.
     assert await nb.offer_restore(str(old.id)) is False
+
+
+async def test_a_failed_attempt_keeps_the_bigger_backup_safe(db, notion, monkeypatch):  # noqa: F811
+    from cognitrix.memory import notion_backup as nb
+    from cognitrix.memory import saved
+
+    old = await _user('Amos', 'amos@example.com')
+    for text in ('Prefers short answers.', 'Lives in Accra.', 'Builds Cognitrix.'):
+        await saved.add(str(old.id), text, source='user')
+    await nb.backup(str(old.id), trigger='manual')
+    page = next(iter(notion.pages))
+
+    new = await _user('Amos', 'amos@example.org')
+    await saved.add(str(new.id), 'Likes tea.', source='user')
+    assert await nb.offer_restore(str(new.id)) is False  # has a memory already
+    state = await nb.backup(str(new.id), trigger='tidy')
+    assert state.status == nb.RESTORE_FIRST
+
+    # Notion fails once, then works again: the next tidy still must not overwrite.
+    real_open = nb._open
+
+    async def broken(user_id):
+        raise nb.BackupError('down')
+
+    monkeypatch.setattr(nb, '_open', broken)
+    assert (await nb.backup(str(new.id), trigger='tidy')).status == nb.FAILED
+    monkeypatch.setattr(nb, '_open', real_open)
+    assert (await nb.backup(str(new.id), trigger='tidy')).status == nb.RESTORE_FIRST
+    assert 'Builds Cognitrix.' in notion.pages[page]
+
+
+async def test_waiting_restored_notes_keep_the_page(db, notion, monkeypatch):  # noqa: F811
+    from cognitrix.memory import notion_backup as nb
+    from cognitrix.memory import saved
+
+    agents = {'a1': 'Writer'}
+
+    async def names(user_id):
+        return dict(agents), {}
+
+    monkeypatch.setattr(nb, '_names', names)
+    old = await _user('Amos', 'amos@example.com')
+    await saved.add(str(old.id), 'Prefers short answers.', source='user')
+    await saved.add(str(old.id), 'Posts on Fridays.', scope='agent', agent_id='a1', source='user')
+    await nb.backup(str(old.id), trigger='manual')
+    page = next(iter(notion.pages))
+
+    new = await _user('Amos', 'amos@example.org')
+    agents.clear()
+    result = await nb.restore(str(new.id))
+    assert result['waiting'] == 1
+    state = await nb.backup(str(new.id), trigger='tidy')
+    assert state.status == nb.WAITING
+    assert 'Posts on Fridays.' in notion.pages[page]
+
+    # Once answered, the tidy adopts the page and replaces it.
+    for row in await saved.pending_memories(str(new.id)):
+        await saved.confirm(row)
+    state = await nb.backup(str(new.id), trigger='tidy')
+    assert state.status == nb.OK and state.owned and len(notion.pages) == 1
+
+
+async def test_same_named_agents_get_proposals_not_a_guess(db, notion, monkeypatch):  # noqa: F811
+    from cognitrix.memory import notion_backup as nb
+    from cognitrix.memory import saved
+
+    agents = {'a1': 'Coder'}
+
+    async def names(user_id):
+        return dict(agents), {}
+
+    monkeypatch.setattr(nb, '_names', names)
+    old = await _user('Amos', 'amos@example.com')
+    await saved.add(str(old.id), 'Runs tests with pytest.', scope='agent', agent_id='a1', source='user')
+    await nb.backup(str(old.id), trigger='manual')
+
+    new = await _user('Amos', 'amos@example.org')
+    agents.clear()
+    agents.update({'b1': 'Coder', 'b2': 'coder'})
+    result = await nb.restore(str(new.id))
+    assert result['restored'] == 0 and result['waiting'] == 1

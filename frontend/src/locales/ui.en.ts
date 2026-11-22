@@ -3314,6 +3314,7 @@ const uiEn = {
   "ui.settings.memoryNotion.restoreFirst": "Your Notion has a bigger backup from another install. Restore it first, or press Back up now to replace it.",
   "ui.settings.memoryNotion.restored": "Restored from Notion: {restored} new, {already} already here, {waiting} waiting for your OK below.",
   "ui.settings.memoryNotion.signInAgain": "Notion needs you to sign in again before it can back up.",
+  "ui.settings.memoryNotion.waitingReview": "Some restored notes wait for your OK below. The Notion backup stays as it is until you answer them, or press Back up now.",
   "ui.settings.modelsAndKeys": "Models and keys",
   "ui.settings.notificationNotShown": "The notification could not be shown.",
   "ui.settings.notifications": "Notifications",

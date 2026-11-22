@@ -33,7 +33,7 @@ PAGE_TITLE = 'Cognitrix memory backup'
 FORMAT = 'cognitrix-memory-backup'
 NOTION_HOST = 'mcp.notion.com'
 
-OK, FAILED, NOT_CONNECTED, RESTORE_FIRST = 'ok', 'failed', 'not_connected', 'restore_first'
+OK, FAILED, NOT_CONNECTED, RESTORE_FIRST, WAITING = 'ok', 'failed', 'not_connected', 'restore_first', 'waiting_review'
 
 NOT_CONNECTED_MESSAGE = 'Notion is not connected. Connect it in Settings › Connected apps to back up your memory.'
 
@@ -54,6 +54,12 @@ class NotionBackup(Model):
     last_ok: str = ''
     """UTC time of the last backup that worked."""
     count: int = 0
+    owned: bool = False
+    """This install has written ``page_id`` itself. Until then a nightly tidy never
+    overwrites that page without checking it first (it may hold another install's backup)."""
+    restored: bool = False
+    """The person restored from ``page_id``. Its notes that came back as proposals keep
+    the page as it is until they're answered."""
 
     @field_validator('page_id', 'page_url', 'status', 'message', 'last_at', 'last_ok', mode='before')
     @classmethod
@@ -64,6 +70,11 @@ class NotionBackup(Model):
     @classmethod
     def _enabled_default(cls, value):
         return True if value is None else bool(value)
+
+    @field_validator('owned', 'restored', mode='before')
+    @classmethod
+    def _flag_default(cls, value):
+        return bool(value) if value is not None else False
 
     @field_validator('count', mode='before')
     @classmethod
@@ -408,8 +419,13 @@ async def backup(user_id: str, *, trigger: str = 'tidy') -> NotionBackup:
         content = render(data)
         page_id, page_url = state.page_id, state.page_url
         written = False
-        if page_id and state.status == RESTORE_FIRST and trigger != 'manual':
-            page_id = ''  # check again whether that bigger backup is still there
+        if page_id and not state.owned and trigger != 'manual':
+            if not state.restored:
+                page_id = ''  # not ours yet: check again whether it holds a bigger backup
+            elif await _restored_waiting(user_id):
+                return await _set(state, status=WAITING, last_at=stamp,
+                                  message=('Some restored notes wait for your OK in Settings › Memory. The Notion '
+                                           'backup stays as it is until you answer them, or press Back up now.'))
         if page_id:
             try:
                 await notion.call('update-page', {'page_id': page_id, 'command': 'replace_content',
@@ -443,13 +459,18 @@ async def backup(user_id: str, *, trigger: str = 'tidy') -> NotionBackup:
         if data.get('left_out'):
             message += f" Left out {data['left_out']} that looked like a password or key."
         return await _set(state, page_id=page_id, page_url=page_url or state.page_url, status=OK, message=message,
-                          last_at=stamp, last_ok=stamp, count=len(data['memories']))
+                          last_at=stamp, last_ok=stamp, count=len(data['memories']), owned=True)
     except BackupError as exc:
         return await _set(state, status=exc.status, message=exc.message, last_at=stamp)
     except Exception:
         logger.exception('Notion memory backup failed for %s (%s)', user_id, trigger)
         return await _set(state, status=FAILED, message='The backup to Notion did not finish. Try again later.',
                           last_at=stamp)
+
+
+async def _restored_waiting(user_id: str) -> int:
+    """Brought-in notes (a restore or an import) still waiting for the person's OK."""
+    return len([r for r in await saved.pending_memories(user_id) if r.source == 'import'])
 
 
 async def after_tidy(user_id: str) -> None:
@@ -464,6 +485,15 @@ async def after_tidy(user_id: str) -> None:
 
 
 # ---------------------------------------------------------------- restore
+
+def _unique_by_name(names: dict[str, str]) -> dict[str, str]:
+    """Name -> id, for names only one agent or project has. Two with the same name
+    are ambiguous, so their notes come back as proposals instead of to a guess."""
+    seen: dict[str, list[str]] = {}
+    for item_id, name in names.items():
+        seen.setdefault(str(name or '').strip().lower(), []).append(item_id)
+    return {name: ids[0] for name, ids in seen.items() if name and len(ids) == 1}
+
 
 async def restore(user_id: str) -> dict[str, Any]:
     """Bring memories back from the person's Notion backup page. Raises BackupError."""
@@ -483,8 +513,8 @@ async def restore(user_id: str) -> dict[str, Any]:
         raise BackupError(f"There is no '{PAGE_TITLE}' page in your Notion yet. It is made after your first memory tidy.")
 
     agents, projects = await _names(user_id)
-    agent_by_name = {name.strip().lower(): agent_id for agent_id, name in agents.items()}
-    project_by_name = {name.strip().lower(): project_id for project_id, name in projects.items()}
+    agent_by_name = _unique_by_name(agents)
+    project_by_name = _unique_by_name(projects)
     restored = already = waiting = left_out = 0
     for item in data.get('memories') or []:
         if not isinstance(item, dict) or not isinstance(item.get('content'), str):
@@ -530,8 +560,17 @@ async def restore(user_id: str) -> dict[str, Any]:
                 about_restored = True
             except saved.MemoryError_:
                 pass
-    await _set(state, page_id=page_id or state.page_id, page_url=page_url or state.page_url, status=OK,
-               message=f'Restored {restored} memories from Notion.', last_at=saved.now_str())
+    switched = bool(page_id) and page_id != state.page_id
+    changes: dict[str, Any] = {'page_id': page_id or state.page_id, 'page_url': page_url or state.page_url,
+                               'restored': True, 'last_at': saved.now_str()}
+    if switched:
+        changes['owned'] = False
+    if waiting:
+        changes.update(status=WAITING, message=(f'{waiting} restored notes wait for your OK in Settings › Memory. '
+                                                'The Notion backup stays as it is until you answer them.'))
+    else:
+        changes.update(status=OK, message=f'Restored {restored} memories from Notion.')
+    await _set(state, **changes)
     return {'restored': restored, 'already': already, 'waiting': waiting, 'left_out': left_out,
             'about_you': about_restored, 'saved': data.get('saved') or '', 'page_url': page_url or state.page_url}
 
@@ -547,7 +586,7 @@ async def offer_restore(user_id: str) -> bool:
             return False
         count = len(data['memories'])
         state = await get_state(user_id)
-        await _set(state, page_id=page_id, page_url=page_url or state.page_url, status=RESTORE_FIRST,
+        await _set(state, page_id=page_id, page_url=page_url or state.page_url, status=RESTORE_FIRST, owned=False,
                    message=(f'Your Notion has a backup with {count} memories from '
                             f"{data.get('saved') or 'another install'}. Restore it first, or press Back up now to replace it."),
                    last_at=saved.now_str())

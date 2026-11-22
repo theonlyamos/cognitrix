@@ -3315,6 +3315,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.settings.memoryNotion.restoreFirst": "Votre Notion contient une sauvegarde plus grande venant d'une autre installation. Restaurez-la d'abord, ou appuyez sur Sauvegarder maintenant pour la remplacer.",
   "ui.settings.memoryNotion.restored": "Restauré depuis Notion : {restored} nouveaux, {already} déjà présents, {waiting} en attente de votre accord ci-dessous.",
   "ui.settings.memoryNotion.signInAgain": "Notion vous demande de vous reconnecter avant de pouvoir sauvegarder.",
+  "ui.settings.memoryNotion.waitingReview": "Certaines notes restaurées attendent votre accord ci-dessous. La sauvegarde Notion reste telle quelle jusqu'à votre réponse, ou appuyez sur Sauvegarder maintenant.",
   "ui.settings.modelsAndKeys": "Modèles et clés",
   "ui.settings.notificationNotShown": "La notification n'a pas pu être affichée.",
   "ui.settings.notifications": "Notifications",

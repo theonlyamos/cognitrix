@@ -251,8 +251,8 @@ export interface NotionBackupState {
   enabled: boolean;
   /** The person has a Notion connected app switched on. */
   connected: boolean;
-  /** '' (never ran), 'ok', 'failed', 'not_connected' or 'restore_first'. */
-  status: '' | 'ok' | 'failed' | 'not_connected' | 'restore_first';
+  /** '' (never ran), 'ok', 'failed', 'not_connected', 'restore_first' or 'waiting_review' (restored notes wait for an OK). */
+  status: '' | 'ok' | 'failed' | 'not_connected' | 'restore_first' | 'waiting_review';
   message: string;
   last_at: string | null;
   last_ok: string | null;
