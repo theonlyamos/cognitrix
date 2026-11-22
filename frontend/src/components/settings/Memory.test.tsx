@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { MemorySettings } from './Memory';
 import { MemoryNotice } from '@/components/MemoryNotice';
-import { memoryChange, type MemoryList, type SavedMemory } from '@/lib/memories';
+import { memoryChange, type MemoryList, type NotionBackupState, type SavedMemory } from '@/lib/memories';
 
 const lib = vi.hoisted(() => ({
   listMemories: vi.fn(),
@@ -27,6 +27,10 @@ const lib = vi.hoisted(() => ({
   saveMemoryProfile: vi.fn(),
   memoryHistory: vi.fn(),
   undoMemoryChange: vi.fn(),
+  notionBackupStatus: vi.fn(),
+  setNotionBackup: vi.fn(),
+  notionBackupNow: vi.fn(),
+  restoreFromNotion: vi.fn(),
 }));
 
 vi.mock('@/lib/memories', async (importOriginal) => ({
@@ -48,6 +52,10 @@ const pnpm: SavedMemory = {
   source: 'user', source_session_id: null, pinned: false,
 };
 
+const notionState = (over: Partial<NotionBackupState> = {}): NotionBackupState => ({
+  enabled: true, connected: true, status: '', message: '', last_at: null, last_ok: null, page_url: null, count: 0, ...over,
+});
+
 const list = (memories: SavedMemory[]): MemoryList => ({
   memories, settings: { enabled: true, history_enabled: true, auto_save: 'auto' }, limit: 500, max_chars: 300,
 });
@@ -58,6 +66,7 @@ beforeEach(() => {
   lib.legacyMemoryCount.mockResolvedValue(0);
   lib.dreamStatus.mockResolvedValue({ enabled: true, running: false, runs: [], proposals: [], hour: 3 });
   lib.getMemoryProfile.mockResolvedValue({ text: '', locked: false, updated: null, by_dream: false });
+  lib.notionBackupStatus.mockResolvedValue(notionState({ connected: false }));
   lib.memoryHistory.mockResolvedValue([]);
 });
 
@@ -198,5 +207,43 @@ describe('dream mode', () => {
     expect(await screen.findByText('Amos builds Cognitrix.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Lock' }));
     await waitFor(() => expect(lib.saveMemoryProfile).toHaveBeenCalledWith('Amos builds Cognitrix.', true));
+  });
+});
+
+
+describe('Notion backup', () => {
+  it('asks to connect Notion when it is not connected', async () => {
+    render(<MemoryRouter><MemorySettings /></MemoryRouter>);
+    expect(await screen.findByText('Back up to Notion')).toBeInTheDocument();
+    expect(screen.getByText('Connect Notion to keep a copy of your memory there.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Connect Notion' })).toHaveAttribute('href', '/settings/apps');
+    expect(screen.queryByRole('button', { name: 'Restore from Notion' })).not.toBeInTheDocument();
+  });
+
+  it('shows the last backup, backs up now and restores', async () => {
+    lib.notionBackupStatus.mockResolvedValue(notionState({
+      status: 'ok', last_ok: '2026-11-22 07:00:00', count: 12, page_url: 'https://www.notion.so/abc',
+    }));
+    lib.notionBackupNow.mockResolvedValue(notionState({ status: 'ok', count: 13, last_ok: '2026-11-22 07:30:00' }));
+    lib.restoreFromNotion.mockResolvedValue({
+      restored: 4, already: 9, waiting: 1, left_out: 0, about_you: false, saved: '', page_url: null,
+      state: notionState({ status: 'ok', count: 13 }),
+    });
+    render(<MemoryRouter><MemorySettings /></MemoryRouter>);
+    expect(await screen.findByText(/Memories saved: 12/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the page in Notion' })).toHaveAttribute('href', 'https://www.notion.so/abc');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back up now' }));
+    expect(await screen.findByText('Backed up to Notion. Memories saved: 13.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore from Notion' }));
+    expect(await screen.findByText(/4 new, 9 already here, 1 waiting/)).toBeInTheDocument();
+    await waitFor(() => expect(lib.listMemories).toHaveBeenCalledTimes(2));
+  });
+
+  it('says to restore first when Notion holds a bigger backup', async () => {
+    lib.notionBackupStatus.mockResolvedValue(notionState({ status: 'restore_first' }));
+    render(<MemoryRouter><MemorySettings /></MemoryRouter>);
+    expect(await screen.findByText(/bigger backup from another install/)).toBeInTheDocument();
   });
 });

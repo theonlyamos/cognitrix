@@ -44,6 +44,7 @@ PRIVATE = (
     ('cognitrix.models.memory', 'MemoryProfile', 'user_id'),
     ('cognitrix.memory.dream', 'DreamRun', 'user_id'),
     ('cognitrix.memory.dream', 'DreamProposal', 'user_id'),
+    ('cognitrix.memory.notion_backup', 'NotionBackup', 'user_id'),
     ('cognitrix.assistant.proactivity', 'ProactivitySettings', 'user_id'),
     ('cognitrix.assistant.proactivity', 'ProactivityDay', 'user_id'),
     ('cognitrix.assistant.brief', 'Brief', 'user_id'),

@@ -243,3 +243,49 @@ export async function answerDreamProposal(id: string, approve: boolean, keepId?:
 export async function undoDream(id: string): Promise<number> {
   return (await api.post<{ undone: number }>(`/memories/dream/${encodeURIComponent(id)}/undo`)).data.undone;
 }
+
+// ---------------------------------------------------------------- Notion backup
+
+export interface NotionBackupState {
+  /** Back up after every tidy. */
+  enabled: boolean;
+  /** The person has a Notion connected app switched on. */
+  connected: boolean;
+  /** '' (never ran), 'ok', 'failed', 'not_connected' or 'restore_first'. */
+  status: '' | 'ok' | 'failed' | 'not_connected' | 'restore_first';
+  message: string;
+  last_at: string | null;
+  last_ok: string | null;
+  page_url: string | null;
+  /** Memories in the last backup that worked. */
+  count: number;
+}
+
+export interface NotionRestoreResult {
+  restored: number;
+  already: number;
+  /** Came back as proposals (their agent or project is gone). */
+  waiting: number;
+  left_out: number;
+  about_you: boolean;
+  saved: string;
+  page_url: string | null;
+  state: NotionBackupState;
+}
+
+export async function notionBackupStatus(): Promise<NotionBackupState> {
+  return (await api.get<NotionBackupState>('/memories/notion')).data;
+}
+
+export async function setNotionBackup(enabled: boolean): Promise<NotionBackupState> {
+  return (await api.put<NotionBackupState>('/memories/notion', { enabled })).data;
+}
+
+/** Back up now: replaces the Notion page right away. */
+export async function notionBackupNow(): Promise<NotionBackupState> {
+  return (await api.post<NotionBackupState>('/memories/notion/backup')).data;
+}
+
+export async function restoreFromNotion(): Promise<NotionRestoreResult> {
+  return (await api.post<NotionRestoreResult>('/memories/notion/restore')).data;
+}
