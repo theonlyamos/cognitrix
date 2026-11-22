@@ -304,3 +304,36 @@ async def test_nightly_window_and_dream_waits(db):  # noqa: F811
     await row.save()
     assert not await dream.dream_due(uid, night), 'dream mode waits for the review'
     assert not await review.review_due(uid, night)
+
+
+async def test_leftover_work_waits_for_the_next_review(db, notes, monkeypatch):  # noqa: F811
+    from cognitrix.memory import review
+
+    user = await _user('Amos', 'amos@example.com')
+    uid = str(user.id)
+    monkeypatch.setattr(review, 'ITEMS_PER_RUN', 1)
+    await _chat(user, LONG_JOB)
+    await _chat(user, LONG_JOB)
+    llm = _LLM(_reply())
+    first = await review.run_review(uid, 'night', llm=llm, now=_later())
+    assert len(llm.prompts) == 1 and '1 more wait' in first.summary
+    await review.run_review(uid, 'night', llm=llm, now=_later(30))
+    assert len(llm.prompts) == 2, 'the chat left over is read the next night'
+
+
+async def test_removing_an_older_note_after_an_update(db, notes):  # noqa: F811
+    from cognitrix.memory import review
+
+    user = await _user('Amos', 'amos@example.com')
+    uid = str(user.id)
+    await _chat(user, LONG_JOB)
+    await _chat(user, LONG_JOB)
+    note = {'title': 'Billing portal', 'content': 'The billing portal export lives under Reports > Export CSV. ' * 2}
+    newer = dict(note, content='The export moved to Data > Downloads > Invoices CSV in November. ' * 2)
+    await review.run_review(uid, 'manual', llm=_LLM(_reply(knowledge=note), _reply(knowledge=newer)), now=_later())
+    items = sorted(await review.learned_for(uid), key=lambda r: r.action)
+    assert [r.action for r in items] == ['created', 'updated']
+    await review.remove(items[1])  # undo the update: the first text is back
+    assert any('Reports > Export CSV' in t for t in notes.values())
+    await review.remove(items[0])  # and the original can still be removed
+    assert notes == {}

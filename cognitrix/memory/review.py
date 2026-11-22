@@ -51,7 +51,7 @@ IDLE_HOURS = 2
 IDLE_MINUTES_MANUAL = 10
 """Review chats now also takes chats quiet for this long."""
 LOOKBACK_DAYS = 14
-"""The first review looks this far back; later ones from the previous review."""
+"""How far back a review looks; anything already read in that window is skipped."""
 ITEMS_PER_RUN = 10
 """Pieces of work read per run (newest first); the rest wait for the next run."""
 GROW_TO_REVIEW_AGAIN = 6
@@ -677,14 +677,9 @@ async def run_review(user_id: str, trigger: str = 'manual', *, run: ReviewRun | 
 
     async with _lock(user_id):
         try:
-            last = next((r for r in await runs_for(user_id, 10)
-                         if r.status == DONE and str(r.id) != run_id), None)
+            # Always the whole look-back window: what was read is skipped by ReviewedSource, so work
+            # left over from a busy night (or a failed model call) is still picked up next time.
             since = now - timedelta(days=LOOKBACK_DAYS)
-            if last is not None:
-                started = _parse(last.started)
-                if started is not None:
-                    # A little overlap: chats that went quiet during the last review.
-                    since = max(since, started - timedelta(hours=IDLE_HOURS + 1))
             idle = now - (timedelta(minutes=IDLE_MINUTES_MANUAL) if trigger == 'manual'
                           else timedelta(hours=IDLE_HOURS))
             work = await finished_work(user_id, since=since, idle=idle)
@@ -808,7 +803,13 @@ async def remove(row: LearnedItem) -> LearnedItem:
             else:
                 await personal.delete(skill)
     elif row.kind == 'knowledge':
-        doc = await KnowledgeDocument.get(row.target_id) if row.target_id else None
+        # A note is rewritten (new document id) each time it is updated, so find it by name.
+        doc = None
+        for collection in await knowledge.collections(row.user_id):
+            if collection.name.lower() == COLLECTION_NAME.lower():
+                doc = next((d for d in await knowledge.documents(str(collection.id)) if d.name == row.name), None)
+        if doc is None and row.target_id:
+            doc = await KnowledgeDocument.get(row.target_id)
         if doc is not None and str(doc.user_id) == str(row.user_id):
             collection = await knowledge.get_collection(row.user_id, str(doc.collection_id))
             if collection is not None and row.action == 'updated' and previous.get('content'):
