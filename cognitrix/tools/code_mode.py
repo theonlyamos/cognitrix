@@ -76,14 +76,19 @@ def js_name(name: str) -> str:
 
 
 def tool_mode(agent: Any) -> dict[str, bool]:
+    """The agent's two switches. Both are on unless the agent turned one off:
+    a missing key means on, so agents saved before these became the default
+    (stored as ``{}``) get them too, and only an explicit ``False`` is off."""
     raw = getattr(agent, 'tool_mode', None) or {}
     if not isinstance(raw, dict):
-        return {'code': False, 'on_demand': False}
-    return {'code': bool(raw.get('code')), 'on_demand': bool(raw.get('on_demand'))}
+        raw = {}
+    return {key: bool(raw.get(key, True)) for key in ('code', 'on_demand')}
 
 
 def normalize_tool_mode(value: Any) -> dict[str, bool]:
-    """What the agent page may store: two switches, nothing else."""
+    """What the agent page may store: two switches, nothing else.
+
+    Off is kept as an explicit ``False`` (a missing switch means on)."""
     if value in (None, ''):
         return {}
     if isinstance(value, str):
@@ -96,7 +101,7 @@ def normalize_tool_mode(value: Any) -> dict[str, bool]:
     unknown = set(value) - {'code', 'on_demand'}
     if unknown:
         raise ValueError(f"Unknown tool_mode setting: {', '.join(sorted(unknown))}")
-    return {k: bool(v) for k, v in value.items() if v}
+    return {k: bool(v) for k, v in value.items() if v is not None}
 
 
 def code_mode_available() -> bool:
@@ -230,7 +235,7 @@ def find_tools_note(agent: Any) -> str:
         "Tools load on demand: only a few tools are described to you up front. Your other tools are: "
         + ', '.join(sorted(others))
         + ". Call find_tools with keywords or exact names to load the ones you need before using them"
-        + (" (or call them from run_code)." if tool_mode(agent)['code'] else ".")
+        + (" (or call them from run_code)." if tool_mode(agent)['code'] and code_mode_available() else ".")
     )
 
 

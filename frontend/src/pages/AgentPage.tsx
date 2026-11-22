@@ -39,9 +39,6 @@ const TOOL_LEVELS: { value: ToolLevel; label: string }[] = [
 ];
 
 const DEFAULT_NOTE: Record<string, string> = { asks: 'asks', runs: 'runs', depends: 'depends' };
-// Past this many tools an agent looks tools up when it needs them instead of
-// carrying every description in every message.
-const ON_DEMAND_OVER = 25;
 
 interface AgentRow { id: string; name: string; llm?: AgentData['llm']; automation?: { standing?: { primary?: boolean } } }
 interface AgentData {
@@ -217,7 +214,6 @@ export default function AgentPage() {
         description: description.trim().slice(0, 300),
         // No instructions written: the purpose is the instruction.
         system_prompt: systemPrompt.trim() || editing ? systemPrompt : `You are ${name.trim()}. ${description.trim()}`,
-        ...(!editing && selected.size > ON_DEMAND_OVER ? { tool_mode: { on_demand: true } } : {}),
         // api_key is intentionally omitted — the backend resolves it from env.
         llm: {
           provider,

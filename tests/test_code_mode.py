@@ -176,17 +176,39 @@ async def test_find_tools_loads_matches_for_the_turn():
 
 def test_turn_tools_follow_the_agent_switches(monkeypatch):
     monkeypatch.setattr(code_mode, 'ON_DEMAND_MIN_TOOLS', 2)
-    off = _agent([add_numbers, list_files])
+    off = _agent([add_numbers, list_files], tool_mode={'code': False, 'on_demand': False})
     assert code_mode.turn_tools(off) == []
     on = _agent([add_numbers, list_files], tool_mode={'code': True, 'on_demand': True})
     assert sorted(t.name for t in code_mode.turn_tools(on)) == ['Find Tools', 'Run Code']
     # Too few tools to bother loading on demand.
-    small = _agent([add_numbers], tool_mode={'on_demand': True})
+    small = _agent([add_numbers], tool_mode={'on_demand': True, 'code': False})
     assert code_mode.turn_tools(small) == []
 
 
+def test_both_switches_are_on_by_default(monkeypatch):
+    monkeypatch.setattr(code_mode, 'ON_DEMAND_MIN_TOOLS', 2)
+    # New agents and agents saved before this was the default (stored as {}).
+    for stored in ({}, None, '', {'on_demand': True}, {'code': True}):
+        agent = _agent([add_numbers, list_files], tool_mode=stored)
+        assert code_mode.tool_mode(agent) == {'code': True, 'on_demand': True}
+        assert sorted(t.name for t in code_mode.turn_tools(agent)) == ['Find Tools', 'Run Code']
+    # Turning one off sticks.
+    no_code = _agent([add_numbers, list_files], tool_mode={'code': False})
+    assert code_mode.tool_mode(no_code) == {'code': False, 'on_demand': True}
+    assert [t.name for t in code_mode.turn_tools(no_code)] == ['Find Tools']
+
+
+def test_run_code_is_left_out_when_the_engine_is_missing(monkeypatch):
+    monkeypatch.setattr(code_mode, 'ON_DEMAND_MIN_TOOLS', 2)
+    monkeypatch.setattr(code_mode, 'code_mode_available', lambda: False)
+    agent = _agent([add_numbers, list_files])
+    assert [t.name for t in code_mode.turn_tools(agent)] == ['Find Tools']
+    assert 'run_code' not in code_mode.find_tools_note(agent)
+
+
 def test_tool_mode_is_validated():
-    assert code_mode.normalize_tool_mode({'code': True, 'on_demand': False}) == {'code': True}
+    # Off is stored as an explicit False, since a missing switch means on.
+    assert code_mode.normalize_tool_mode({'code': True, 'on_demand': False}) == {'code': True, 'on_demand': False}
     assert code_mode.normalize_tool_mode(None) == {}
     with pytest.raises(ValueError):
         code_mode.normalize_tool_mode({'turbo': True})
@@ -199,7 +221,7 @@ def test_tool_mode_is_validated():
 
 async def test_on_demand_turn_sends_core_tools_then_the_loaded_ones(monkeypatch):
     monkeypatch.setattr(code_mode, 'ON_DEMAND_MIN_TOOLS', 2)
-    agent = _agent([add_numbers, list_files, always_fails], tool_mode={'on_demand': True})
+    agent = _agent([add_numbers, list_files, always_fails], tool_mode={'on_demand': True, 'code': False})
     session = Session(agent_id=str(agent.id))
     sent: list[list[str]] = []
     prompts: list = []

@@ -142,8 +142,9 @@ export function draftFrom(agent: AgentRecord): AgentDraft {
     maxRunsPerDay: auto.max_runs_per_day ? String(auto.max_runs_per_day) : '',
     memoryReadGlobal: agent.memory?.read_global ?? true,
     memorySaveGlobal: agent.memory?.save_global ?? agent.memory_saves_global ?? false,
-    codeMode: !!agent.tool_mode?.code,
-    toolsOnDemand: !!agent.tool_mode?.on_demand,
+    // Both are on unless the agent turned them off (a missing key means on).
+    codeMode: agent.tool_mode?.code ?? true,
+    toolsOnDemand: agent.tool_mode?.on_demand ?? true,
   };
 }
 
@@ -212,10 +213,7 @@ export function payloadFrom(id: string, draft: AgentDraft, catalog: ToolInfo[], 
     sub_agent_model: draft.subAgentModel.trim(),
     automation,
     memory: { read_global: draft.memoryReadGlobal, save_global: draft.memoryReadGlobal && draft.memorySaveGlobal },
-    tool_mode: {
-      ...(draft.codeMode ? { code: true } : {}),
-      ...(draft.toolsOnDemand ? { on_demand: true } : {}),
-    },
+    tool_mode: { code: draft.codeMode, on_demand: draft.toolsOnDemand },
   };
 }
 

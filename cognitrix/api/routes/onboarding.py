@@ -238,9 +238,9 @@ async def _create_assistant(user: User, name: str, llm: LLM) -> Agent:
         tools=[t for t in ToolManager.list_all_tools() if t.name != 'Publish Brief'],
         owner_id=agent_access.owner_key(user),
         memory={'save_global': True},
-        # It has every tool: send the model only the core ones and let it look
-        # up the rest when a job needs them (tools/code_mode.py).
-        tool_mode={'on_demand': True},
+        # Run Code and tools on demand are on by default (tools/code_mode.py):
+        # with every tool, the model gets only the core ones up front and
+        # looks up the rest when a job needs them.
     )
     await agent.save()
     logger.info('Created default assistant %s for user %s', agent.id, agent.owner_id)
