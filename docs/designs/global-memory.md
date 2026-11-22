@@ -236,3 +236,14 @@ A background job, separate from the main assistant, that tidies one person's mem
 4. Each run is listed with its summary and an **Undo** that reverts everything it changed on its own. Usage counts against the daily token limit in Settings › Assistant.
 
 Routes: `GET/POST /memories/dream`, `POST /memories/dream/proposals/{id}`, `POST /memories/dream/{id}/undo`, `GET /memories/history`, `POST /memories/history/{id}/undo`, `GET/PUT /memories/profile`.
+
+## 7. Backup to Notion (built Nov 2026)
+
+After every tidy that finishes (nightly or Tidy now), `cognitrix/memory/notion_backup.py` writes the person's memories and "About you" summary to one page, "Cognitrix memory backup", in their own Notion, through their Notion connected app (`mcp.notion.com`). The page's id is kept in the `NotionBackup` row, so later tidies replace that page instead of making new ones; without the row (a fresh install) the page is found again by its title.
+
+- The page has a readable list on top and a JSON block the app restores from. Pending proposals and anything that looks like a password, key or token are left out.
+- Without Notion, or when Notion fails, the tidy still finishes; Settings › Memory › Back up to Notion shows why. The backup can be switched off there, and Back up now writes right away.
+- Restore from Notion (same section) brings memories back approved, skipping ones already saved. Agent-only notes go to the agent with the same name; when that agent or project no longer exists they come back as proposals for the person to approve, so they never reach the wrong agent. The summary is restored when there isn't one yet.
+- Connecting Notion on an install with no memories looks for a backup and, if there is one, puts "Memory backup found in Notion" in the Inbox.
+- A fresh install's nightly tidy never overwrites a bigger backup it could restore from: the status says to restore first, and only Back up now replaces it.
+- API: `GET/PUT /memories/notion`, `POST /memories/notion/backup`, `POST /memories/notion/restore`.

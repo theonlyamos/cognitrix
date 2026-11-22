@@ -4,9 +4,9 @@ import { Toggle } from '@/pages/Notifications';
 import { timeAgo } from '@/lib/agentDraft';
 import { cn } from '@/lib/utils';
 import {
-  answerDreamProposal, dreamNow, dreamStatus, getMemoryProfile, memoryHistory, saveMemoryProfile, saveMemorySettings,
-  undoDream, undoMemoryChange,
-  type DreamProposal, type DreamRun, type DreamStatus, type MemoryHistoryEntry, type MemoryProfile,
+  answerDreamProposal, dreamNow, dreamStatus, getMemoryProfile, memoryHistory, notionBackupNow, notionBackupStatus,
+  restoreFromNotion, saveMemoryProfile, saveMemorySettings, setNotionBackup, undoDream, undoMemoryChange,
+  type DreamProposal, type DreamRun, type DreamStatus, type MemoryHistoryEntry, type MemoryProfile, type NotionBackupState,
 } from '@/lib/memories';
 import { Group, SettingRow, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { tr } from '@/lib/i18n';
@@ -229,6 +229,92 @@ export function DreamSection({ enabled, memoryOn, onChanged }: { enabled: boolea
           )}
         </div>
       )}
+    </section>
+  );
+}
+
+/** Notion backup: after every tidy, memories are copied to one page in the person's Notion, and can be restored from it. */
+export function NotionBackupSection({ memoryOn, refresh, onChanged }: { memoryOn: boolean; refresh?: unknown; onChanged: () => void }) {
+  const [state, setState] = useState<NotionBackupState | null>(null);
+  const [busy, setBusy] = useState<'backup' | 'restore' | 'toggle' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => { notionBackupStatus().then(setState).catch(() => {}); }, [refresh]);
+
+  const act = async (kind: 'backup' | 'restore' | 'toggle', fn: () => Promise<void>, fallback: string) => {
+    setBusy(kind);
+    setError(null);
+    setNotice(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError(errorMessage(e, fallback));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!state) return null;
+  const lastOk = state.last_ok ? timeAgo(state.last_ok) : '';
+  let detail: string;
+  if (!state.connected) detail = tr('ui.settings.memoryNotion.connectToKeepACopy');
+  else if (state.status === 'restore_first') detail = tr('ui.settings.memoryNotion.restoreFirst');
+  else if (state.status === 'waiting_review') detail = tr('ui.settings.memoryNotion.waitingReview');
+  else if (state.status === 'failed') detail = tr('ui.settings.memoryNotion.lastFailed');
+  else if (state.status === 'not_connected') detail = tr('ui.settings.memoryNotion.signInAgain');
+  else if (lastOk) detail = tr('ui.settings.memoryNotion.lastBackup', { timeAgo: lastOk, count: state.count });
+  else detail = tr('ui.settings.memoryNotion.notYet');
+
+  return (
+    <section aria-label={tr('ui.settings.memoryDream.notionBackup')} className="!mt-6">
+      <SubHeading className="!mt-0">{tr('ui.settings.memoryDream.backUpToNotion')}</SubHeading>
+      <p className="mb-2 text-[12px] text-fg-dim">
+        {tr('ui.settings.memoryDream.afterEveryTidyYourMemories')}
+      </p>
+      <Group>
+        <SettingRow label={tr('ui.settings.memoryDream.backUpAfterEveryTidy')} detail={detail}>
+          <Toggle label={tr('ui.settings.memoryDream.backUpAfterEveryTidy')} checked={state.enabled} disabled={busy !== null || !memoryOn}
+            onChange={(enabled) => void act('toggle', async () => { setState(await setNotionBackup(enabled)); }, tr('ui.settings.memoryDream.couldNotChangeTheSetting'))} />
+        </SettingRow>
+        {state.connected ? (
+          <SettingRow
+            label={tr('ui.settings.memoryDream.yourNotionBackup')}
+            detail={state.page_url
+              ? <a href={state.page_url} target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">{tr('ui.settings.memoryDream.openThePageInNotion')}</a>
+              : tr('ui.settings.memoryDream.aPageCalledCognitrixMemory')}
+          >
+            <button type="button" className={buttonClass} disabled={busy !== null || !memoryOn}
+              onClick={() => void act('backup', async () => {
+                const next = await notionBackupNow();
+                setState(next);
+                if (next.status === 'ok') setNotice(tr('ui.settings.memoryNotion.backedUp', { count: next.count }));
+                else setError(tr('ui.settings.memoryDream.theBackupToNotionDid'));
+              }, tr('ui.settings.memoryDream.couldNotBackUpTo'))}>
+              {busy === 'backup' ? tr('ui.settings.memoryDream.backingUp') : tr('ui.settings.memoryDream.backUpNow')}
+            </button>
+            <button type="button" className={state.status === 'restore_first' ? primaryButtonClass : buttonClass} disabled={busy !== null || !memoryOn}
+              onClick={() => void act('restore', async () => {
+                const result = await restoreFromNotion();
+                setState(result.state);
+                setNotice(tr('ui.settings.memoryNotion.restored', { restored: result.restored, already: result.already, waiting: result.waiting }));
+                onChanged();
+              }, tr('ui.settings.memoryDream.couldNotRestoreFromNotion'))}>
+              {busy === 'restore' ? tr('ui.settings.memoryDream.restoring') : tr('ui.settings.memoryDream.restoreFromNotion')}
+            </button>
+          </SettingRow>
+        ) : (
+          <SettingRow label={tr('ui.settings.memoryDream.notionIsNotConnected')} detail={tr('ui.settings.memoryDream.connectItOnceAndThe')}>
+            <a href="/settings/apps" className={buttonClass}>{tr('ui.settings.memoryDream.connectNotion')}</a>
+          </SettingRow>
+        )}
+      </Group>
+      {notice && (
+        <p role="status" className="mt-2 rounded-lg border border-line bg-panel px-3 py-2 text-[12.5px] text-fg-dim">
+          {notice} <button type="button" className="ml-1 text-accent-ink hover:underline" onClick={() => setNotice(null)}>{tr('ui.settings.memoryDream.dismiss')}</button>
+        </p>
+      )}
+      {error && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{error}</p>}
     </section>
   );
 }
