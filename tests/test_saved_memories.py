@@ -283,7 +283,8 @@ async def test_api_crud_and_privacy(db):
 
     listed = await routes.list_memories(ctx=_ctx(amos))
     assert [m['content'] for m in listed['memories']] == ['Prefers short answers.']
-    assert listed['settings'] == {'enabled': True, 'history_enabled': True, 'auto_save': 'auto', 'dream_enabled': True}
+    assert listed['settings'] == {'enabled': True, 'history_enabled': True, 'auto_save': 'auto', 'dream_enabled': True,
+                                 'review_enabled': True}
     assert (await routes.list_memories(ctx=_ctx(bea)))['memories'] == []
 
     with pytest.raises(HTTPException) as other:
@@ -294,7 +295,8 @@ async def test_api_crud_and_privacy(db):
     assert edited['pinned'] and edited['content'] == 'Prefers very short answers.'
 
     settings = await routes.put_settings(routes.SettingsBody(auto_save='explicit'), _ctx(amos))
-    assert settings == {'enabled': True, 'history_enabled': True, 'auto_save': 'explicit', 'dream_enabled': True}
+    assert settings == {'enabled': True, 'history_enabled': True, 'auto_save': 'explicit', 'dream_enabled': True,
+                        'review_enabled': True}
 
     with pytest.raises(HTTPException):
         await routes.delete_all(routes.DeleteAll(), _ctx(amos))

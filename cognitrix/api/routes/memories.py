@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from cognitrix.agents import access as agent_access
 from cognitrix.common.security import AuthContext, jwt_only
-from cognitrix.memory import dream, importer, saved
+from cognitrix.memory import dream, importer, review, saved
 
 memories_api = APIRouter(prefix='/memories')
 
@@ -43,6 +43,7 @@ class SettingsBody(BaseModel):
     history_enabled: bool | None = None
     auto_save: Literal['auto', 'ask', 'explicit'] | None = None
     dream_enabled: bool | None = None
+    review_enabled: bool | None = None
 
 
 class ProfileBody(BaseModel):
@@ -92,7 +93,7 @@ def _bad(exc: saved.MemoryError_) -> HTTPException:
 async def _settings_json(user_key: str) -> dict:
     row = await saved.get_settings(user_key)
     return {'enabled': bool(row.enabled), 'history_enabled': bool(row.history_enabled), 'auto_save': row.auto_save,
-            'dream_enabled': bool(row.dream_enabled)}
+            'dream_enabled': bool(row.dream_enabled), 'review_enabled': bool(row.review_enabled)}
 
 
 @memories_api.get('')
@@ -134,7 +135,8 @@ async def put_settings(body: SettingsBody, ctx: AuthContext = Depends(jwt_only))
     owner = _owner(ctx)
     try:
         await saved.save_settings(owner, enabled=body.enabled, auto_save=body.auto_save,
-                                  history_enabled=body.history_enabled, dream_enabled=body.dream_enabled)
+                                  history_enabled=body.history_enabled, dream_enabled=body.dream_enabled,
+                                  review_enabled=body.review_enabled)
     except saved.MemoryError_ as exc:
         raise _bad(exc) from None
     return await _settings_json(owner)
@@ -334,3 +336,41 @@ async def delete_all(body: DeleteAll, ctx: AuthContext = Depends(jwt_only)):
     if not body.confirm:
         raise HTTPException(status_code=400, detail='Send {"confirm": true} to delete every memory')
     return {'deleted': await saved.delete_all(_owner(ctx))}
+
+
+# ---------------------------------------------------------------- chat review
+
+@memories_api.get('/review')
+async def review_status(ctx: AuthContext = Depends(jwt_only)):
+    """The nightly chat review: its switch, recent runs and what it learned."""
+    owner = _owner(ctx)
+    settings = await saved.get_settings(owner)
+    runs = await review.runs_for(owner, 10)
+    return {
+        'enabled': bool(settings.review_enabled),
+        'running': any(r.status == review.RUNNING and not review._stale(r) for r in runs),
+        'runs': [review.public_run(r) for r in runs],
+        'learned': [review.public_item(r) for r in await review.learned_for(owner, 100)],
+        'hour': dream.DREAM_HOUR,
+    }
+
+
+@memories_api.post('/review', status_code=202)
+async def review_now(ctx: AuthContext = Depends(jwt_only)):
+    """Review chats now: learn from finished chats and tasks right away."""
+    row = await review.start(_owner(ctx), 'manual')
+    return review.public_run(row)
+
+
+@memories_api.post('/review/learned/{item_id}/remove')
+async def remove_learned(item_id: str, ctx: AuthContext = Depends(jwt_only)):
+    """Remove something the review made, or put an improved skill or note back as it was."""
+    owner = _owner(ctx)
+    row = await review.LearnedItem.get(item_id)
+    if row is None or str(row.user_id) != owner:
+        raise HTTPException(status_code=404, detail='Not found')
+    try:
+        row = await review.remove(row)
+    except review.RemoveError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return review.public_item(row)

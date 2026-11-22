@@ -84,8 +84,11 @@ class MemorySettings(Model):
     ``explicit``: only when the person asks them to remember something."""
     dream_enabled: bool = True
     """Dream mode: a nightly pass that tidies memories (see cognitrix/memory/dream.py)."""
+    review_enabled: bool = True
+    """Chat review: each night, learn facts, skills and notes from finished chats and
+    task runs (see cognitrix/memory/review.py)."""
 
-    @field_validator('enabled', 'history_enabled', 'dream_enabled', mode='before')
+    @field_validator('enabled', 'history_enabled', 'dream_enabled', 'review_enabled', mode='before')
     @classmethod
     def _enabled_default(cls, value):
         return True if value is None else bool(value)

@@ -27,6 +27,7 @@ const lib = vi.hoisted(() => ({
   saveMemoryProfile: vi.fn(),
   memoryHistory: vi.fn(),
   undoMemoryChange: vi.fn(),
+  reviewStatus: vi.fn(),
 }));
 
 vi.mock('@/lib/memories', async (importOriginal) => ({
@@ -57,6 +58,7 @@ beforeEach(() => {
   lib.listMemories.mockResolvedValue(list([short, pnpm]));
   lib.legacyMemoryCount.mockResolvedValue(0);
   lib.dreamStatus.mockResolvedValue({ enabled: true, running: false, runs: [], proposals: [], hour: 3 });
+  lib.reviewStatus.mockResolvedValue({ enabled: true, running: false, runs: [], learned: [], hour: 3 });
   lib.getMemoryProfile.mockResolvedValue({ text: '', locked: false, updated: null, by_dream: false });
   lib.memoryHistory.mockResolvedValue([]);
 });

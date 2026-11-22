@@ -285,6 +285,13 @@ async def proactive_tick(now: datetime | None = None) -> None:
         except Exception:
             logger.exception('Stuck-work alerts failed for %s', owner)
     try:
+        # The chat review goes first: dream mode waits for it, then tidies what it added.
+        from cognitrix.memory.review import review_tick
+
+        await review_tick(now)
+    except Exception:
+        logger.exception('Chat review tick failed')
+    try:
         from cognitrix.memory.dream import dream_tick
 
         await dream_tick(now)

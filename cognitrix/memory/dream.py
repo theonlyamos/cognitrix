@@ -716,6 +716,10 @@ async def dream_due(user_id: str, now: datetime) -> bool:
     runs = await runs_for(user_id, 3)
     if runs and runs[0].status == RUNNING and not _stale(runs[0]):
         return False
+    from cognitrix.memory import review
+
+    if await review.running(user_id):
+        return False  # the chat review runs first; tidy what it added once it's done
     for row in runs:
         try:
             started = datetime.strptime(row.started[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC)

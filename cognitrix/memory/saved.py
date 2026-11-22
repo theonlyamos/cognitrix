@@ -91,7 +91,8 @@ async def get_settings(user_id: str) -> MemorySettings:
 async def save_settings(user_id: str, *, enabled: bool | None = None,
                         auto_save: str | None = None,
                         history_enabled: bool | None = None,
-                        dream_enabled: bool | None = None) -> MemorySettings:
+                        dream_enabled: bool | None = None,
+                        review_enabled: bool | None = None) -> MemorySettings:
     if auto_save is not None and auto_save not in AUTO_SAVE_MODES:
         raise MemoryError_('invalid_mode', f'auto_save must be one of {", ".join(AUTO_SAVE_MODES)}')
     row = await MemorySettings.find_one({'user_id': str(user_id)})
@@ -104,6 +105,8 @@ async def save_settings(user_id: str, *, enabled: bool | None = None,
         changes['history_enabled'] = bool(history_enabled)
     if dream_enabled is not None:
         changes['dream_enabled'] = bool(dream_enabled)
+    if review_enabled is not None:
+        changes['review_enabled'] = bool(review_enabled)
     if row is None:
         row = MemorySettings(user_id=str(user_id), **changes)
         await row.save()
