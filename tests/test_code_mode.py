@@ -342,3 +342,53 @@ async def test_a_check_in_can_use_code_mode_but_still_cannot_change_anything(mon
         assert CALLS == []
     finally:
         permissions.read_only_run.reset(token)
+
+
+def test_guest_and_public_turns_get_no_meta_tools(monkeypatch):
+    """Guests and public-link visitors can't run Find Tools or Run Code, so
+    their turns don't load tools on demand (which would hide the rest)."""
+    from cognitrix.safety.permissions import guest_run, public_tools
+
+    monkeypatch.setattr(code_mode, 'ON_DEMAND_MIN_TOOLS', 2)
+    agent = _agent([add_numbers, list_files])
+    assert code_mode.turn_tools(agent)
+    token = guest_run.set(True)
+    try:
+        assert code_mode.restricted_turn()
+        assert code_mode.turn_tools(agent) == []
+    finally:
+        guest_run.reset(token)
+    token = public_tools.set(frozenset({'search_knowledge'}))
+    try:
+        assert code_mode.turn_tools(agent) == []
+    finally:
+        public_tools.reset(token)
+    assert not code_mode.restricted_turn()
+
+
+async def test_guest_turn_sends_every_tool(monkeypatch):
+    from cognitrix.safety.permissions import guest_run
+
+    monkeypatch.setattr(code_mode, 'ON_DEMAND_MIN_TOOLS', 2)
+    agent = _agent([add_numbers, list_files, always_fails])
+    session = Session(agent_id=str(agent.id))
+    sent: list[list[str]] = []
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kwargs):
+        sent.append(sorted(item['function']['name'] for item in (tools or [])))
+        response = LLMResponse()
+        response.add_chunk('ok')
+        return response
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr('cognitrix.providers.base.LLMManager.generate_response', staticmethod(fake_generate))
+    monkeypatch.setattr(Session, 'save', fake_save)
+    token = guest_run.set(True)
+    try:
+        await session('hi', agent, 'cli', False, lambda *a, **k: None, None, True)
+    finally:
+        guest_run.reset(token)
+    assert 'Add_Numbers' in sent[0] and 'List_Files' in sent[0]
+    assert 'Find_Tools' not in sent[0] and 'Run_Code' not in sent[0]

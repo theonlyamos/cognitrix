@@ -1153,9 +1153,12 @@ class Session(Model):
         # the system prompt. Loaded tools stay loaded for the chat, so later
         # turns keep the same tool list (and the provider's prompt cache).
         from cognitrix.tools import code_mode as _code_mode
+        # Only when Find Tools can actually be offered and run this turn: a
+        # guest or public-link turn can't run it, so it gets every allowed tool.
         on_demand = (
             agent.llm.supports_tool_use
-            and any(str(getattr(t, 'name', '')).lower() == 'find tools' for t in agent.tools)
+            and not _code_mode.restricted_turn()
+            and any(_code_mode._key(_code_mode._schema_name(f)) == 'find tools' for f in formatted_tools)
         )
         turn_loaded: set[str] | None = set(self.loaded_tools or []) if on_demand else None
         loaded_token = _code_mode.loaded_this_turn.set(turn_loaded)

@@ -112,10 +112,21 @@ def code_mode_available() -> bool:
     return True
 
 
+def restricted_turn() -> bool:
+    """True while the agent answers a guest or a public-link visitor. Neither
+    may run Find Tools or Run Code (safety/permissions.py), so loading tools on
+    demand would hide tools they can't load: every allowed tool is sent instead."""
+    from cognitrix.safety.permissions import guest_run, public_tools
+
+    return bool(guest_run.get()) or public_tools.get() is not None
+
+
 def turn_tools(agent: Any) -> list:
     """The meta tools this agent's settings add to a turn."""
     from cognitrix.tools.base import ToolManager
 
+    if restricted_turn():
+        return []
     mode = tool_mode(agent)
     names = []
     if mode['on_demand'] and len(getattr(agent, 'tools', None) or []) >= ON_DEMAND_MIN_TOOLS:
