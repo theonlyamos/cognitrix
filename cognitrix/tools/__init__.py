@@ -23,6 +23,7 @@ from cognitrix.tools.computer import (
     press_key_in_window,
     scroll_window,
     set_text,
+    show_screenshot,
     type_in_window,
 )
 from cognitrix.tools.folders import request_folder
@@ -123,6 +124,6 @@ __all__ = [
     'request_payment', 'pay', 'cancel_payment',
     'take_screenshot', 'text_input', 'key_press', 'hot_key',
     'mouse_click', 'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
-    'list_windows', 'open_app', 'look_at_window', 'click_element', 'set_text',
+    'list_windows', 'open_app', 'look_at_window', 'show_screenshot', 'click_element', 'set_text',
     'click_in_window', 'type_in_window', 'press_key_in_window', 'scroll_window', 'ask_to_take_over',
 ]
