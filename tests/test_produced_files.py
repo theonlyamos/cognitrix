@@ -266,3 +266,93 @@ async def test_signed_links_and_ownership(db):
     with pytest.raises(HTTPException):
         await api.content(content_token)
 
+
+
+# ------------------------------------------------------------------ review fixes
+
+async def test_a_file_named_like_the_thumbnail_keeps_its_own_copy(db):
+    from PIL import Image
+
+    from cognitrix.produced_files import storage
+    from cognitrix.produced_files.models import ProducedFile
+    from cognitrix.tools.utils import reset_execution_context
+
+    original = db / 'thumb.jpg'
+    Image.new('RGB', (1600, 1200), (10, 120, 200)).save(original, quality=95)
+    token = _as('u1', db, session_id='s1')
+    try:
+        outcome = await share_file(['thumb.jpg'])
+    finally:
+        reset_execution_context(token)
+    row = await ProducedFile.get(outcome.files[0]['id'])
+    assert row.storage_key != row.thumb_key
+    assert storage.resolve(row.storage_key).read_bytes() == original.read_bytes()
+
+
+def _xlsx(path: Path) -> Path:
+    import zipfile
+
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    rel_ns = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    with zipfile.ZipFile(path, 'w') as z:
+        z.writestr('xl/workbook.xml', f'<workbook {ns} {rel_ns}><sheets>'
+                   '<sheet name="Sales" sheetId="1" r:id="rId1"/><sheet name="Notes" sheetId="2" r:id="rId2"/>'
+                   '</sheets></workbook>')
+        z.writestr('xl/_rels/workbook.xml.rels',
+                   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="rId1" Target="worksheets/sheet1.xml"/>'
+                   '<Relationship Id="rId2" Target="/xl/worksheets/other.xml"/></Relationships>')
+        z.writestr('xl/sharedStrings.xml', f'<sst {ns}><si><t>Region</t></si><si><t>Total</t></si>'
+                   '<si><r><t>No</t></r><r><t>rth</t></r></si></sst>')
+        z.writestr('xl/worksheets/sheet1.xml', f'<worksheet {ns}><dimension ref="A1:B40"/><sheetData>'
+                   '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>'
+                   '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>12.0</v></c></row>'
+                   '<row r="4"><c r="B4" t="b"><v>1</v></c></row>'
+                   '</sheetData></worksheet>')
+        z.writestr('xl/worksheets/other.xml', f'<worksheet {ns}><sheetData>'
+                   '<row r="1"><c r="C1" t="inlineStr"><is><t>hi</t></is></c></row></sheetData></worksheet>')
+    return path
+
+
+def test_excel_preview_needs_no_extra_library(tmp_path):
+    from cognitrix.produced_files import previews
+
+    sheets = previews.read_sheets(_xlsx(tmp_path / 'sales.xlsx'))
+    assert [s['name'] for s in sheets] == ['Sales', 'Notes']
+    assert sheets[0]['rows'] == [['Region', 'Total'], ['North', '12'], ['', ''], ['', 'TRUE']]
+    assert sheets[0]['total_rows'] == 40
+    assert sheets[1]['rows'] == [['', '', 'hi']]
+    info, _ = previews.make(tmp_path / 'sales.xlsx', 'sheet')
+    assert info['sheets'] == 2 and info['preview'][0] == ['Region', 'Total']
+
+
+async def test_a_later_sandbox_fetch_uses_the_chats_project(db, monkeypatch):
+    from cognitrix.common import sandbox_work
+    from cognitrix.produced_files import service, sources
+    from cognitrix.produced_files.models import SANDBOX, ProducedFile
+    from cognitrix.projects import context
+
+    seen = {}
+
+    class FakeWork:
+        def __init__(self, user_id, agent_id):
+            seen['project'] = context.get()
+
+    def fake_fetch(ws, path, dest, max_bytes):
+        dest.write_bytes(b'data')
+        return 4
+
+    async def fake_for_session(session, user_id=None):
+        seen['session'] = session
+        return 'the-project'
+
+    monkeypatch.setattr(sandbox_work, 'SandboxWork', FakeWork)
+    monkeypatch.setattr(sources, 'sandbox_fetch', fake_fetch)
+    monkeypatch.setattr(context, 'for_session', fake_for_session)
+    row = ProducedFile(owner_id='u1', agent_id='a1', task_id='t1', name='out.csv', path='/home/agent/work/out.csv',
+                       source=SANDBOX, mime_type='text/csv', kind='sheet', size_bytes=4, created=service.now())
+    await row.save()
+    path = await service.local_path(row)
+    assert path.read_bytes() == b'data'
+    assert seen['project'] == 'the-project'
+    assert seen['session'].task_id == 't1'

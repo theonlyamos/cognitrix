@@ -147,21 +147,106 @@ def read_sheets(path: Path, rows: int = VIEW_ROWS, cols: int = VIEW_COLS) -> lis
                     out.append([_cell(c) for c in row[:cols]])
             return [{'name': path.stem, 'rows': out, 'total_rows': total}]
     if suffix in ('.xlsx', '.xlsm'):
-        from openpyxl import load_workbook
-        book = load_workbook(str(path), read_only=True, data_only=True)
-        try:
-            sheets = []
-            for sheet in book.worksheets[:MAX_SHEETS]:
-                out = []
-                for row in sheet.iter_rows(max_row=rows, max_col=cols, values_only=True):
-                    out.append([_cell(c) for c in row])
-                while out and not any(out[-1]):
-                    out.pop()
-                sheets.append({'name': sheet.title, 'rows': out, 'total_rows': sheet.max_row or len(out)})
-            return sheets
-        finally:
-            book.close()
+        return _read_xlsx(path, rows, cols)
     return []
+
+
+# Excel files are zips of XML; reading the few cells a preview needs doesn't
+# need a spreadsheet library. Parts are streamed, so a huge sheet stops early.
+_NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+_REL = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'
+MAX_SHARED_STRINGS = 200_000
+MAX_COUNTED_ROWS = 1_000_000
+
+
+def _col_index(ref: str) -> int:
+    n = 0
+    for ch in ref:
+        if not ch.isalpha():
+            break
+        n = n * 26 + (ord(ch.upper()) - 64)
+    return n - 1
+
+
+def _xml_text(el) -> str:
+    return ''.join(t.text or '' for t in el.iter(f'{_NS}t'))
+
+
+def _read_xlsx(path: Path, rows: int, cols: int) -> list[dict[str, Any]]:
+    from xml.etree import ElementTree as ET
+
+    with zipfile.ZipFile(path) as z:
+        names = set(z.namelist())
+        shared: list[str] = []
+        if 'xl/sharedStrings.xml' in names:
+            with z.open('xl/sharedStrings.xml') as fh:
+                for _, el in ET.iterparse(fh):
+                    if el.tag == f'{_NS}si':
+                        shared.append(_xml_text(el)[:200])
+                        el.clear()
+                        if len(shared) >= MAX_SHARED_STRINGS:
+                            break
+        targets: dict[str, str] = {}
+        if 'xl/_rels/workbook.xml.rels' in names:
+            for rel in ET.fromstring(z.read('xl/_rels/workbook.xml.rels')):
+                target = rel.get('Target') or ''
+                target = target.lstrip('/') if target.startswith('/') else f'xl/{target}'
+                targets[rel.get('Id') or ''] = target
+        book = ET.fromstring(z.read('xl/workbook.xml'))
+        sheets = []
+        for i, sheet in enumerate(book.iter(f'{_NS}sheet')):
+            if i >= MAX_SHEETS:
+                break
+            part = targets.get(sheet.get(_REL) or '') or f'xl/worksheets/sheet{i + 1}.xml'
+            if part not in names:
+                continue
+            out: list[list[str]] = []
+            total = 0
+            with z.open(part) as fh:
+                for _, el in ET.iterparse(fh):
+                    if el.tag == f'{_NS}dimension':
+                        ref = (el.get('ref') or '').split(':')[-1]
+                        digits = ''.join(ch for ch in ref if ch.isdigit())
+                        total = max(total, int(digits) if digits else 0)
+                    elif el.tag == f'{_NS}row':
+                        number = int(el.get('r') or len(out) + 1)
+                        total = max(total, number)
+                        if number <= rows:
+                            line = [''] * cols
+                            for c in el.iter(f'{_NS}c'):
+                                at = _col_index(c.get('r') or '') if c.get('r') else None
+                                if at is None or not 0 <= at < cols:
+                                    continue
+                                kind = c.get('t') or 'n'
+                                v = c.find(f'{_NS}v')
+                                raw = v.text if v is not None else None
+                                if kind == 's' and raw is not None and raw.isdigit():
+                                    value: Any = shared[int(raw)] if int(raw) < len(shared) else ''
+                                elif kind == 'inlineStr':
+                                    value = _xml_text(c)
+                                elif kind == 'b':
+                                    value = 'TRUE' if raw == '1' else 'FALSE'
+                                elif kind == 'n' and raw is not None:
+                                    try:
+                                        value = float(raw)
+                                    except ValueError:
+                                        value = raw
+                                else:
+                                    value = raw
+                                line[at] = _cell(value)
+                            while len(out) < number - 1:
+                                out.append([''] * cols)
+                            out.append(line)
+                        el.clear()
+                        if number >= MAX_COUNTED_ROWS or (number > rows and total > number):
+                            break
+            width = max((max((j + 1 for j, v in enumerate(r) if v), default=0) for r in out), default=0)
+            out = [r[:width] for r in out]
+            while out and not any(out[-1]):
+                out.pop()
+            sheets.append({'name': sheet.get('name') or f'Sheet {i + 1}', 'rows': out,
+                           'total_rows': total or len(out)})
+        return sheets
 
 
 def list_archive(path: Path) -> dict[str, Any]:

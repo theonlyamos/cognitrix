@@ -52,8 +52,10 @@ def ref(row: ProducedFile) -> dict[str, Any]:
 async def _store_from(row: ProducedFile, fetch) -> None:
     """Copy the file in with ``fetch(dest_path)``, then make its preview."""
     folder = storage.folder_key(row.owner_id, str(row.id))
-    key = f'{folder}/{storage.safe_name(row.name)}'
+    # The copy sits in its own folder so no file name can collide with the thumbnail.
+    key = f'{folder}/file/{storage.safe_name(row.name)}'
     dest = storage.resolve(key)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         size = await fetch(dest)
     except BaseException:
@@ -103,12 +105,20 @@ async def _prune_rows(owner_id: str) -> None:
 def _fetcher(row: ProducedFile, path: str, *, ws: Any = None, device_ctx: dict[str, Any] | None = None):
     max_bytes = storage.max_file_bytes()
     if row.source == SANDBOX:
-        if ws is None:
-            from cognitrix.common.sandbox_work import SandboxWork
-            ws = SandboxWork(row.owner_id, row.agent_id)
+        if ws is not None:
+            async def fetch_in_turn(dest: Path) -> int:
+                return await asyncio.to_thread(sources.sandbox_fetch, ws, path, dest, max_bytes)
+            return fetch_in_turn
 
         async def fetch(dest: Path) -> int:
-            return await asyncio.to_thread(sources.sandbox_fetch, ws, path, dest, max_bytes)
+            # Outside the turn (a later download): pick the sandbox user the
+            # way the turn did, which for a project's shared sandbox is the
+            # project's user, not the agent's.
+            from cognitrix.common.sandbox_work import SandboxWork
+            from cognitrix.projects.context import scope_for
+            async with scope_for(await _origin(row), row.owner_id):
+                box = SandboxWork(row.owner_id, row.agent_id)
+                return await asyncio.to_thread(sources.sandbox_fetch, box, path, dest, max_bytes)
         return fetch
     if row.source == PC:
         ctx = device_ctx or {'session_id': row.session_id or None, 'agent_id': row.agent_id or None,
@@ -121,6 +131,20 @@ def _fetcher(row: ProducedFile, path: str, *, ws: Any = None, device_ctx: dict[s
     async def fetch(dest: Path) -> int:
         return await asyncio.to_thread(sources.server_fetch, path, dest, max_bytes)
     return fetch
+
+
+async def _origin(row: ProducedFile) -> Any:
+    """The chat (or task) a file came from, enough for its project scope."""
+    from types import SimpleNamespace
+    if row.session_id:
+        try:
+            from cognitrix.sessions.base import Session
+            session = await Session.get(row.session_id)
+            if session is not None:
+                return session
+        except Exception:
+            logger.debug('Could not load the chat a file came from', exc_info=True)
+    return SimpleNamespace(user_id=row.owner_id, project_id='', task_id=row.task_id or None)
 
 
 async def local_path(row: ProducedFile) -> Path:
