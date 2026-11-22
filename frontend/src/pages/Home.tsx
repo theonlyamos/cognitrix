@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatHorizon } from '@/components/ThemeArtwork';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
 import { WaitingMessages, type WaitingMessage } from '@/components/WaitingMessages';
-import { useSession, type ChatMessage, type ToolArtifact } from '@/context/SessionContext';
+import { useSession, type ChatMessage, type ToolArtifact, type ToolUse } from '@/context/SessionContext';
 import { useSSE, type SSEEvent } from '@/hooks/useSSE';
 import { useEventStream } from '@/hooks/useEventStream';
 import { fetchChatRuns, useChatRuns } from '@/hooks/useChatRuns';
@@ -61,6 +61,7 @@ import { getChatComputer, listDevices, setChatComputer, type PairedDevice } from
 import { getProject, listProjects, projectSwatch, type Project } from '@/lib/projects';
 import { ChillScreen, type ChillRailItem } from '@/components/chill/ChillScreen';
 import { FileCards } from '@/components/files/FileCards';
+import { InfoCard } from '@/components/cards/InfoCard';
 import { FilesShelf } from '@/components/files/FilesShelf';
 import { CHILL_PATH, isModeSwitchKey, setUiMode } from '@/lib/uiMode';
 
@@ -2549,6 +2550,18 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     }
     return null;
   }, [messages]);
+  // Cards the assistant showed this turn (Show Card): tables, charts, buttons.
+  const chillCards = useMemo(() => {
+    const out: { key: string; card: NonNullable<ToolUse['card']> }[] = [];
+    let i = messages.length - 1;
+    while (i >= 0 && !isUserTurn(messages[i])) i -= 1;
+    for (const message of messages.slice(i + 1)) {
+      (message.tools ?? []).forEach((tool, j) => {
+        if (tool.status === 'done' && tool.card) out.push({ key: `${message.id}:${tool.id || j}`, card: tool.card });
+      });
+    }
+    return out;
+  }, [messages]);
   const chillLastFiles = useMemo(() => {
     for (let i = messages.length - 1; i >= 0 && !isUserTurn(messages[i]); i -= 1) {
       const files = messages[i].filesMade;
@@ -2792,6 +2805,11 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
         cards={(errorCard || questionCard || approvals.length > 0) ? <div className="chill-cards">{errorCard}{questionCard}{approvalCards}</div> : null}
         extras={(
           <>
+            {chillCards.length > 0 && (
+              <div className="mb-4 space-y-4">
+                {chillCards.map(({ key, card }) => <InfoCard key={key} card={card} />)}
+              </div>
+            )}
             {!streaming && chillLastFiles.length > 0 && (
               <div className="space-y-2">
                 <FileCards files={chillLastFiles.filter((f) => f.shown && !f.shared)} />

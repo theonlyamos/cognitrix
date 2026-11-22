@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from '@/components/Sidebar';
 import TitleBar from '@/components/TitleBar';
@@ -30,10 +30,13 @@ function AppShell() {
   const chill = pathname === CHILL_PATH;
 
   // The app opens in chill mode when that's where the person left it.
-  const [startPath] = useState(() => ({ pathname, search }));
+  // Only once, when the app opens: never again on later page changes.
+  const startRef = useRef<{ pathname: string; search: string } | null>({ pathname, search });
   useEffect(() => {
-    if (getUiMode() === 'chill' && isLandingPath(startPath.pathname, startPath.search)) navigate(CHILL_PATH, { replace: true });
-  }, [navigate, startPath]);
+    const start = startRef.current;
+    startRef.current = null;
+    if (start && getUiMode() === 'chill' && isLandingPath(start.pathname, start.search)) navigate(CHILL_PATH, { replace: true });
+  }, [navigate]);
 
   // Ctrl+Shift+. switches to chill mode from any page. The chat screens
   // handle it themselves so the open chat comes along.
