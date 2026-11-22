@@ -65,6 +65,11 @@ LABEL = 'cognitrix.sandbox'
 # published (only the changed layers download). 0 turns the check off.
 UPDATE_CHECK_HOURS_ENV = 'COGNITRIX_SANDBOX_UPDATE_CHECK_HOURS'
 _IMAGE_ID_TTL_S = 60.0
+# A check that failed (offline, Docker busy, a slow download cut off) is
+# tried again after this long instead of waiting the full interval.
+_PULL_RETRY_S = 1200.0
+# The image is a few GB; a first download on a slow line takes a while.
+_PULL_TIMEOUT_S = 3 * 3600.0
 # A running computer made from an older image moves onto the newer one once
 # it has been idle this long (0 turns that off; the panel's Update button
 # still works). Checked every AUTO_UPDATE_EVERY_S.
@@ -239,6 +244,7 @@ class SandboxManager:
         self._pull_guard = threading.Lock()
         self._pulling = False
         self._last_pull = 0.0  # time.monotonic(); 0 = not yet
+        self._last_pull_ok = True
         self._image_id_cache: tuple[float, str] = (0.0, '')
         # Key proxy: where it listens and where containers reach it, and the
         # containers that already trust its CA.
@@ -394,6 +400,11 @@ class SandboxManager:
         name = self.container_name(user_id)
         info = self._inspect(name)
         if info is None or not (info.get('State') or {}).get('Running'):
+            # Still look for a newer image, so the computer starts on it
+            # next time instead of on whatever was downloaded first.
+            if info is not None:
+                self.check_for_update()
+                self._start_auto_update()
             return None
         return self.sandbox(user_id)
 
@@ -442,6 +453,9 @@ class SandboxManager:
         while True:
             time.sleep(AUTO_UPDATE_EVERY_S)
             try:
+                # The check also runs here, not only when something asks for
+                # the computer, so a long-running app keeps looking.
+                self.check_for_update()
                 self.update_idle()
             except Exception:
                 logger.info("Couldn't check the agents' computers for updates", exc_info=True)
@@ -488,7 +502,8 @@ class SandboxManager:
             return False
         with self._pull_guard:
             now = time.monotonic()
-            if self._pulling or (not force and self._last_pull and now - self._last_pull < hours * 3600):
+            wait = hours * 3600 if self._last_pull_ok else min(hours * 3600, _PULL_RETRY_S)
+            if self._pulling or (not force and self._last_pull and now - self._last_pull < wait):
                 return False
             self._pulling = True
             self._last_pull = now
@@ -496,17 +511,32 @@ class SandboxManager:
         return True
 
     def _pull(self) -> None:
+        ok = False
+        started = time.monotonic()
         try:
-            got = self._docker('pull', '--quiet', self.image, check=False, timeout=1800)
+            got = self._docker('pull', '--quiet', self.image, check=False, timeout=_PULL_TIMEOUT_S)
             if got.returncode != 0:
-                logger.info("Couldn't check for a newer sandbox image: %s",
-                            (got.stderr or got.stdout or '').strip()[-300:])
-            self._local_image_id(fresh=True)
-        except Exception:  # Docker missing or stopped; try again next time
-            logger.info("Couldn't check for a newer sandbox image", exc_info=True)
+                logger.warning("Couldn't check for a newer sandbox image: %s",
+                               (got.stderr or got.stdout or '').strip()[-300:])
+            else:
+                ok = True
+            before = self._image_id_cache[1]
+            after = self._local_image_id(fresh=True)
+            if ok and before and after and before != after:
+                logger.warning('Downloaded a newer sandbox image (%s) in %.0fs', after[:19],
+                               time.monotonic() - started)
+        except subprocess.TimeoutExpired:
+            logger.warning('Downloading the newer sandbox image took over %.0f minutes; trying again later',
+                           _PULL_TIMEOUT_S / 60)
+        except Exception:  # Docker missing or stopped; try again soon
+            logger.warning("Couldn't check for a newer sandbox image", exc_info=True)
         finally:
             with self._pull_guard:
                 self._pulling = False
+                self._last_pull_ok = ok
+                # Count from the end, so a long download doesn't make the next
+                # check due straight away.
+                self._last_pull = time.monotonic()
 
     @property
     def checking_for_update(self) -> bool:

@@ -508,6 +508,41 @@ def test_newer_image_check_is_throttled(fake_manager, monkeypatch):
     assert mgr.check_for_update(force=True) is True
 
 
+def test_a_failed_image_check_is_tried_again_soon(fake_manager, monkeypatch):
+    """A check that fails (offline, a download cut off) doesn't wait six
+    hours for the next try, and the failure reaches the log."""
+    import subprocess as _sp
+
+    from cognitrix.computer.sandbox import client as sandbox_client
+    mgr, fake = fake_manager
+    monkeypatch.setenv('COGNITRIX_SANDBOX_UPDATE_CHECK_HOURS', '6')
+
+    def failing(*args, **kwargs):
+        raise _sp.TimeoutExpired(args, 10)
+    monkeypatch.setattr(mgr, '_docker', failing)
+    warned = []
+    monkeypatch.setattr(sandbox_client.logger, 'warning', lambda *a, **k: warned.append(a[0]))
+    mgr._pulling = True
+    mgr._pull()
+    assert not mgr._pulling and not mgr._last_pull_ok and warned
+    monkeypatch.setattr(mgr, '_pull', lambda: None)
+    assert mgr.check_for_update() is False  # just failed
+    mgr._last_pull -= sandbox_client._PULL_RETRY_S + 1
+    assert mgr.check_for_update() is True  # 20 minutes later, not 6 hours
+    mgr._pulling, mgr._last_pull_ok = False, True
+    mgr._last_pull -= sandbox_client._PULL_RETRY_S + 1
+    assert mgr.check_for_update() is False  # after a good check, the full interval
+
+
+def test_a_stopped_computer_still_looks_for_a_newer_image(fake_manager, monkeypatch):
+    mgr, fake = fake_manager
+    checked = []
+    monkeypatch.setattr(mgr, 'check_for_update', lambda force=False: checked.append(1) or True)
+    monkeypatch.setattr(mgr, '_start_auto_update', lambda: None)
+    assert mgr.existing('u1') is None
+    assert checked == [1]
+
+
 def test_agents_are_told_to_browse_on_their_own_computer(monkeypatch):
     from cognitrix.sessions.base import _with_folder_prompt
 
