@@ -16,6 +16,7 @@ import { tr } from '@/lib/i18n';
 
 // Code-split the authenticated app; auth pages + shell stay eager for first paint.
 const ChatScreen = lazy(() => import('@/pages/ChatScreen'));
+const ChillChatScreen = lazy(() => import('@/pages/ChatScreen').then((m) => ({ default: m.ChillChatScreen })));
 const TeamChatLink = lazy(() => import('@/pages/ChatScreen').then((m) => ({ default: m.TeamChatLink })));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const Agents = lazy(() => import('@/pages/Agents'));
@@ -102,6 +103,7 @@ function AppRoutes() {
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/home" element={<ChatScreen />} />
+          <Route path="/chill" element={<ChillChatScreen />} />
           <Route path="/chat/:chatId" element={<ChatLink />} />
           <Route path="/shared/:chatId" element={<SharedChat />} />
           <Route path="/agents" element={<Agents />} />

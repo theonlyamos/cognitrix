@@ -43,7 +43,7 @@ import { getChatFolders, setChatFolders, type WorkFolder } from '@/lib/folders';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge } from '@/components/StartChat';
-import { AgentPickerChip, NewChatGreeting } from '@/components/NewChatGreeting';
+import { AgentPickerChip, NewChatGreeting, newChatSuggestions } from '@/components/NewChatGreeting';
 import { useOptionalUser } from '@/context/AppContext';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 import { takeChatAutoSend, takeChatDraft } from '@/lib/chatDraft';
@@ -59,6 +59,10 @@ import ComputerChip from '@/components/ComputerChip';
 import { PcScreenPanel } from '@/components/PcScreen';
 import { getChatComputer, listDevices, setChatComputer, type PairedDevice } from '@/lib/devices';
 import { getProject, listProjects, projectSwatch, type Project } from '@/lib/projects';
+import { ChillScreen, type ChillRailItem } from '@/components/chill/ChillScreen';
+import { FileCards } from '@/components/files/FileCards';
+import { FilesShelf } from '@/components/files/FilesShelf';
+import { CHILL_PATH, isModeSwitchKey, setUiMode } from '@/lib/uiMode';
 
 
 interface ConvoSummary {
@@ -145,7 +149,7 @@ interface ApprovalRequest {
   takeover?: { desktop: string; reason: string };
 }
 
-export default function Home() {
+export default function Home({ chill = false }: { chill?: boolean } = {}) {
   const { messages, addMessage, attachArtifactsToLatestUser: attachArtifactsToLatestUserFromSession, addArtifactsToLastUser, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, attachFilesMade, stopRunningTools, failRunningTools, markTurnDuration, clearMessages, setMessages } = useSession();
   const attachArtifactsToLatestUser = attachArtifactsToLatestUserFromSession ?? addArtifactsToLastUser;
   const messagesRef = useRef(messages);
@@ -444,7 +448,18 @@ export default function Home() {
     setSidebarOpen(open);
     saveSidebarOpen(open);
   }, []);
-  const [agentId, setAgentId] = useState<string>(() => localStorage.getItem('selectedAgentId') || '');
+  // Chill mode always talks to the main assistant; until it is known, the
+  // one it used last.
+  const [agentId, setAgentId] = useState<string>(() => (chill ? localStorage.getItem('chillAgentId') || '' : localStorage.getItem('selectedAgentId') || ''));
+  const [chillMain, setChillMain] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!chill) return;
+    let alive = true;
+    api.get<{ main_assistant: { id: string } | null }>('/assistant/main')
+      .then((r) => { if (alive) setChillMain(r.data?.main_assistant?.id ?? null); })
+      .catch(() => { if (alive) setChillMain(null); });
+    return () => { alive = false; };
+  }, [chill]);
 
   // The first-run setup made the user's assistant: list it and switch to it.
   useEffect(() => {
@@ -714,14 +729,14 @@ export default function Home() {
   // the person left it.
   const hasChatPages = (chatItems?.pages.length ?? 0) > 0;
   useEffect(() => {
-    if (loadSidebarOpen() !== null || !isWideScreen()) return;
+    if (chill || loadSidebarOpen() !== null || !isWideScreen()) return;
     if (hasChatPages || agentDesktop) setSidebar(true);
-  }, [hasChatPages, agentDesktop, setSidebar]);
+  }, [chill, hasChatPages, agentDesktop, setSidebar]);
 
   // Ctrl+. (Cmd+. on a Mac) opens and closes the panel.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== '.' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      if (chill || event.key !== '.' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
       event.preventDefault();
       // Same as the header button: with an artifact or the computer showing,
       // the shortcut closes the whole right column.
@@ -738,7 +753,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sidebarOpen, artifactOpen, appViewOpen, computerOpen, changesOpen, fileOpen, closeArtifact, closeAppView, closeChanges, closeFile, setSidebar]);
+  }, [chill, sidebarOpen, artifactOpen, appViewOpen, computerOpen, changesOpen, fileOpen, closeArtifact, closeAppView, closeChanges, closeFile, setSidebar]);
   // Spoken replies: when a turn ends and "read replies aloud" is on, read the
   // answer. Sending a new message stops whatever was being read.
   // Live voice mode reads replies itself and keeps speaking across turns.
@@ -911,13 +926,13 @@ export default function Home() {
 
   // Default to the first agent once the list loads (or if the saved one is gone).
   useEffect(() => {
-    if (agents.length === 0) return;
+    if (agents.length === 0 || chill) return;
     if (!agentId || !agents.some((a) => a.id === agentId)) {
       const first = agents[0].id;
       setAgentId(first);
       localStorage.setItem('selectedAgentId', first);
     }
-  }, [agents, agentId]);
+  }, [agents, agentId, chill]);
 
   useEffect(() => {
     const transcript = transcriptRef.current;
@@ -1036,6 +1051,19 @@ export default function Home() {
     },
     [agentId],
   );
+
+  // Chill mode: switch to the main assistant once it is known (or the first
+  // agent when there is none), without changing the full app's pick.
+  useEffect(() => {
+    if (!chill || agents.length === 0 || chillMain === undefined) return;
+    const has = (id: string | null | undefined) => !!id && agents.some((a) => a.id === id);
+    const want = has(chillMain) ? chillMain! : has(agentId) ? agentId : agents[0].id;
+    try { localStorage.setItem('chillAgentId', want); } catch { /* not remembered */ }
+    if (want === agentId) return;
+    setAgentId(want);
+    setActiveSessionId(null);
+    resetThreadState();
+  }, [chill, agents, chillMain, agentId, resetThreadState]);
 
   const loadConversation = useCallback(
     async (id: string, expectedGeneration?: number, attach = true) => {
@@ -2382,6 +2410,411 @@ export default function Home() {
     </div>
   );
 
+  // ── Chill mode ──
+  // The newest thing the chat made fills the window; the rail flips back.
+  const closeStage = useCallback(() => {
+    closeArtifact();
+    closeAppView();
+    closeChanges();
+    closeFile();
+    setComputerOpen(false);
+  }, [closeArtifact, closeAppView, closeChanges, closeFile]);
+  const showComputer = useCallback(() => {
+    closeArtifact();
+    closeAppView();
+    closeChanges();
+    closeFile();
+    setComputerOpen(true);
+  }, [closeArtifact, closeAppView, closeChanges, closeFile]);
+  // Where this turn's messages start; things made after it go on the stage.
+  const chillTurnStartRef = useRef(Number.POSITIVE_INFINITY);
+  const chillShownRef = useRef(new Set<string>());
+  const chillWasBusyRef = useRef(false);
+  useEffect(() => {
+    // A new chat gets its id during its first turn: that turn carries on.
+    if (busyRef.current) return;
+    chillTurnStartRef.current = Number.POSITIVE_INFINITY;
+    chillShownRef.current = new Set();
+  }, [activeSessionId]);
+  useEffect(() => {
+    const was = chillWasBusyRef.current;
+    chillWasBusyRef.current = busy;
+    if (!chill || !busy || was) return;
+    // A new turn: the answer comes back on screen while it is written.
+    const all = messagesRef.current;
+    let start = all.length - 1;
+    while (start > 0 && !isUserTurn(all[start])) start -= 1;
+    chillTurnStartRef.current = Math.max(0, start);
+    closeStage();
+  }, [chill, busy, closeStage]);
+  useEffect(() => {
+    if (!chill) return;
+    const made: string[] = [];
+    for (const message of messages.slice(chillTurnStartRef.current)) {
+      for (const tool of message.tools ?? []) {
+        if (tool.status !== 'done') continue;
+        const page = publishedFrom(tool.name, tool.result ?? undefined);
+        if (page) made.push(`page:${page.id}`);
+        for (const file of tool.files ?? []) made.push(`file:${file.id}`);
+      }
+      for (const file of message.filesMade ?? []) if (file.shown) made.push(`file:${file.id}`);
+    }
+    const fresh = made.filter((key) => !chillShownRef.current.has(key));
+    if (!fresh.length) return;
+    for (const key of fresh) chillShownRef.current.add(key);
+    const [kind, id] = [fresh[fresh.length - 1].slice(0, 4), fresh[fresh.length - 1].slice(5)];
+    if (kind === 'page') showArtifact(id);
+    else showFile(id);
+  }, [chill, messages, showArtifact, showFile]);
+  // The assistant started using its computer: show it, unless something it
+  // made is already on screen.
+  const chillDesktopRef = useRef<string | null>(null);
+  useEffect(() => {
+    const was = chillDesktopRef.current;
+    chillDesktopRef.current = agentDesktop?.name ?? null;
+    if (!chill || !busy || !agentDesktop || was) return;
+    if (!artifactOpen && !fileOpen && !appViewOpen && !changesOpen) showComputer();
+  }, [chill, busy, agentDesktop, artifactOpen, fileOpen, appViewOpen, changesOpen, showComputer]);
+
+  const chillRail = useMemo((): ChillRailItem[] => {
+    if (!chill) return [];
+    const items: ChillRailItem[] = [{ key: 'answer', kind: 'answer', label: tr('ui.chill.answer') }];
+    for (const page of chatItems?.pages ?? []) items.push({ key: `page:${page.id}`, kind: 'page', label: page.title });
+    for (const file of chatFiles) items.push({ key: `file:${file.id}`, kind: 'file', label: file.name, fileKind: file.kind });
+    for (const view of chatAppViews) items.push({ key: `app:${view.id}`, kind: 'app', label: view.title || view.app });
+    if (agentDesktop || chatPcDevice) items.push({ key: 'computer', kind: 'computer', label: chatPcDevice ? chatPcDevice.name : tr('ui.chill.assistantSComputer') });
+    // Something on screen that the lists haven't caught up with yet.
+    const open = artifactOpen ? `page:${artifactOpen}` : fileOpen ? `file:${fileOpen}` : appViewOpen ? `app:${appViewOpen}` : null;
+    if (open && !items.some((i) => i.key === open)) {
+      items.push(open.startsWith('page') ? { key: open, kind: 'page', label: tr('ui.chill.page') }
+        : open.startsWith('file') ? { key: open, kind: 'file', label: tr('ui.chill.file') }
+          : { key: open, kind: 'app', label: tr('ui.chill.app') });
+    }
+    if (computerOpen && !items.some((i) => i.key === 'computer')) items.push({ key: 'computer', kind: 'computer', label: tr('ui.chill.assistantSComputer') });
+    return items;
+  }, [chill, chatItems, chatFiles, chatAppViews, agentDesktop, chatPcDevice, artifactOpen, fileOpen, appViewOpen, computerOpen]);
+  const chillActive = artifactOpen ? `page:${artifactOpen}` : fileOpen ? `file:${fileOpen}` : appViewOpen ? `app:${appViewOpen}`
+    : changesOpen ? 'changes' : computerOpen ? 'computer' : 'answer';
+  const openChillItem = (key: string) => {
+    if (key === 'answer') closeStage();
+    else if (key === 'computer') showComputer();
+    else if (key.startsWith('page:')) showArtifact(key.slice(5));
+    else if (key.startsWith('file:')) showFile(key.slice(5));
+    else if (key.startsWith('app:')) showAppView(key.slice(4));
+  };
+
+  // The helper agent the assistant is working with right now.
+  const chillHelper = useMemo(() => {
+    if (!chill || !busy) return null;
+    for (let i = messages.length - 1; i >= 0 && !isUserTurn(messages[i]); i -= 1) {
+      const tools = messages[i].tools ?? [];
+      for (let j = tools.length - 1; j >= 0; j -= 1) {
+        const tool = tools[j];
+        if (tool.status !== 'running') continue;
+        const name = tool.name.toLowerCase().replace(/[\s-]+/g, '_');
+        if (!['call_agent', 'start_chat', 'create_agent', 'message_chat', 'check_chat', 'create_new_team'].includes(name)) continue;
+        let params: Record<string, unknown> = {};
+        try { params = JSON.parse(tool.params || '{}'); } catch { /* shown without a name */ }
+        const who = String(params.name || params.agent || params.agent_name || '').trim();
+        const doing = name === 'create_agent' ? tr('ui.chill.settingUpANewHelper')
+          : name === 'call_agent' ? tr('ui.chill.workingOnAPart')
+            : name === 'start_chat' ? tr('ui.chill.startedOnItsPart')
+              : name === 'create_new_team' ? tr('ui.chill.puttingATeamTogether')
+                : tr('ui.chill.checkingIn');
+        return { name: who || tr('ui.chill.helper'), doing };
+      }
+    }
+    return null;
+  }, [chill, busy, messages]);
+
+  // What the assistant is doing right now, shown while it works.
+  const chillDoing = useMemo(() => {
+    if (!chill || !busy) return null;
+    for (let i = messages.length - 1; i >= 0 && !isUserTurn(messages[i]); i -= 1) {
+      const running = (messages[i].tools ?? []).filter((t) => t.status === 'running');
+      if (running.length) return humanizeToolName(running[running.length - 1].name);
+    }
+    return null;
+  }, [chill, busy, messages]);
+
+  const chillQuestion = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (isUserTurn(messages[i])) return messages[i].content.replace(/\n?📎 .*$/s, '');
+    }
+    return null;
+  }, [messages]);
+  const chillAnswer = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0 && !isUserTurn(messages[i]); i -= 1) {
+      if (messages[i].role === 'assistant' && messages[i].content.trim()) return messages[i].content;
+    }
+    return null;
+  }, [messages]);
+  const chillLastFiles = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0 && !isUserTurn(messages[i]); i -= 1) {
+      const files = messages[i].filesMade;
+      if (files?.length) return files;
+    }
+    return [];
+  }, [messages]);
+
+  const switchToFull = useCallback(() => {
+    setUiMode('full');
+    stopSpeaking();
+    navigate(activeSessionId && !incognito ? `/home?chat=${encodeURIComponent(activeSessionId)}` : '/home');
+  }, [activeSessionId, incognito, navigate]);
+  const switchToChill = useCallback(() => {
+    setUiMode('chill');
+    navigate(CHILL_PATH);
+  }, [navigate]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!isModeSwitchKey(event)) return;
+      event.preventDefault();
+      if (chill) switchToFull();
+      else switchToChill();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [chill, switchToFull, switchToChill]);
+  useEffect(() => { if (chill) setUiMode('chill'); }, [chill]);
+
+  const chillComposer = (
+    <div className="relative">
+      {attachments.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5 px-1">
+          {attachments.map((a) => (
+            <span key={a.id} className="chill-glass inline-flex max-w-full items-center gap-1.5 rounded-full py-1 pl-1 pr-2 text-[12px]">
+              {a.kind === 'image' && a.previewUrl
+                ? <img src={a.previewUrl} alt="" className="h-6 w-6 rounded-full object-cover" />
+                : <span aria-hidden className="grid h-6 w-6 place-items-center rounded-full bg-panel-2 text-fg-dim">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                </span>}
+              <span className="max-w-[180px] truncate" title={a.name}>{a.name}</span>
+              <button type="button" onClick={() => removeAttachment(a.id)} aria-label={tr('ui.home.removeName', { name: a.name })}
+                className="grid h-9 w-9 place-items-center rounded-full text-fg-dim hover:text-danger-ink md:h-5 md:w-5">✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); void addFiles(e.dataTransfer.files); }}
+        className={cn('chill-composer overflow-hidden rounded-[26px] border transition-colors', dragOver ? 'border-accent' : 'focus-within:border-fg-dim')}
+      >
+        {voice.active && <div className="px-2 pt-1"><VoiceBar voice={voice} /></div>}
+        {liveVoice && (
+          <div className="border-b border-line px-1">
+            <LiveVoicePanel live={live} approvals={approvals} question={question} onExit={() => setLiveVoice(false)} />
+          </div>
+        )}
+        <div className={cn('flex items-end gap-1 p-2', voice.active && '!hidden', empty && 'sm:p-3')}>
+          <button type="button" onClick={() => fileInputRef.current?.click()} aria-label={tr('ui.chill.addFiles')} title={tr('ui.chill.addFiles')}
+            className="grid h-11 w-11 flex-none place-items-center rounded-full text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg">
+            <svg aria-hidden width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+          <textarea
+            ref={inputRef}
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => {
+              const imgs = Array.from(e.clipboardData.files || []).filter((f) => f.type.startsWith('image/'));
+              if (imgs.length) { e.preventDefault(); void addFiles(imgs); }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && busy && !stopping) { e.preventDefault(); void stop(); return; }
+              if (isSendKey(e, getSendKey())) { e.preventDefault(); void send(input); }
+            }}
+            aria-label={tr('ui.chill.messageYourAssistant')}
+            placeholder={busy && question === null ? tr('ui.chill.addSomethingWhileItWorks') : isPhone ? tr('ui.chill.askOrJustTalk') : tr('ui.chill.askAnythingOrJustTalk')}
+            className={cn('block max-h-48 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-2.5 text-[16px] text-fg outline-none placeholder:text-fg-dim focus-visible:outline-none', empty && 'sm:text-[18px]')}
+          />
+          {busy && !input.trim() ? (
+            <button type="button" onClick={() => void stop()} disabled={stopping}
+              aria-label={stopping ? tr('ui.home.stoppingResponse') : tr('ui.home.stopResponse')}
+              className="grid h-11 w-11 flex-none place-items-center rounded-full bg-fg text-bg transition disabled:opacity-60">
+              <svg aria-hidden width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="3" /></svg>
+            </button>
+          ) : input.trim() || attachments.length > 0 ? (
+            <button type="button" onClick={() => void send(input)} disabled={!!uploadError || !isConnected}
+              aria-label={tr('ui.home.send')}
+              className="grid h-11 w-11 flex-none place-items-center rounded-full bg-accent text-accent-foreground transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50">
+              <svg aria-hidden width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+            </button>
+          ) : null}
+          {!input.trim() && !liveVoice && (
+            <>
+              <MicButton voice={voice} className="h-11 w-11 flex-none rounded-full md:h-11 md:w-11" />
+              <button type="button" onClick={() => setLiveVoice(true)} disabled={!isConnected}
+                aria-label={tr('ui.liveVoice.liveVoiceMode')} title={tr('ui.liveVoice.liveVoiceTalkHandsFree')}
+                className={cn('grid flex-none place-items-center rounded-full bg-accent text-accent-foreground transition hover:brightness-105 disabled:opacity-50', empty ? 'h-12 w-12' : 'h-11 w-11', busy && 'hidden')}>
+                <svg aria-hidden width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" /></svg>
+              </button>
+            </>
+          )}
+        </div>
+        <input ref={fileInputRef} type="file" multiple accept={ACCEPT_ATTR} className="hidden"
+          onChange={(e) => { void addFiles(e.target.files || []); e.target.value = ''; }} />
+      </div>
+      {uploadError && <div role="alert" className="mt-1.5 px-2 text-[12px] text-danger-ink">{uploadError}</div>}
+      {stopError && <div role="alert" className="mt-1.5 px-2 text-[12px] text-danger-ink">{stopError}</div>}
+      {steerError && <div role="alert" className="mt-1.5 px-2 text-[12px] text-danger-ink">{steerError}</div>}
+      <VoiceNotice voice={voice} />
+    </div>
+  );
+
+  const chillStage = !chill ? null
+    : artifactOpen ? <ArtifactViewer pageId={artifactOpen} variant="panel" onClose={closeStage} onGone={closeArtifact} />
+      : fileOpen ? <FileViewer fileId={fileOpen} onClose={closeStage} />
+        : changesOpen ? (
+          <ChangesPanel state={chatChanges} initialSource={changesOpen.source} initialPath={changesOpen.path} onClose={closeStage} onCopyBack={copyBack} />
+        ) : appViewOpen ? (
+          <AppViewPanel viewId={appViewOpen} onClose={closeStage} onGone={closeAppView} onSendMessage={(text) => { void send(text); }} />
+        ) : computerOpen ? (chatPcDevice
+          ? <PcScreenPanel device={chatPcDevice} onClose={closeStage} />
+          : <ComputerPanel agents={agents.map((a) => ({ id: String(a.id), name: a.name }))} focusAgentId={agentId}
+            takeOverRequest={takeOverRequest} onTakeOverStarted={() => setTakeOverRequest(null)} onClose={closeStage} />
+        ) : null;
+
+  // Cards that wait on the person, shared by both layouts.
+  const errorCard = error && (
+            <div role="alert" className="mx-auto my-4 flex w-[calc(100%-3rem)] max-w-[720px] items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
+              <span>{tr('ui.home.connectionErrorTheStreamStopped')}</span>
+              <button onClick={reconnect} className="min-h-11 flex-none rounded border border-line px-2 py-0.5 transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">
+                {tr('ui.home.retry')}
+              </button>
+            </div>
+          );
+  const questionCard = question && (
+            <QuestionCard
+              question={question}
+              onAnswer={(answer) => postQuestionAction(question, 'answer', answer)}
+              onCancel={() => postQuestionAction(question, 'cancel')}
+              onStopTimer={() => postQuestionAction(question, 'stop_timer')}
+            />
+          );
+  const changesCards = activeSessionId && agentId && (
+            <ChangesCards
+              sessionId={activeSessionId}
+              sources={busy ? [] : chatChanges.changes?.sources ?? []}
+              working={chatChanges.working}
+              onOpen={openChanges}
+              onCopyBack={copyBack}
+              onUndoAll={(src) => void chatChanges.act({ action: 'reject', source: src.key })}
+            />
+          );
+  const approvalCards = approvals.map((a) => a.takeover ? (
+            <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
+              <PanelCard
+                tag={<>{tr('ui.takeover.tag')}</>}
+                title={tr('ui.takeover.title', { name: currentAgent?.name || tr('ui.takeover.anAgent') })}
+                subtitle={a.takeover.reason || undefined}
+                footer={(
+                  <>
+                    <PanelButton
+                      kind="primary"
+                      onClick={() => {
+                        const desktop = a.takeover?.desktop || 'main';
+                        void respondApproval(a.request_id, true);
+                        closeArtifact(); closeAppView(); closeChanges(); closeFile();
+                        setTakeOverRequest({ desktop, at: Date.now() });
+                        setComputerOpen(true);
+                      }}
+                    >
+                      {tr('ui.takeover.takeOver')}
+                    </PanelButton>
+                    <span className="grow" />
+                    <PanelButton onClick={() => respondApproval(a.request_id, false)}>{tr('ui.takeover.skip')}</PanelButton>
+                  </>
+                )}
+              >
+                <p className="text-[12.5px] leading-relaxed text-fg-dim">{tr('ui.takeover.hint')}</p>
+              </PanelCard>
+            </div>
+          ) : (
+            <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
+              <PanelCard
+                tone="danger"
+                tag={<>{tr('ui.home.approval')}</>}
+                title={<>{tr('ui.home.run')}{' '}<span className="text-accent-ink">{humanizeToolName(a.tool_name)}</span>?</>}
+                subtitle={a.details || undefined}
+                fields={[
+                  { label: tr('ui.home.tool'), value: humanizeToolName(a.tool_name) },
+                  { label: tr('ui.home.risk'), value: <span className={a.risk_level === 'high' || a.risk_level === 'critical' ? 'text-danger-ink' : undefined}>{a.risk_level}</span> },
+                  ...(a.app ? [{ label: tr('ui.home.app'), value: a.app.label }] : []),
+                ]}
+                footer={(
+                  <>
+                    <PanelButton kind="primary" onClick={() => respondApproval(a.request_id, true)}>{tr('ui.home.approve')}</PanelButton>
+                    {!a.always_ask && <PanelButton onClick={() => respondApproval(a.request_id, true, true)}>{tr('ui.home.approveForSession')}</PanelButton>}
+                    {a.full_shell && (
+                      <PanelButton onClick={() => respondApproval(a.request_id, true, true, true)} title={tr('ui.home.runEveryShellCommandIn')}>{tr('ui.home.allowAllCommandsInThis')}</PanelButton>
+                    )}
+                    {a.app && (
+                      <>
+                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={tr('ui.home.letAgentsClickAndType', { label: a.app.label })}>{tr('ui.home.allowLabelInThisChat', { label: a.app.label })}</PanelButton>
+                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={tr('ui.home.neverAskAgainBeforeAgents', { label: a.app.label })}>{tr('ui.home.alwaysAllowLabel', { label: a.app.label })}</PanelButton>
+                      </>
+                    )}
+                    {a.always && (
+                      <PanelButton onClick={() => respondApproval(a.request_id, true, true, false, undefined, true)}
+                        title={a.always.kind === 'command' ? tr('ui.approvals.alwaysCommandHint', { label: a.always.label }) : tr('ui.approvals.alwaysToolHint')}>
+                        {a.always.kind === 'command' ? tr('ui.approvals.alwaysAllowCommand', { label: a.always.label }) : tr('ui.approvals.alwaysAllow')}
+                      </PanelButton>
+                    )}
+                    <span className="grow" />
+                    <PanelButton kind="danger" onClick={() => respondApproval(a.request_id, false)}>{tr('ui.home.deny')}</PanelButton>
+                  </>
+                )}
+              >
+                {a.params && Object.keys(a.params).length > 0 ? (
+                  <pre className="max-h-40 overflow-auto rounded border border-line bg-panel-2 p-2 font-mono text-[11px] text-fg-dim">{JSON.stringify(a.params, null, 2)}</pre>
+                ) : undefined}
+              </PanelCard>
+            </div>
+          ));
+
+  if (chill) {
+    return (
+      <ChillScreen
+        empty={empty && !waiting}
+        name={user?.name}
+        assistantName={currentAgent?.name || tr('ui.chill.assistant')}
+        composer={chillComposer}
+        stage={chillStage}
+        question={chillQuestion}
+        answer={chillAnswer}
+        streaming={streaming}
+        thinking={busy && question === null ? (planning || chillDoing || (waiting || !chillAnswer ? tr('ui.home.thinking') : null)) : null}
+        helper={chillHelper}
+        listening={liveVoice ? { phase: live.phase, heard: live.heard } : null}
+        cards={(errorCard || questionCard || approvals.length > 0) ? <div className="chill-cards">{errorCard}{questionCard}{approvalCards}</div> : null}
+        extras={(
+          <>
+            {!streaming && chillLastFiles.length > 0 && (
+              <div className="space-y-2">
+                <FileCards files={chillLastFiles.filter((f) => f.shown && !f.shared)} />
+                <FilesShelf files={chillLastFiles.filter((f) => !f.shown)} />
+              </div>
+            )}
+            {changesCards}
+          </>
+        )}
+        rail={chillRail}
+        railActive={chillActive}
+        onRail={openChillItem}
+        suggestions={newChatSuggestions()}
+        onSuggestion={(text) => { setInput(text); inputRef.current?.focus(); }}
+        onNewChat={() => { closeStage(); newConversation(); }}
+        chats={convosSorted.filter((c) => !c.archived).slice(0, 30).map((c) => ({ id: c.id, title: c.title }))}
+        activeChatId={activeSessionId}
+        onOpenChat={(id) => { closeStage(); switchConversation(id); }}
+        onFullMode={switchToFull}
+      />
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-bg text-fg">
       {/* Chat column */}
@@ -2419,6 +2852,15 @@ export default function Home() {
                 <span className="sr-only md:not-sr-only">{reconnecting ? tr('ui.home.reconnecting') : tr('ui.home.reconnect_4804')}</span>
               </Button>
             )}
+            <button
+              type="button"
+              onClick={switchToChill}
+              aria-label={tr('ui.chill.switchToChillMode')}
+              title={tr('ui.chill.chillModeCtrlShift')}
+              className="inline-flex h-11 min-w-11 flex-none items-center justify-center rounded-lg px-2.5 text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-9 md:min-w-9"
+            >
+              <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M8.5 14.5c1 1 2.2 1.5 3.5 1.5s2.5-.5 3.5-1.5" /><path d="M9 9.5h.01M15 9.5h.01" /></svg>
+            </button>
             {agentId && !picking && (
               <button
                 type="button"
@@ -2519,105 +2961,10 @@ export default function Home() {
             </div>
           )}
 
-          {error && (
-            <div role="alert" className="mx-auto my-4 flex w-[calc(100%-3rem)] max-w-[720px] items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
-              <span>{tr('ui.home.connectionErrorTheStreamStopped')}</span>
-              <button onClick={reconnect} className="min-h-11 flex-none rounded border border-line px-2 py-0.5 transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">
-                {tr('ui.home.retry')}
-              </button>
-            </div>
-          )}
-
-          {question && (
-            <QuestionCard
-              question={question}
-              onAnswer={(answer) => postQuestionAction(question, 'answer', answer)}
-              onCancel={() => postQuestionAction(question, 'cancel')}
-              onStopTimer={() => postQuestionAction(question, 'stop_timer')}
-            />
-          )}
-
-          {activeSessionId && agentId && (
-            <ChangesCards
-              sessionId={activeSessionId}
-              sources={busy ? [] : chatChanges.changes?.sources ?? []}
-              working={chatChanges.working}
-              onOpen={openChanges}
-              onCopyBack={copyBack}
-              onUndoAll={(src) => void chatChanges.act({ action: 'reject', source: src.key })}
-            />
-          )}
-
-          {approvals.map((a) => a.takeover ? (
-            <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
-              <PanelCard
-                tag={<>{tr('ui.takeover.tag')}</>}
-                title={tr('ui.takeover.title', { name: currentAgent?.name || tr('ui.takeover.anAgent') })}
-                subtitle={a.takeover.reason || undefined}
-                footer={(
-                  <>
-                    <PanelButton
-                      kind="primary"
-                      onClick={() => {
-                        const desktop = a.takeover?.desktop || 'main';
-                        void respondApproval(a.request_id, true);
-                        closeArtifact(); closeAppView(); closeChanges(); closeFile();
-                        setTakeOverRequest({ desktop, at: Date.now() });
-                        setComputerOpen(true);
-                      }}
-                    >
-                      {tr('ui.takeover.takeOver')}
-                    </PanelButton>
-                    <span className="grow" />
-                    <PanelButton onClick={() => respondApproval(a.request_id, false)}>{tr('ui.takeover.skip')}</PanelButton>
-                  </>
-                )}
-              >
-                <p className="text-[12.5px] leading-relaxed text-fg-dim">{tr('ui.takeover.hint')}</p>
-              </PanelCard>
-            </div>
-          ) : (
-            <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
-              <PanelCard
-                tone="danger"
-                tag={<>{tr('ui.home.approval')}</>}
-                title={<>{tr('ui.home.run')}{' '}<span className="text-accent-ink">{humanizeToolName(a.tool_name)}</span>?</>}
-                subtitle={a.details || undefined}
-                fields={[
-                  { label: tr('ui.home.tool'), value: humanizeToolName(a.tool_name) },
-                  { label: tr('ui.home.risk'), value: <span className={a.risk_level === 'high' || a.risk_level === 'critical' ? 'text-danger-ink' : undefined}>{a.risk_level}</span> },
-                  ...(a.app ? [{ label: tr('ui.home.app'), value: a.app.label }] : []),
-                ]}
-                footer={(
-                  <>
-                    <PanelButton kind="primary" onClick={() => respondApproval(a.request_id, true)}>{tr('ui.home.approve')}</PanelButton>
-                    {!a.always_ask && <PanelButton onClick={() => respondApproval(a.request_id, true, true)}>{tr('ui.home.approveForSession')}</PanelButton>}
-                    {a.full_shell && (
-                      <PanelButton onClick={() => respondApproval(a.request_id, true, true, true)} title={tr('ui.home.runEveryShellCommandIn')}>{tr('ui.home.allowAllCommandsInThis')}</PanelButton>
-                    )}
-                    {a.app && (
-                      <>
-                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={tr('ui.home.letAgentsClickAndType', { label: a.app.label })}>{tr('ui.home.allowLabelInThisChat', { label: a.app.label })}</PanelButton>
-                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={tr('ui.home.neverAskAgainBeforeAgents', { label: a.app.label })}>{tr('ui.home.alwaysAllowLabel', { label: a.app.label })}</PanelButton>
-                      </>
-                    )}
-                    {a.always && (
-                      <PanelButton onClick={() => respondApproval(a.request_id, true, true, false, undefined, true)}
-                        title={a.always.kind === 'command' ? tr('ui.approvals.alwaysCommandHint', { label: a.always.label }) : tr('ui.approvals.alwaysToolHint')}>
-                        {a.always.kind === 'command' ? tr('ui.approvals.alwaysAllowCommand', { label: a.always.label }) : tr('ui.approvals.alwaysAllow')}
-                      </PanelButton>
-                    )}
-                    <span className="grow" />
-                    <PanelButton kind="danger" onClick={() => respondApproval(a.request_id, false)}>{tr('ui.home.deny')}</PanelButton>
-                  </>
-                )}
-              >
-                {a.params && Object.keys(a.params).length > 0 ? (
-                  <pre className="max-h-40 overflow-auto rounded border border-line bg-panel-2 p-2 font-mono text-[11px] text-fg-dim">{JSON.stringify(a.params, null, 2)}</pre>
-                ) : undefined}
-              </PanelCard>
-            </div>
-          ))}
+          {errorCard}
+          {questionCard}
+          {changesCards}
+          {approvalCards}
         </div>
 
         {!empty && (

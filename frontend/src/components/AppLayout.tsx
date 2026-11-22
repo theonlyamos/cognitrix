@@ -10,6 +10,7 @@ import WhatsNew from '@/components/WhatsNew';
 import { NotificationsProvider } from '@/context/NotificationsContext';
 import { isDesktop, onDesktopEvent, invokeDesktop } from '@/lib/desktop';
 import { tr } from '@/lib/i18n';
+import { CHILL_PATH, getUiMode, isLandingPath, isModeSwitchKey } from '@/lib/uiMode';
 
 /** Persistent shell: the sidebar (with every chat) and alerts mount once;
  *  pages swap through the Outlet. */
@@ -24,8 +25,27 @@ export default function AppLayout() {
 function AppShell() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
+  const chill = pathname === CHILL_PATH;
+
+  // The app opens in chill mode when that's where the person left it.
+  const [startPath] = useState(() => ({ pathname, search }));
+  useEffect(() => {
+    if (getUiMode() === 'chill' && isLandingPath(startPath.pathname, startPath.search)) navigate(CHILL_PATH, { replace: true });
+  }, [navigate, startPath]);
+
+  // Ctrl+Shift+. switches to chill mode from any page. The chat screens
+  // handle it themselves so the open chat comes along.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!isModeSwitchKey(event) || pathname === '/home' || pathname === CHILL_PATH) return;
+      event.preventDefault();
+      navigate(CHILL_PATH);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [navigate, pathname]);
 
   // Ctrl K opens the command palette everywhere; Ctrl N starts a new chat.
   useEffect(() => {
@@ -87,6 +107,7 @@ function AppShell() {
       <AssistantSetup />
       <WhatsNew />
       <div className="flex min-h-0 flex-1 overflow-hidden">
+      {!chill && (<>
       <button
         type="button"
         aria-label={tr('ui.appLayout.openNavigation')}
@@ -116,6 +137,7 @@ function AppShell() {
         />
       )}
       <Sidebar mobileOpen={mobileNavOpen} onNavigate={() => setMobileNavOpen(false)} onOpenSearch={() => setPaletteOpen(true)} />
+      </>)}
       <main id="main-content" className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Outlet />
       </main>
