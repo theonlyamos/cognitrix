@@ -1,4 +1,5 @@
 from cognitrix.tools.artifact_pages import artifact_comments, list_artifacts, publish_artifact, read_artifact
+from cognitrix.tools.share_file import share_file
 from cognitrix.tools.automation import (
     notify_me,
     offer_help,

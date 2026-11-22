@@ -4,6 +4,7 @@ import Sidebar from '@/components/Sidebar';
 import TitleBar from '@/components/TitleBar';
 import CommandPalette from '@/components/CommandPalette';
 import AppAlerts from '@/components/AppAlerts';
+import { FileViewerHost } from '@/components/files/FileViewer';
 import AssistantSetup from '@/components/AssistantSetup';
 import WhatsNew from '@/components/WhatsNew';
 import { NotificationsProvider } from '@/context/NotificationsContext';
@@ -81,6 +82,7 @@ function AppShell() {
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-fg">
       <TitleBar />
       <AppAlerts />
+      <FileViewerHost />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <AssistantSetup />
       <WhatsNew />

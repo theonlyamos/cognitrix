@@ -22,6 +22,8 @@ import { onCardAction, parseCard, requestCardAction } from '@/lib/cards';
 import { copyBackMessage, useChatChanges, type ChangeSource } from '@/lib/fileChanges';
 import { ChangesCards } from '@/components/changes/ChangesCard';
 import { ChangesPanel } from '@/components/changes/ChangesPanel';
+import { FileViewer } from '@/components/files/FileViewer';
+import { listFiles, onOpenFile, parseFileRefs, type ProducedFileDetails } from '@/lib/producedFiles';
 import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
 import { desktopName, getChatSandbox, sandboxStatus, setChatSandbox, type ChatSandbox, type SandboxDesktop } from '@/lib/sandbox';
@@ -144,7 +146,7 @@ interface ApprovalRequest {
 }
 
 export default function Home() {
-  const { messages, addMessage, attachArtifactsToLatestUser: attachArtifactsToLatestUserFromSession, addArtifactsToLastUser, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, stopRunningTools, failRunningTools, markTurnDuration, clearMessages, setMessages } = useSession();
+  const { messages, addMessage, attachArtifactsToLatestUser: attachArtifactsToLatestUserFromSession, addArtifactsToLastUser, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, attachFilesMade, stopRunningTools, failRunningTools, markTurnDuration, clearMessages, setMessages } = useSession();
   const attachArtifactsToLatestUser = attachArtifactsToLatestUserFromSession ?? addArtifactsToLastUser;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -359,6 +361,13 @@ export default function Home() {
   // source and file when opened from one.
   const [changesOpen, setChangesOpen] = useState<{ source?: string; path?: string } | null>(null);
   const [changesExpanded, setChangesExpanded] = useState(false);
+  // A file an agent made, open beside the chat (same place again).
+  const [fileOpen, setFileOpen] = useState<string | null>(null);
+  const [fileExpanded, setFileExpanded] = useState(false);
+  const closeFile = useCallback(() => {
+    setFileOpen(null);
+    setFileExpanded(false);
+  }, []);
   const closeChanges = useCallback(() => {
     setChangesOpen(null);
     setChangesExpanded(false);
@@ -369,6 +378,7 @@ export default function Home() {
   }, []);
   const showArtifact = useCallback((id: string) => {
     setComputerOpen(false);
+    setFileOpen(null);
     setAppViewOpen(null);
     setChangesOpen(null);
     setArtifactOpen(id);
@@ -384,8 +394,24 @@ export default function Home() {
     setArtifactExpanded(false);
   }, []);
   useEffect(() => onOpenArtifact(showArtifact), [showArtifact]);
+  const showFile = useCallback((id: string) => {
+    setComputerOpen(false);
+    setArtifactOpen(null);
+    setArtifactExpanded(false);
+    setAppViewOpen(null);
+    setChangesOpen(null);
+    setFileOpen(id);
+  }, []);
+  useEffect(() => onOpenFile(showFile), [showFile]);
+  useEffect(() => {
+    if (!fileExpanded) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setFileExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fileExpanded]);
   const showAppView = useCallback((id: string) => {
     setComputerOpen(false);
+    setFileOpen(null);
     setChangesOpen(null);
     setArtifactOpen(null);
     setArtifactExpanded(false);
@@ -585,6 +611,7 @@ export default function Home() {
   const chatChanges = useChatChanges(activeSessionId, busy);
   const openChanges = useCallback((source?: string, path?: string) => {
     setComputerOpen(false);
+    setFileOpen(null);
     setArtifactOpen(null);
     setArtifactExpanded(false);
     setAppViewOpen(null);
@@ -594,6 +621,7 @@ export default function Home() {
     if (src.project) void requestCardAction(copyBackMessage(src.project));
   }, []);
   useEffect(() => { closeChanges(); }, [activeSessionId, closeChanges]);
+  useEffect(() => { closeFile(); }, [activeSessionId, closeFile]);
   useEffect(() => {
     if (!changesExpanded) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setChangesExpanded(false); };
@@ -632,6 +660,16 @@ export default function Home() {
   useEffect(() => {
     if (!busy) void loadChatItems(activeRef.current);
   }, [busy, loadChatItems]);
+  // Files the agent made in this chat, for its side panel.
+  const [chatFiles, setChatFiles] = useState<ProducedFileDetails[]>([]);
+  useEffect(() => {
+    const sid = activeSessionId;
+    setChatFiles([]);
+    if (!sid || busy) return;
+    let alive = true;
+    listFiles({ session_id: sid }).then((rows) => { if (alive && activeRef.current === sid) setChatFiles(rows.slice(0, 40)); }).catch(() => {});
+    return () => { alive = false; };
+  }, [activeSessionId, busy]);
   // Connected-app screens this chat opened, for its side panel.
   const [chatAppViews, setChatAppViews] = useState<AppViewSummary[]>([]);
   const [chatAppViewsStale, setChatAppViewsStale] = useState(0);
@@ -687,10 +725,11 @@ export default function Home() {
       event.preventDefault();
       // Same as the header button: with an artifact or the computer showing,
       // the shortcut closes the whole right column.
-      if (sidebarOpen || artifactOpen || appViewOpen || computerOpen || changesOpen) {
+      if (sidebarOpen || artifactOpen || appViewOpen || computerOpen || changesOpen || fileOpen) {
         closeArtifact();
         closeAppView();
         closeChanges();
+        closeFile();
         setComputerOpen(false);
         setSidebar(false);
       } else {
@@ -699,7 +738,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sidebarOpen, artifactOpen, appViewOpen, computerOpen, changesOpen, closeArtifact, closeAppView, closeChanges, setSidebar]);
+  }, [sidebarOpen, artifactOpen, appViewOpen, computerOpen, changesOpen, fileOpen, closeArtifact, closeAppView, closeChanges, closeFile, setSidebar]);
   // Spoken replies: when a turn ends and "read replies aloud" is on, read the
   // answer. Sending a new message stops whatever was being read.
   // Live voice mode reads replies itself and keeps speaking across turns.
@@ -1162,6 +1201,12 @@ export default function Home() {
             setPlanning(null);
           }
           break;
+        case 'files_made': {
+          // The files this turn made: under the reply (picked results as cards, the rest on a shelf).
+          const made = parseFileRefs((event as { files?: unknown }).files);
+          if (made) attachFilesMade(made);
+          break;
+        }
         case 'turn_complete':
           takeUnsent(event);
           finishTurn();
@@ -1222,6 +1267,7 @@ export default function Home() {
               resolveToolCall(event.tool_name, event.status === 'error' ? 'error' : 'done', {
                 id: event.tool_call_id, result: event.result, artifacts: event.artifacts,
                 card: parseCard((event as { outcome?: { card?: unknown } }).outcome?.card) ?? undefined,
+                files: parseFileRefs((event as { outcome?: { files?: unknown } }).outcome?.files),
               });
               // A page was published: show it beside the chat (wide screens),
               // and tell an open viewer there is a new version.
@@ -1285,7 +1331,7 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos, showArtifact, showAppView, takeUnsent],
+    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, attachFilesMade, agentId, finishTurn, refetchConvos, showArtifact, showAppView, takeUnsent],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
@@ -1919,8 +1965,9 @@ export default function Home() {
   }
 
   // ── The chat's side panel ──
-  const sidebarShown = sidebarOpen || !!artifactOpen || !!appViewOpen || computerOpen || !!changesOpen;
+  const sidebarShown = sidebarOpen || !!artifactOpen || !!appViewOpen || computerOpen || !!changesOpen || !!fileOpen;
   const closeRightSide = () => {
+    closeFile();
     closeArtifact();
     closeAppView();
     closeChanges();
@@ -2376,7 +2423,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => {
-                  if (sidebarShown) { closeArtifact(); closeChanges(); setComputerOpen(false); setSidebar(false); }
+                  if (sidebarShown) { closeArtifact(); closeChanges(); closeFile(); setComputerOpen(false); setSidebar(false); }
                   else setSidebar(true);
                 }}
                 aria-pressed={sidebarShown}
@@ -2514,7 +2561,7 @@ export default function Home() {
                       onClick={() => {
                         const desktop = a.takeover?.desktop || 'main';
                         void respondApproval(a.request_id, true);
-                        closeArtifact(); closeAppView(); closeChanges();
+                        closeArtifact(); closeAppView(); closeChanges(); closeFile();
                         setTakeOverRequest({ desktop, at: Date.now() });
                         setComputerOpen(true);
                       }}
@@ -2594,6 +2641,18 @@ export default function Home() {
           />
         </aside>
       )}
+      {fileOpen && !artifactOpen && !changesOpen && !appViewOpen && (
+        <aside className={cn('fixed inset-0 z-40 flex flex-col border-line',
+          !fileExpanded && 'md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l')}>
+          <FileViewer
+            fileId={fileOpen}
+            onClose={closeRightSide}
+            onBack={sidebarOpen ? closeFile : undefined}
+            expanded={fileExpanded}
+            onToggleExpand={() => setFileExpanded((v) => !v)}
+          />
+        </aside>
+      )}
       {changesOpen && !artifactOpen && (
         <aside className={cn('fixed inset-0 z-40 flex flex-col border-line',
           !changesExpanded && 'md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l')}>
@@ -2623,12 +2682,12 @@ export default function Home() {
           />
         </aside>
       )}
-      {computerOpen && !artifactOpen && !appViewOpen && !changesOpen && chatPcDevice && (
+      {computerOpen && !artifactOpen && !appViewOpen && !changesOpen && !fileOpen && chatPcDevice && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l">
           <PcScreenPanel device={chatPcDevice} onClose={closeRightSide} onBack={sidebarOpen ? () => setComputerOpen(false) : undefined} />
         </aside>
       )}
-      {computerOpen && !artifactOpen && !appViewOpen && !changesOpen && !chatPcDevice && (
+      {computerOpen && !artifactOpen && !appViewOpen && !changesOpen && !fileOpen && !chatPcDevice && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l">
           <ComputerPanel
             agents={agents.map((a) => ({ id: String(a.id), name: a.name }))}
@@ -2640,7 +2699,7 @@ export default function Home() {
           />
         </aside>
       )}
-      {sidebarOpen && !artifactOpen && !appViewOpen && !computerOpen && !changesOpen && agentId && !picking && (
+      {sidebarOpen && !artifactOpen && !appViewOpen && !computerOpen && !changesOpen && !fileOpen && agentId && !picking && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[320px] md:flex-none md:border-l">
           <ChatSidebar
             onClose={() => setSidebar(false)}
@@ -2648,7 +2707,7 @@ export default function Home() {
             sandboxOn={sandboxOn}
             desktopHeldBy={agentDesktop?.held_by}
             pc={chatPcDevice}
-            onOpenComputer={() => { closeArtifact(); closeAppView(); closeChanges(); setComputerOpen(true); }}
+            onOpenComputer={() => { closeArtifact(); closeAppView(); closeChanges(); closeFile(); setComputerOpen(true); }}
             waiting={sidebarWaiting}
             onApprove={(id) => void respondApproval(id, true)}
             onDeny={(id) => void respondApproval(id, false)}
@@ -2663,6 +2722,7 @@ export default function Home() {
             onOpenAppView={showAppView}
             images={chatImages}
             files={chatItems?.files ?? []}
+            madeFiles={chatFiles}
             activity={chatActivity}
             swarms={chatSwarms.swarms}
             onStopSwarm={chatSwarms.stop}

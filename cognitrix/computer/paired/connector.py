@@ -345,7 +345,9 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
         _log({'at': time.time(), 'tool': name, 'ok': False, 'error': code})
         return {'type': 'result', 'id': call_id, 'ok': False, 'error': code, 'message': text}
 
-    power = APPS if name == SCREEN else FILES if name in (undo.CHANGES, undo.UNDO) else tool_power(name)
+    from cognitrix.produced_files.sources import PC_FILE_BYTES, PC_NEW_FILES
+    special = (undo.CHANGES, undo.UNDO, PC_NEW_FILES, PC_FILE_BYTES)
+    power = APPS if name == SCREEN else FILES if name in special else tool_power(name)
     if power is None:
         return fail('not_allowed', f"{name} doesn't run on a paired PC.")
     if cfg.get('paused'):
@@ -370,8 +372,8 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     if not folders:
         return fail('no_folders', "This PC hasn't shared any folders (or they were moved). Ask the person to add one "
                     'on the PC.')
-    tool = None if name in (undo.CHANGES, undo.UNDO) else ToolManager.get_by_name(name)
-    if tool is None and name not in (undo.CHANGES, undo.UNDO):
+    tool = None if name in special else ToolManager.get_by_name(name)
+    if tool is None and name not in special:
         return fail('not_allowed', f'{name} is not available on this PC.')
     if name != 'Bash':
         args.pop('approved', None)
@@ -389,6 +391,8 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     try:
         if name in (undo.CHANGES, undo.UNDO):
             return _run_undo_call(call_id, name, args, ctx, fail)
+        if name in (PC_NEW_FILES, PC_FILE_BYTES):
+            return await _run_files_call(call_id, name, args, fail)
         if name in undo.EDIT_TOOLS:
             _keep_for_undo(ctx, args)
         validated = tool.validate_parameters(dict(args)) if hasattr(tool, 'validate_parameters') else dict(args)
@@ -401,6 +405,21 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     _log({'at': started, 'tool': name, 'ok': True, 'seconds': round(time.time() - started, 1),
           'command': args.get('command'), 'path': args.get('file_path') or args.get('path')})
     return {'type': 'result', 'id': call_id, 'ok': True, 'text': text}
+
+
+async def _run_files_call(call_id: Any, name: str, args: dict[str, Any], fail) -> dict[str, Any]:
+    """Files the chat made here (for the shelf under a reply), or one piece
+    of a file an agent shared (cognitrix/produced_files)."""
+    from cognitrix.produced_files import sources
+    try:
+        if name == sources.PC_NEW_FILES:
+            out = await asyncio.to_thread(sources.pc_new_files, float(args.get('since') or 0))
+        else:
+            out = await asyncio.to_thread(sources.pc_file_bytes, str(args.get('path') or ''),
+                                          int(args.get('offset') or 0), int(args.get('length') or 0))
+    except Exception as exc:
+        return fail('failed', str(exc))
+    return {'type': 'result', 'id': call_id, 'ok': True, 'text': json.dumps(out)}
 
 
 def _norm_path(path: str) -> str:

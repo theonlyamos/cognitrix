@@ -1,0 +1,268 @@
+"""Files agents make: Share File, the end-of-turn scan, and the signed links.
+
+- Kinds and noise filters decide what counts as a result.
+- The sandbox's find output is parsed; local folders are walked.
+- Share File copies a file in and returns a card ref on the tool outcome.
+- The end of a turn finds new files; with nothing shared, likely results
+  become cards and the rest go on the shelf.
+- Content links are signed per file and kind of link, and only image, video,
+  audio and PDF open in place.
+"""
+import os
+import time
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture
+async def db(tmp_path, monkeypatch):
+    from odbms import DBMS
+
+    from cognitrix.config import _ensure_schema, _patch_odbms_sqlite, settings
+
+    db_file = str(tmp_path / 'files.db')
+    if hasattr(DBMS, 'initialize_async'):
+        await DBMS.initialize_async('sqlite', database=db_file)
+    else:
+        DBMS.initialize('sqlite', database=db_file)
+    _patch_odbms_sqlite()
+    await _ensure_schema()
+    work = tmp_path / 'work'
+    work.mkdir()
+    monkeypatch.setattr(settings, 'workdir', tmp_path / 'app')
+    yield work
+
+
+def _as(user_id, work, **kw):
+    from cognitrix.common import folders as F
+    from cognitrix.tools.utils import ToolExecutionContext, set_execution_context
+
+    folder = F.Folder(str(work.resolve()), F.WRITE, 'work', True)
+    return set_execution_context(ToolExecutionContext(user_id=user_id, folders=(folder,), **kw))
+
+
+async def share_file(paths, caption=''):
+    from cognitrix.tools.base import ToolManager
+
+    tool = ToolManager.get_by_name('Share File')
+    return (await tool.run(paths=paths, caption=caption)).outcome
+
+
+def _png(path: Path, size=(64, 48)) -> Path:
+    from PIL import Image
+
+    Image.new('RGB', size, (200, 40, 40)).save(path)
+    # Big enough to count as a result, not an icon.
+    with open(path, 'ab') as fh:
+        fh.write(b'\0' * 5000)
+    return path
+
+
+# ------------------------------------------------------------------ kinds
+
+def test_kinds_and_noise():
+    from cognitrix.produced_files import kinds
+
+    assert kinds.kind_of('clip.MP4')[1] == 'video'
+    assert kinds.kind_of('report.pdf') == ('application/pdf', 'pdf')
+    assert kinds.kind_of('data.xlsx')[1] == 'sheet'
+    assert kinds.kind_of('notes.md')[1] == 'text'
+    assert kinds.kind_of('main.py')[1] == 'code'
+    assert kinds.kind_of('mystery.zzz')[1] == 'other'
+
+    assert kinds.noise('.hidden.png', 100)
+    assert kinds.noise('package-lock.json', 100)
+    assert kinds.noise('empty.png', 0)
+    assert kinds.noise('script.py', 100)
+    assert not kinds.noise('chart.png', 100)
+
+    assert kinds.looks_like_result('chart.png', 50_000)
+    assert not kinds.looks_like_result('icon.png', 1_000)
+    assert not kinds.looks_like_result('data.json', 50_000)
+
+
+def test_parse_find_and_walk(tmp_path):
+    from cognitrix.produced_files import sources
+
+    since = time.time() - 10
+    text = f'{since + 5}\t120\t/home/agent/out/a.png\n{since - 100}\t5\t/home/agent/old.txt\nnot a line\n'
+    found = sources.parse_find(text, since)
+    assert [f.path for f in found] == ['/home/agent/out/a.png']
+    assert found[0].size == 120
+
+    (tmp_path / 'node_modules').mkdir()
+    (tmp_path / 'node_modules' / 'x.js').write_text('x')
+    (tmp_path / 'out').mkdir()
+    (tmp_path / 'out' / 'video.mp4').write_bytes(b'v' * 10)
+    old = tmp_path / 'old.txt'
+    old.write_text('old')
+    os.utime(old, (since - 100, since - 100))
+    names = {os.path.basename(f.path) for f in sources.walk_new([str(tmp_path)], since)}
+    assert names == {'video.mp4'}
+
+
+# ------------------------------------------------------------------ outcome
+
+def test_outcome_carries_files_only_when_there_are_some():
+    from cognitrix.tools.utils import ToolOutcome
+
+    plain = ToolOutcome.success('done')
+    assert 'files' not in plain.model_dump(exclude_none=True) or not plain.model_dump().get('files')
+    ref = {'id': 'f1', 'name': 'chart.png', 'kind': 'image'}
+    shared = ToolOutcome.success('Shared 1 file', files=[ref])
+    assert shared.files == [ref]
+    assert 'chart.png' in shared.model_content()
+
+
+# ------------------------------------------------------------------ share
+
+async def test_share_file_copies_in_and_returns_a_card(db):
+    from cognitrix.produced_files import service, storage
+    from cognitrix.produced_files.models import ProducedFile
+    from cognitrix.tools.utils import reset_execution_context
+
+    _png(db / 'chart.png')
+    token = _as('u1', db, session_id='s1', agent_id='a1')
+    try:
+        outcome = await share_file(['chart.png', 'missing.png'], caption='The chart')
+    finally:
+        reset_execution_context(token)
+    assert outcome.status == 'success'
+    assert len(outcome.files) == 1
+    card = outcome.files[0]
+    assert card['name'] == 'chart.png' and card['kind'] == 'image' and card['shared'] and card['shown']
+    assert card['caption'] == 'The chart'
+    assert card['info']['width'] == 64
+    assert any('missing.png' in w for w in outcome.warnings)
+
+    row = await ProducedFile.get(card['id'])
+    assert row.owner_id == 'u1' and row.session_id == 's1' and row.stored
+    copy = storage.resolve(row.storage_key)
+    assert copy.is_file() and copy.read_bytes() == (db / 'chart.png').read_bytes()
+    assert row.thumb_key and storage.resolve(row.thumb_key).is_file()
+    assert [r.id for r in await service.for_chat('u1', session_id='s1')] == [row.id]
+    assert await service.for_chat('someone-else', session_id='s1') == []
+
+
+async def test_share_refuses_paths_outside_the_folders(db, tmp_path):
+    from cognitrix.tools.utils import reset_execution_context
+
+    outside = tmp_path / 'secret.png'
+    _png(outside)
+    token = _as('u1', db, session_id='s1')
+    try:
+        outcome = await share_file([str(outside)])
+    finally:
+        reset_execution_context(token)
+    assert outcome.status != 'success'
+    assert not outcome.files
+
+
+# ------------------------------------------------------------------ end of turn
+
+async def test_files_made_promotes_likely_results_and_shelves_the_rest(db):
+    from cognitrix.common import folders as F
+    from cognitrix.produced_files import service
+
+    since = time.time() - 2
+    _png(db / 'poster.png')
+    (db / 'notes.txt').write_text('some notes')
+    (db / 'helper.py').write_text('print(1)')
+    (db / '.cache').mkdir()
+    (db / '.cache' / 'x.png').write_bytes(b'x' * 9000)
+
+    refs = await service.files_made(owner_id='u1', agent_id='a1', session_id='s1', task_id='', run_id='',
+                                    since=since, folders=[F.Folder(str(db), F.WRITE, 'work', True)])
+    by_name = {r['name']: r for r in refs}
+    assert set(by_name) == {'poster.png', 'notes.txt'}
+    assert by_name['poster.png']['shown'] and not by_name['poster.png']['shared']
+    assert not by_name['notes.txt']['shown']
+
+    # The next turn doesn't list the same files again unless they changed.
+    again = await service.files_made(owner_id='u1', agent_id='a1', session_id='s1', task_id='', run_id='',
+                                     since=time.time() + 1, folders=[F.Folder(str(db), F.WRITE, 'work', True)])
+    assert again == []
+
+
+async def test_files_made_skips_what_the_agent_shared(db):
+    from cognitrix.common import folders as F
+    from cognitrix.produced_files import service
+    from cognitrix.tools.utils import reset_execution_context
+
+    since = time.time() - 2
+    service.turn_started(service.turn_key('s2', ''), since)
+    _png(db / 'a.png')
+    _png(db / 'b.png')
+    token = _as('u1', db, session_id='s2')
+    try:
+        await share_file(['a.png'])
+    finally:
+        reset_execution_context(token)
+    refs = await service.files_made(owner_id='u1', agent_id='', session_id='s2', task_id='', run_id='',
+                                    since=since, folders=[F.Folder(str(db), F.WRITE, 'work', True)])
+    names = [(r['name'], r['shared'], r['shown']) for r in refs]
+    # The shared one is a card; the other stays on the shelf because something was shared.
+    assert names == [('a.png', True, True), ('b.png', False, False)]
+
+
+# ------------------------------------------------------------------ API
+
+async def test_signed_links_and_ownership(db):
+    from fastapi import HTTPException
+
+    from cognitrix.api.routes import produced_files as api
+    from cognitrix.common.security import AuthContext
+    from cognitrix.models import User
+    from cognitrix.session_ownership import principal_key
+    from cognitrix.tools.utils import reset_execution_context
+
+    await User(name='Ann', email='ann@example.com', password='x' * 20).save()
+    ann = await User.find_one({'email': 'ann@example.com'})
+    await User(name='Bob', email='bob@example.com', password='x' * 20).save()
+    bob = await User.find_one({'email': 'bob@example.com'})
+
+    _png(db / 'pic.png')
+    (db / 'page.html').write_text('<script>alert(1)</script>')
+    token = _as(principal_key(ann), db, session_id='s1')
+    try:
+        outcome = await share_file(['pic.png', 'page.html'])
+    finally:
+        reset_execution_context(token)
+    pic, page = outcome.files
+
+    details = await api.get_file(pic['id'], ctx=AuthContext(user=ann))
+    assert details['available'] and details['url'].startswith('/api/v1/produced-file-content/')
+    with pytest.raises(HTTPException) as err:
+        await api.get_file(pic['id'], ctx=AuthContext(user=bob))
+    assert err.value.status_code == 404
+
+    content_token = details['url'].rsplit('/', 1)[1]
+    res = await api.content(content_token)
+    assert res.media_type == 'image/png'
+    assert 'inline' in res.headers['content-disposition']
+    # A content link isn't a thumbnail link.
+    with pytest.raises(HTTPException):
+        await api.thumb(content_token)
+    thumb_token = details['thumb_url'].rsplit('/', 1)[1]
+    assert (await api.thumb(thumb_token)).media_type == 'image/jpeg'
+
+    # HTML is never opened in place.
+    page_details = await api.get_file(page['id'], ctx=AuthContext(user=ann))
+    res = await api.content(page_details['url'].rsplit('/', 1)[1])
+    assert res.media_type == 'application/octet-stream'
+    assert 'attachment' in res.headers['content-disposition']
+    assert 'sandbox' in res.headers['content-security-policy']
+
+    with pytest.raises(HTTPException):
+        await api.content('not-a-token')
+
+    zipped = await api.zip_files(api.ZipBody(ids=[pic['id'], page['id']], name='both'), ctx=AuthContext(user=ann))
+    assert zipped.media_type == 'application/zip' and len(zipped.body) > 100
+    with pytest.raises(HTTPException):
+        await api.zip_files(api.ZipBody(ids=[pic['id']]), ctx=AuthContext(user=bob))
+
+    assert (await api.forget(pic['id'], ctx=AuthContext(user=ann))) == {'removed': True}
+    with pytest.raises(HTTPException):
+        await api.content(content_token)
+

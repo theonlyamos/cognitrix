@@ -1,5 +1,6 @@
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import { parseCard, type Card } from '@/lib/cards';
+import { parseFileRefs, type ProducedFileRef } from '@/lib/producedFiles';
 
 import { dateLocale, tr } from '@/lib/i18n';
 /** Raw session.chat entry as the backend persists it. Roles are inconsistent
@@ -12,13 +13,15 @@ export interface BackendChatEntry {
   content?: unknown;
   tool_calls?: { name?: string; arguments?: unknown; tool_call_id?: string | null }[];
   tool_call_id?: string | null;
-  outcome?: { status?: unknown; artifacts?: unknown; card?: unknown };
+  outcome?: { status?: unknown; artifacts?: unknown; card?: unknown; files?: unknown };
   artifact?: unknown;
   duration?: number;
   /** turn_timing: when the reply finished (ISO, UTC). Older rows lack it. */
   at?: string;
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
+  /** turn_timing: the files the turn made (cognitrix/produced_files). */
+  files?: unknown;
 }
 
 export type TranscriptTool = {
@@ -29,11 +32,12 @@ export type TranscriptTool = {
   status?: 'running' | 'done' | 'error' | 'stopped';
   artifacts?: ToolArtifact[];
   card?: Card;
+  files?: ProducedFileRef[];
 };
 
 export type TranscriptEntry =
   | { kind: 'user'; content: string; steered?: boolean; at?: string }
-  | { kind: 'assistant'; content: string; name?: string; live?: boolean; at?: string; durationMs?: number }
+  | { kind: 'assistant'; content: string; name?: string; live?: boolean; at?: string; durationMs?: number; filesMade?: ProducedFileRef[] }
   | { kind: 'tool_calls'; content: string; name?: string; tools: TranscriptTool[] }
   | { kind: 'tool_result'; content: string }
   | { kind: 'image'; artifact: ToolArtifact }
@@ -89,6 +93,19 @@ const validDate = (s: unknown): string | undefined => (
 
 /** A turn_timing row closes a turn: put its end time and duration on the
  *  turn's last reply, and its start time on the message that began it. */
+/** The files a turn made go under its last reply (a reply-less turn gets an empty one). */
+function attachFiles(out: TranscriptEntry[], files: ProducedFileRef[]) {
+  for (let i = out.length - 1; i >= 0; i--) {
+    const e = out[i];
+    if (e.kind === 'user' && !e.steered) break;
+    if (e.kind === 'assistant') {
+      e.filesMade = files;
+      return;
+    }
+  }
+  out.push({ kind: 'assistant', content: '', filesMade: files });
+}
+
 function stampTurn(out: TranscriptEntry[], timing: BackendChatEntry) {
   const duration = typeof timing.duration === 'number' && Number.isFinite(timing.duration) && timing.duration >= 0
     ? timing.duration : undefined;
@@ -117,7 +134,7 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
   const out: TranscriptEntry[] = [];
   // Tool results are separate `role: 'tool'` messages; index them by
   // tool_call_id so each tool call can carry its own result for display.
-  const resultsById: Record<string, { content: string; status: 'done' | 'error' | 'stopped'; artifacts?: ToolArtifact[]; card?: Card }> = {};
+  const resultsById: Record<string, { content: string; status: 'done' | 'error' | 'stopped'; artifacts?: ToolArtifact[]; card?: Card; files?: ProducedFileRef[] }> = {};
   for (const m of chat || []) {
     if (String(m.role || '').toLowerCase() === 'tool' && m.tool_call_id) {
       const outcomeStatus = m.outcome?.status;
@@ -130,6 +147,7 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
             : 'error',
         artifacts: safeArtifacts(m.outcome?.artifacts),
         card: parseCard(m.outcome?.card) ?? undefined,
+        files: parseFileRefs(m.outcome?.files),
       };
     }
   }
@@ -184,6 +202,7 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
             status: result?.status,
             artifacts: result?.artifacts,
             ...(result?.card ? { card: result.card } : {}),
+            ...(result?.files ? { files: result.files } : {}),
           };
         }),
       });
@@ -198,6 +217,8 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
         m.prompt_tokens || m.completion_tokens
           ? `${(m.prompt_tokens ?? 0).toLocaleString(dateLocale())} → ${(m.completion_tokens ?? 0).toLocaleString(dateLocale())} tok`
           : undefined;
+      const made = parseFileRefs(m.files);
+      if (made) attachFiles(out, made);
       out.push({ kind: 'timing', label: content || 'turn', tokens });
       stampTurn(out, m);
     } else if (content.trim()) {
@@ -234,6 +255,7 @@ export function toChatMessages(
         ...who(e.name),
         ...(e.at ? { timestamp: e.at } : {}),
         ...(e.durationMs !== undefined ? { durationMs: e.durationMs } : {}),
+        ...(e.filesMade ? { filesMade: e.filesMade } : {}),
       });
     }
     else if (e.kind === 'tool_calls') {
@@ -253,6 +275,7 @@ export function toChatMessages(
             result: t.result ?? undefined,
             artifacts: t.artifacts,
             ...(t.card ? { card: t.card } : {}),
+            ...(t.files ? { files: t.files } : {}),
           })),
         });
     }

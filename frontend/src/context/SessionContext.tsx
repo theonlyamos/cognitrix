@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import type { Card } from '@/lib/cards';
+import type { ProducedFileRef } from '@/lib/producedFiles';
 
 export type ToolStatus = 'running' | 'done' | 'error' | 'stopped';
 
@@ -24,6 +25,8 @@ export interface ToolUse {
   artifacts?: ToolArtifact[];
   /** A card the agent showed with Show Card (lib/cards). */
   card?: Card;
+  /** Files the agent shared with Share File (lib/producedFiles). */
+  files?: ProducedFileRef[];
 }
 
 export interface ChatMessage {
@@ -41,6 +44,8 @@ export interface ChatMessage {
   speaker?: string;
   /** Sent while the agent was working, and read between its steps. */
   steered?: boolean;
+  /** The turn's final reply: the files the turn made (shelf and picked results). */
+  filesMade?: ProducedFileRef[];
 }
 
 interface SessionContextType {
@@ -55,7 +60,9 @@ interface SessionContextType {
   /** A tool started: append a running chip to the current tool row, or open one. */
   addToolCall: (name: string, opts?: { id?: string; params?: string }) => void;
   /** A tool finished: flip its most-recent running chip to done/error + result. */
-  resolveToolCall: (name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[]; card?: Card }) => void;
+  resolveToolCall: (name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[]; card?: Card; files?: ProducedFileRef[] }) => void;
+  /** The files a turn made: shown under its final reply. */
+  attachFilesMade: (files: ProducedFileRef[]) => void;
   /** Mark every still-running tool in the active transcript as user-stopped. */
   stopRunningTools: () => void;
   /** Mark every still-running tool as failed when the turn terminates in error. */
@@ -150,7 +157,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   // A tool finished: flip the matching running chip to done/error and attach its
   // result. Pair by tool_call_id when present, else by name (most recent running).
-  const resolveToolCall = useCallback((name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[]; card?: Card }) => {
+  const resolveToolCall = useCallback((name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[]; card?: Card; files?: ProducedFileRef[] }) => {
     setMessagesState(prev => {
       for (let i = prev.length - 1; i >= 0; i--) {
         const m = prev[i];
@@ -162,12 +169,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           if (opts?.id ? t.id === opts.id : t.name === name) { hit = j; break; }
         }
         if (hit === -1) continue;
-        const tools = m.tools.map((t, j) => (j === hit ? { ...t, status, result: opts?.result, artifacts: opts?.artifacts, ...(opts?.card ? { card: opts.card } : {}) } : t));
+        const tools = m.tools.map((t, j) => (j === hit ? { ...t, status, result: opts?.result, artifacts: opts?.artifacts, ...(opts?.card ? { card: opts.card } : {}), ...(opts?.files?.length ? { files: opts.files } : {}) } : t));
         const copy = [...prev];
         copy[i] = { ...m, tools };
         return copy;
       }
-      if (status !== 'error' && !opts?.artifacts?.length && !opts?.card) return prev;
+      if (status !== 'error' && !opts?.artifacts?.length && !opts?.card && !opts?.files?.length) return prev;
       // Preserve terminal errors and artifact-bearing completions even if a
       // reconnect caused the matching `started` event to be missed.
       const chip: ToolUse = {
@@ -177,6 +184,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         result: opts?.result,
         artifacts: opts?.artifacts,
         ...(opts?.card ? { card: opts.card } : {}),
+        ...(opts?.files?.length ? { files: opts.files } : {}),
       };
       const last = prev[prev.length - 1];
       if (last && last.role === 'tool') {
@@ -246,6 +254,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const attachFilesMade = useCallback((files: ProducedFileRef[]) => {
+    if (!files.length) return;
+    setMessagesState(prev => {
+      // The current turn's last reply; a turn that ended on a tool step gets an empty reply to hold them.
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const m = prev[i];
+        if (m.role === 'user' && !m.steered) break;
+        if (m.role === 'assistant') {
+          const copy = [...prev];
+          copy[i] = { ...m, filesMade: files };
+          return copy;
+        }
+      }
+      return [...prev, { id: `files-${Date.now()}`, role: 'assistant', content: '', filesMade: files }];
+    });
+  }, []);
+
   const setAgentId = useCallback((agentId: string | null) => {
     setCurrentAgentId(agentId);
   }, []);
@@ -261,6 +286,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       appendToLastMessage,
       addToolCall,
       resolveToolCall,
+      attachFilesMade,
       stopRunningTools,
       failRunningTools,
       clearMessages,

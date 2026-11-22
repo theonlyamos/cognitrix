@@ -682,6 +682,8 @@ class Session(Model):
 
         # Add timing for turn duration
         turn_start_time = time.monotonic()
+        # Wall clock, for finding the files this turn makes (produced_files).
+        turn_wall_start = time.time()
         self.__dict__['_last_turn_error'] = None
         self.__dict__['_empty_nudged'] = False
 
@@ -1111,6 +1113,11 @@ class Session(Model):
         # its parent passed down (read only).
         turn_folders = self._turn_folders(agent, interface)
         inherited_folders = tuple(getattr(tool_context, 'folders', ()) or ())
+        try:
+            from cognitrix.produced_files.service import turn_key, turn_started
+            turn_started(turn_key(self.id, getattr(tool_context, 'task_id', None) or self.task_id), turn_wall_start)
+        except Exception:
+            logger.debug('Could not note when the turn started', exc_info=True)
 
         # Artifacts: how and when to deliver work as an artifact, and the ones
         # this chat or task already made (artifact_pages/guidance.py). Only
@@ -1605,6 +1612,9 @@ class Session(Model):
                         # Store timing + token usage in history
                         if record_history:
                             usage = (getattr(response, 'usage', None) or {}) if response else {}
+                            made = await self._files_made(
+                                agent, interface, output, tool_context, turn_folders, inherited_folders,
+                                turn_sandbox, turn_device, turn_wall_start, tool_rounds)
                             self.update_history({
                                 'role': 'system',
                                 'type': 'turn_timing',
@@ -1613,6 +1623,7 @@ class Session(Model):
                                 'at': datetime.now(timezone.utc).isoformat(),  # when the reply finished
                                 'prompt_tokens': usage.get('prompt_tokens'),
                                 'completion_tokens': usage.get('completion_tokens'),
+                                **({'files': made} if made else {}),
                             })
 
                         # Display timing for CLI
@@ -1660,6 +1671,9 @@ class Session(Model):
             # Store timing in history (only if not already stored in 'not called_tools' block)
             if record_history and called_tools:
                 usage = (getattr(response, 'usage', None) or {}) if response else {}
+                made = await self._files_made(
+                    agent, interface, output, tool_context, turn_folders, inherited_folders,
+                    turn_sandbox, turn_device, turn_wall_start, tool_rounds)
                 self.update_history({
                     'role': 'system',
                     'type': 'turn_timing',
@@ -1668,6 +1682,7 @@ class Session(Model):
                     'at': datetime.now(timezone.utc).isoformat(),  # when the reply finished
                     'prompt_tokens': usage.get('prompt_tokens'),
                     'completion_tokens': usage.get('completion_tokens'),
+                    **({'files': made} if made else {}),
                 })
 
             # Display timing for CLI (only if not already displayed)
@@ -1859,6 +1874,52 @@ class Session(Model):
         # The default (nobody chose) only moves the tools the agent already
         # has; it never hands an agent a shell it wasn't given.
         return on and (chosen or bool(_code_tool_names(agent)))
+
+    async def _files_made(self, agent: 'Agent', interface: str, output: Callable, tool_context: Any,
+                          turn_folders: list, inherited_folders: tuple, turn_sandbox: bool,
+                          turn_device: Any, since: float, tool_rounds: int) -> list[dict[str, Any]]:
+        """The files this turn made (cognitrix/produced_files): what the agent
+        shared plus what turned up where it worked, for the shelf under the
+        reply. Sent to the chat as a ``files_made`` event; kept on the turn's
+        timing entry so a reloaded chat shows them too."""
+        if interface not in ('web', 'ws', 'task') or tool_rounds <= 0 or getattr(tool_context, 'restricted', False):
+            return []
+        owner = self.user_id or getattr(tool_context, 'user_id', None)
+        if not owner:
+            return []
+        try:
+            from cognitrix.produced_files.service import files_made
+            task_id = str(getattr(tool_context, 'task_id', None) or self.task_id or '')
+            sandbox_ws = None
+            if turn_sandbox:
+                from cognitrix.common import sandbox_work as sw
+                if sw.chat_switch(self.id) is not False and sw.sandbox_available():
+                    sandbox_ws = sw.SandboxWork(owner, agent.id)
+            device_id = str((turn_device or {}).get('id') or '') if isinstance(turn_device, dict) else ''
+            if device_id and (turn_device or {}).get('read_only'):
+                device_id = ''
+            device_ctx = None
+            if device_id:
+                from cognitrix.computer.paired.turn import _project_folders
+                device_ctx = {'session_id': self.id, 'agent_id': agent.id, 'task_id': task_id or None,
+                              **_project_folders()}
+            folders = list(inherited_folders or turn_folders or ())
+            if not folders and not sandbox_ws and not device_id:
+                from cognitrix.common.folders import legacy_default_folders
+                folders = list(legacy_default_folders())
+            made = await files_made(
+                owner_id=str(owner), agent_id=str(agent.id or ''), session_id='' if task_id else str(self.id or ''),
+                task_id=task_id, run_id=str(getattr(tool_context, 'run_id', None) or ''), since=since,
+                folders=folders, sandbox_ws=sandbox_ws, device_id=device_id, device_ctx=device_ctx)
+        except Exception:
+            logger.debug('Could not list the files this turn made', exc_info=True)
+            return []
+        if made and interface in ('web', 'ws'):
+            try:
+                await output({'type': 'files_made', 'files': made})
+            except Exception:
+                logger.debug('Could not send the files this turn made', exc_info=True)
+        return made
 
     async def _sandbox_review(self, agent: 'Agent', interface: str, output: Callable, tool_context: Any,
                               turn_folders: list, inherited_folders: tuple, record_history: bool | None) -> None:

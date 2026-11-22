@@ -6,6 +6,8 @@ import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { ago, sizeLabel, type FileItem, type PageSummary } from '@/lib/artifactPages';
+import { KindIcon } from '@/components/files/FileCards';
+import { fileMeta, requestOpenFile, type ProducedFileDetails } from '@/lib/producedFiles';
 import type { ToolArtifact } from '@/context/SessionContext';
 import type { AgentAvatar } from '@/lib/agentAvatar';
 import type { WorkFolder } from '@/lib/folders';
@@ -115,6 +117,8 @@ export interface ChatSidebarProps {
   onOpenAppView?: (id: string) => void;
   images: ToolArtifact[];
   files: FileItem[];
+  /** Files the agent made (shared, or found at the end of a turn), newest first. */
+  madeFiles?: ProducedFileDetails[];
   activity: SidebarActivity[];
   /** This chat's swarms, newest first. */
   swarms?: Swarm[];
@@ -146,6 +150,7 @@ export interface ChatSidebarProps {
 /** The chat's side panel: what this chat's agent is doing and what it made. */
 export function ChatSidebar(props: ChatSidebarProps) {
   const { onClose, desktop, sandboxOn, waiting, pages, images, files, activity, about } = props;
+  const madeFiles = props.madeFiles ?? [];
   const [closed, setClosed] = useState(() => loadSet(CLOSED_STORE));
   const [hidden, setHidden] = useState(() => loadSet(HIDDEN_STORE));
   const [customizing, setCustomizing] = useState(false);
@@ -378,8 +383,28 @@ export function ChatSidebar(props: ChatSidebarProps) {
           </ul>
         ))}
 
-        {section('files', images.length + files.length || '', (
+        {section('files', images.length + files.length + madeFiles.length || '', (
           <div className="flex flex-col gap-2.5">
+            {madeFiles.length > 0 && (
+              <ul className="-mx-1.5 flex flex-col">
+                {madeFiles.map((file) => (
+                  <li key={file.id}>
+                    <button
+                      type="button"
+                      onClick={() => requestOpenFile(file.id)}
+                      title={file.name}
+                      className="flex min-h-11 w-full items-center gap-2.5 rounded-md px-1.5 py-1.5 text-left hover:bg-panel-2"
+                    >
+                      <span className="flex-none text-fg-dim"><KindIcon kind={file.kind} size={16} /></span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px]">{file.name}</span>
+                        <span className="block truncate font-mono text-[10.5px] text-fg-dim">{fileMeta(file)}{file.created ? ` · ${ago(file.created)}` : ''}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             {images.length > 0 && (
               <div className="grid grid-cols-3 gap-1.5 [&_img]:aspect-square [&_img]:w-full [&_img]:object-cover">
                 {images.map((image) => (
@@ -395,7 +420,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
               </ul>
             )}
           </div>
-        ), images.length + files.length > 0)}
+        ), images.length + files.length + madeFiles.length > 0)}
 
         {section('activity', props.busy ? statusLabel('running') : activity.length || '', activity.length === 0
           ? empty(props.busy ? tr('ui.chatSidebar.thinking') : tr('ui.chatSidebar.stepsTheAgentTakesIn'))

@@ -200,13 +200,17 @@ class ToolOutcome(BaseModel):
     error: ToolError | None = None
     card: dict[str, Any] | None = None
     """A checked card (cognitrix/cards) the chat draws under the tool call."""
+    files: list[dict[str, Any]] = Field(default_factory=list)
+    """Files the agent shared (cognitrix/produced_files), drawn as preview cards."""
 
     @model_serializer(mode='wrap')
     def _skip_missing_card(self, handler):
-        # Most tools have no card; keep their stored outcome as it was.
+        # Most tools have no card or files; keep their stored outcome as it was.
         data = handler(self)
         if isinstance(data, dict) and data.get('card') is None:
             data.pop('card', None)
+        if isinstance(data, dict) and not data.get('files'):
+            data.pop('files', None)
         return data
 
     @classmethod
@@ -233,6 +237,10 @@ class ToolOutcome(BaseModel):
         lines.extend(
             f'Entity: {entity.type} {entity.id} {entity.name}'
             for entity in self.entities
+        )
+        lines.extend(
+            f"Shared file: {item.get('name', '')} ({item.get('id', '')})"
+            for item in self.files if isinstance(item, dict)
         )
         lines.extend(f'Warning: {warning[:500]}' for warning in self.warnings[:3])
         return '\n'.join(line for line in lines if line)
