@@ -1,193 +1,159 @@
 # Cognitrix
 
-Cognitrix is an open-source autonomous AI agents orchestrator built in Python. It allows you to create and manage AI agents with ease and integrates seamlessly with large language models (LLMs) from various providers.
+Cognitrix is an open-source app for building AI agents that do real work for you. Each agent has its own model, tools, memory and a sandboxed Linux computer it can use like a person would. You talk to agents in chat, hand them tasks that run in the background, put them in teams, and connect them to your apps, inbox, phone and code editor.
 
-## Features
+It runs as a **desktop app** (Windows, macOS, Linux), a **self-hosted web app**, or from the **command line**, all on the same Python engine.
 
-- **Agent Creation and Management:** Create, list, and load AI agents with customizable names, tasks, and configurations.
-- **LLM Integration:** Integrates with multiple LLM providers via OpenRouter (200+ models including OpenAI, Anthropic, Google, Meta, Mistral) plus local models via Ollama.
-- **Modular Architecture:** Easily extensible, allowing the addition of new tools, agents, and LLM integrations.
-- **Conversational Interface:** Interact with AI agents through a command-line interface, providing queries and receiving responses.
-- **Tool Integration:** Agents can utilize a variety of tools, including calculators, web searches, file system browsers, and more.
-- **Autonomous Agent Mode:** Agents can operate autonomously, visually perceiving the screen, interacting with UI elements, and performing tasks.
-- **Multimodal Support:** Handles both text and image inputs/outputs, enabling multimodal interactions.
+## Contents
 
-## Architecture
+- [What it can do](#what-it-can-do)
+- [Install](#install)
+- [Command line](#command-line)
+- [Configuration](#configuration)
+- [Self-hosting](#self-hosting-with-docker)
+- [API access](#api-access)
+- [Development](#development)
 
-Cognitrix's architecture is designed to be highly modular and extensible:
+## What it can do
 
-- **Agents:** The base `Agent` class is for creating and managing AI agents.
-- **LLMs:** Provider classes for OpenRouter (primary - 200+ models), OpenAI (direct), and Ollama (local).
-- **Tools:** A set of tools that agents can utilize. Each tool has a `category` attribute for grouping and management.
-- **Templates:** Customizable prompt templates guide the behavior and output formats of LLMs.
+### Agents and chat
 
-More tools can be added by creating new classes that inherit from the `Tool` base class and specifying a unique `category`.
+- **Any model you have access to.** OpenAI, Anthropic, Google Gemini, OpenRouter, Groq, Cerebras and local models through Ollama, plus a ChatGPT Plus/Pro plan sign-in. Pick a reasoning level per chat where the model supports it.
+- **Coding agent CLIs as models.** Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, OpenCode and Antigravity CLI can drive an agent, using the CLI's own sign-in.
+- **Rich chat.** Attach files and images, steer a reply while it is running, ask side questions, and leave a chat running in the background. Chats can be grouped, searched, shared by link, and show how long each reply took and how many tokens it used.
+- **Voice.** Dictate messages, hear replies read aloud, or hold a live voice conversation.
+- **Artifacts.** Agents publish web pages, dashboards, spreadsheets and whiteboards that open beside the chat, take comments, and can be shared with a public link.
+- **Apps.** Agents can build and host a small live web app with its own data, which you open from a stable link.
+- **Image generation** with Gemini or OpenAI.
+- **AGENTS.md.** Instructions in `AGENTS.md` files (including nested ones) in a working folder are picked up in every chat, on your PC and in the sandbox.
 
-## Installation
+### Computers
 
-**Prerequisites**
+- **A sandboxed computer for every agent.** When Docker is installed, agents get their own Linux desktop (with Chromium, Firefox and common dev tools) in a container, one container per user and one desktop per agent. You can watch it live and take over from the Computer panel. The image is `ghcr.io/theonlyamos/cognitrix-desktop` and updates itself in the background. It can also run on [Fly.io](docs/sandbox-on-fly.md).
+- **Computer and browser use.** Agents click, type and read the screen through accessibility APIs, on their sandbox or (with permission) in background windows on your own PC.
+- **Code in the sandbox.** Coding work runs in the sandbox by default, with your project copied in, and the coding agent CLIs are installed there.
+- **Teach a task.** Show a task once on the sandbox desktop and Cognitrix turns the recording into a reusable skill.
+- **Pair your own PC.** Let agents on a Cognitrix web server work in chosen folders, run commands and use apps on your computer with `cognitrix connect`. See [docs/pair-your-pc.md](docs/pair-your-pc.md).
+- **Working folders and a shell tool**, with per-folder read-only or read-write access.
 
-- **Python 3.11–3.13** (the package will not build on 3.10 or lower).
-- **Node.js 18+** and a package manager (this repo uses **pnpm**) — only needed to build the web UI from source.
-- **Poetry** — only needed for building from source.
-- **Redis** — only needed if you use the background task API (Celery worker).
+### Tasks, automations and teams
 
-**Install with pip**:
+- **Tasks** are planned, multi-step jobs that run in the background with their own run history, events, budgets and approvals. They can run once, on an interval, on a cron schedule, or when mail arrives, and report their results back to the agent that created them.
+- **Always-on agents** keep notes between runs, schedule their own next check, react to webhooks and notify you when something needs you.
+- **A proactive assistant** checks in during the day and sends a morning brief, with quiet hours you control.
+- **Teams and group chats.** Put agents in a team and talk to all of them at once. `@name` asks one agent, `@all` asks everyone, and agents hand work to each other by mentioning a teammate.
+- **Swarms.** A lead agent splits a big job across many worker agents running in parallel and gets one report back.
+- **Pull request watching.** Agents that open or are asked to watch a GitHub pull request wake up when its checks, reviews or comments change.
+- **Projects** group chats, tasks, files and pull requests around one goal, with a Changes tab for what agents changed.
+- **Dashboard and Inbox** show what is running, what finished and what is waiting for your approval or answer.
+
+### Memory and knowledge
+
+- **Global memory** that every agent shares, with an "About you" summary you can read and edit. You approve what gets remembered, can import memories from other assistants, and export everything.
+- **Dream mode** tidies and summarises memories every night (or on demand with **Tidy now**), and a nightly review of finished chats and task runs turns what worked into facts and reusable **skills**.
+- **Notion backup** keeps a copy of your memories in your own Notion after every tidy, with a one-click restore.
+- **Knowledge.** Add files and web pages to a knowledge base that agents search, and see where each source was used.
+- **Skills** in the `SKILL.md` format, shared across the server or personal to you, runnable as slash commands.
+
+### Connections
+
+- **Connected apps** with one-click sign-in: GitHub, Gmail, Google Calendar, Drive, Docs, Sheets and Slides, Slack, Notion, Linear and Sentry. Their tools load into agents automatically.
+- **Any MCP server**, added per user.
+- **Chat apps.** Talk to your agents from Telegram, Slack, Discord, Microsoft Teams, WhatsApp or SMS (Twilio).
+- **Agent email.** Give each agent its own address on a mailbox you connect, and it answers mail as a chat.
+- **Meetings.** Agents can join Google Meet, Microsoft Teams and Zoom calls from their sandbox browser and take notes.
+- **Payments.** Agents can ask to pay at a checkout; every payment needs your OK and stays within limits you set.
+- **Code editors.** `cognitrix acp` lets Zed, JetBrains IDEs and other [Agent Client Protocol](https://agentclientprotocol.com) editors chat with your agents.
+- **An HTTP API** with scoped keys and an OpenAI-compatible endpoint. See [API access](#api-access).
+
+### Safety and control
+
+- **Approvals.** Risky tool calls (deleting, overwriting, sending, shell commands) ask first, with **Always allow** for the ones you trust. Each agent, and each tool on it, can be set to always allow, always ask, ask only when the agent works on its own, hand the action to you to do, or never run.
+- **Second-model review.** A second model can screen risky actions and allow, block or hand them to you. See [Configuration](#configuration).
+- **A credential vault.** Saved sign-ins and keys are encrypted at rest, and agents use them by name without ever seeing the values.
+- **Multi-user servers** with invitations, roles, spending limits, an audit log and per-device sign-ins (including signing in by code or QR from another device).
+
+### The apps
+
+- **Desktop app** (Tauri) for Windows, macOS (Apple silicon and Intel) and Linux, with a tray icon, notifications, a global **Alt+Space** quick-ask window, launch at login and self-update.
+- **Web app** that works on phones as well as desktops, in light, dark and custom themes (agents can make themes too), in English, Spanish and French.
+
+## Install
+
+### Desktop app
+
+Download the installer for your system from the [latest release](https://github.com/theonlyamos/cognitrix/releases/latest):
+
+| System | File |
+| --- | --- |
+| Windows | `.exe` (setup) or `.msi` |
+| macOS | `.dmg` (Apple silicon or Intel) |
+| Linux | `.deb`, `.rpm` or `.AppImage` |
+
+The app includes everything it needs. On first start it asks you to create an account and set up your assistant with a model and API key.
+
+Builds may be unsigned. On Windows, SmartScreen then asks you to choose "Run anyway". On macOS, run `xattr -cr /Applications/Cognitrix.app` once after installing if it says the app "is damaged".
+
+To give agents their own sandboxed computer, install [Docker](https://docs.docker.com/get-docker/). Cognitrix pulls the sandbox image the first time an agent needs it.
+
+### Python package (command line and API)
+
+Needs **Python 3.11 to 3.13**.
 
 ```bash
 pip install cognitrix
+cognitrix --help
 ```
 
-**Build from source**:
+The PyPI package has the engine, the command line, the API, `cognitrix acp` and `cognitrix connect`. It does **not** include the built web UI; for that, use the desktop app, Docker, or a source install.
 
-```bash
-git clone https://github.com/theonlyamos/cognitrix.git
-cd cognitrix/frontend
-pnpm install
-pnpm run build
-cd ..
-pip install .
-```
+### From source (with the web UI)
 
-**Install directly from github**:
-
-```bash
-pip install https://github.com/theonlyamos/cognitrix/archive/main.zip
-```
-
-**Build the Docker Image**:
+Needs Python 3.11 to 3.13 and Node.js 22 with [pnpm](https://pnpm.io).
 
 ```bash
 git clone https://github.com/theonlyamos/cognitrix.git
 cd cognitrix
-docker build -t cognitrix .
-```
 
-## Usage
+cd frontend
+pnpm install
+pnpm run build
+cd ..
 
-**Fill these environment variables as needed**
-
-```bash
-OPENAI_API_KEY=
-CO_API_KEY=
-TAVILY_API_KEY=
-CLARIFAI_ACCESS_TOKEN=
-GROQ_API_KEY=
-GOOGLE_API_KEY=
-NEWSAPI_API_KEY=
-ANTHROPIC_API_KEY=
-DEEPGRAM_API_KEY=
-MINDSDB_API_KEY=
-BRAVE_SEARCH_API_KEY=
-AIMLAPI_API_KEY=
-```
-
-To run Cognitrix with default settings:
-
-```bash
-cognitrix
-```
-
-**Access the Web UI**
-
-To run with web interface
-
-```bash
+pip install -e .
 cognitrix --ui web
 ```
 
-Open your web browser and go to `http://localhost:8000` to access the web UI.
+Open `http://localhost:8000` and create an account; the first account is the owner and admin.
 
-**Run the Docker Container**
+Use an editable install (`pip install -e .`): the server looks for the built UI in `frontend/dist` next to the package, which a regular install would not find. To serve a UI built somewhere else, set `COGNITRIX_FRONTEND_DIR` to its `dist` folder.
 
-After building the image, you can run the container with:
-
-```bash
-docker run -p 8000:8000 cognitrix
-```
-
-This command maps port 8000 of the container to port 8000 on your host machine.
-
-To choose an LLM provider, pass `--provider` (config is read from the environment —
-`AI_PROVIDER`, `<PROVIDER>_BASE_URL`, `<PROVIDER>_API_KEY`, `<PROVIDER>_MODEL`):
+## Command line
 
 ```bash
-cognitrix --provider openrouter
+cognitrix                              # chat with the Assistant agent in the terminal
+cognitrix --ui tui                     # full-screen terminal UI
+cognitrix --ui web                     # web app on http://localhost:8000
+cognitrix --agent "Researcher"         # chat with a saved agent
+cognitrix --provider anthropic --model claude-sonnet-5-5
+cognitrix -p "Summarise README.md"     # one prompt, print the reply, exit
+cognitrix -p "Plan a launch" --task    # run the prompt as a planned multi-step task
+cognitrix -c -p "And the next step?"   # continue the previous session
 ```
 
-To list created agents:
+| Command | What it does |
+| --- | --- |
+| `cognitrix agents -l` / `--new` / `<name>` | List, create, show, update or delete agents |
+| `cognitrix tools -l [category]` | List tools (`general`, `system`, `web`) |
+| `cognitrix skills -l` / `--install` / `--run` | Manage and run skills |
+| `cognitrix acp --agent Assistant` | Run as an Agent Client Protocol server for code editors |
+| `cognitrix connect <server>` | Pair this PC with a Cognitrix web server |
+| `cognitrix reset-password <email>` | Set a new password for a local account |
+| `cognitrix --sessions` / `--session <id>` | List or reopen saved chats |
 
-```bash
-cognitrix agents -l
-```
+Run `cognitrix --help` or `cognitrix <command> --help` for every option.
 
-To list available tools:
-
-```bash
-cognitrix tools -l
-```
-
-To run Cognitrix with a specific provider:
-
-```bash
-cognitrix --provider <provider_name>
-```
-
-To run Cognitrix with a specific agent:
-
-```bash
-cognitrix --agent <agent_name>
-```
-
-To run Cognitrix with a category of tools:
-
-```bash
-cognitrix --load-tools "web"
-```
-
-To run Cognitrix with categories of tools:
-
-```bash
-cognitrix --load-tools "web,general"
-```
-
-To create a new agent:
-
-```bash
-cognitrix agents --new
-```
-
-For more options and usage details, use the help command:
-
-```bash
-cognitrix --help
-```
-
-### Second-model review of risky actions
-
-Tool calls that would normally ask for approval (deleting, overwriting a file, sending something out, shell commands) can be screened by a second model first. It answers **allow** (runs without asking), **block** (refused, and the agent is told why) or **ask** (you get the usual approval prompt). Errors, timeouts and unclear answers count as **ask**.
-
-```bash
-COGNITRIX_REVIEWER=unattended          # off | unattended (task runs, auto mode) | always
-COGNITRIX_REVIEWER_PROVIDER=anthropic  # defaults to AI_PROVIDER
-COGNITRIX_REVIEWER_MODEL=claude-haiku-5-5
-COGNITRIX_REVIEWER_MAX_ALLOW=medium    # high lets it allow deletes on its own too
-```
-
-The reviewer never answers for tools you set to "Ask first" or for commands that need the full shell. Task runs record each verdict as an `action_reviewed` run event.
-
-### Code mode and tools on demand
-
-Two switches on an agent's **Tools** tab (under "Saving tokens") cut what long jobs spend on tools:
-
-- **Code mode** gives the agent a Run Code tool. It writes one short JavaScript snippet that calls many tools (`await tools.grep({pattern: "TODO"})`, loops, `Promise.all`) and returns only what it needs, instead of one model step per call with every result pasted into the chat. Scripts run in a V8 isolate with no file system or network of their own; each tool call inside goes through the same permission levels and approvals as a direct call.
-- **Load tools only when needed** sends the model full descriptions of just a few core tools and the names of the rest. It loads the others with Find Tools when it needs them, and they stay loaded for that chat. Worth it from about 12 tools.
-
-`COGNITRIX_CODE_MODE_TIMEOUT` (seconds, default 600) and `COGNITRIX_CODE_MODE_MAX_CALLS` (default 200) limit one script.
-
-### Use your agents from a code editor (Agent Client Protocol)
-
-`cognitrix acp` runs Cognitrix as an [Agent Client Protocol](https://agentclientprotocol.com) server, so editors that support ACP (Zed, JetBrains IDEs, Neovim plugins and others) can chat with your agents. The chat works in the editor's project folder, tool calls show up in the editor, and anything that would ask you for approval asks in the editor. Your agents appear in the editor's mode menu, so you can switch between them, and chats are saved like any other.
+### Code editors (Agent Client Protocol)
 
 In Zed, add this to `settings.json`:
 
@@ -202,54 +168,68 @@ In Zed, add this to `settings.json`:
 }
 ```
 
-With only the desktop app installed, point `command` at its engine instead: `cognitrix-engine` with `"args": ["acp"]` (on Windows it is in the app's install folder under `engine\`). Add `--user you@example.com` to use one account's agents and saved sign-ins when several people share the machine.
+The chat works in the editor's project folder, tool calls show up in the editor, and approvals ask there. Your agents appear in the editor's mode menu. With only the desktop app installed, point `command` at its engine instead: `cognitrix-engine` with `"args": ["acp"]` (on Windows it is in the app's install folder under `engine\`). Add `--user you@example.com` to use one account's agents and sign-ins when several people share the machine.
 
-## Web UI
+## Configuration
 
-Cognitrix includes a web UI built with React, TypeScript, and Vite. This UI allows users to interact with the AI agents and manage their configurations easily.
+Most settings live in the app under **Settings**: models and API keys, connected apps, chat apps, computers, memory, voice, notifications and people. For servers and the command line, settings come from environment variables or a `.env` file; [.env.example](.env.example) lists them with comments.
 
-### Development
+The ones you are most likely to need:
 
-For development purposes, you can also run the web UI locally without Docker. Ensure you have Node.js 18+ and pnpm installed, then follow these steps:
+| Variable | Purpose |
+| --- | --- |
+| `AI_PROVIDER` | Default provider for the first agent and the CLI (`openai`, `anthropic`, `google`, `openrouter`, `groq`, `cerebras`, `ollama`) |
+| `<PROVIDER>_API_KEY`, `<PROVIDER>_BASE_URL`, `<PROVIDER>_MODEL` | Key, endpoint and default model for a provider, for example `ANTHROPIC_API_KEY` |
+| `JWT_SECRET_KEY` | Required when `COGNITRIX_ENV=production` |
+| `COGNITRIX_SECRETS_KEY` | Encrypts saved sign-ins and tokens in the database |
+| `CELERY_BROKER_URL` | Redis broker for task runs; leave blank for the built-in local fallback |
+| `DB_TYPE`, `DB_HOST`, … | Use PostgreSQL or MySQL instead of the default SQLite at `~/.cognitrix/cognitrix.db` |
+| `COGNITRIX_COMPUTER_SANDBOX` | `docker` or `fly` to force the agents' sandboxed computer on; by default it is on when Docker is installed |
+| `TAVILY_API_KEY`, `BRAVE_SEARCH_API_KEY` | Web search tools |
 
-1. **Install Dependencies**:
-   Navigate to the `frontend` directory and run:
+### Second-model review of risky actions
 
-   ```bash
-   pnpm install
-   ```
-
-2. **Start the Development Server**:
-   Run the following command to start the development server:
-
-   ```bash
-   pnpm run dev
-   ```
-
-3. **Access the Development Server**:
-   Open your web browser and go to `http://localhost:5173` to view the web UI in development mode.
-
-## Docker deployment
-
-`docker-compose.yml` runs three services: the **web** app (FastAPI + the in-process schedule loop), a dedicated **worker** (Celery, executes task/team runs), and **Redis** as the broker. Web and worker share the SQLite app database over a named volume.
+Tool calls that would normally ask for approval can be screened by a second model first. It answers **allow** (runs without asking), **block** (refused, and the agent is told why) or **ask** (you get the usual approval prompt). Errors, timeouts and unclear answers count as **ask**.
 
 ```bash
-cp .env.example .env          # fill in provider keys + a JWT_SECRET_KEY
+COGNITRIX_REVIEWER=unattended          # off | unattended (task runs, auto mode) | always
+COGNITRIX_REVIEWER_PROVIDER=anthropic  # defaults to AI_PROVIDER
+COGNITRIX_REVIEWER_MODEL=claude-haiku-5-5
+COGNITRIX_REVIEWER_MAX_ALLOW=medium    # high lets it allow deletes on its own too
+```
+
+The reviewer never answers for tools you set to "Ask first" or for commands that need the full shell. Task runs record each verdict as an `action_reviewed` run event.
+
+### Run Code and tools on demand
+
+Both are on by default for every agent, and can be turned off on an agent's **Tools** tab:
+
+- **Run Code** lets the agent write one short JavaScript snippet that calls many tools (`await tools.grep({pattern: "TODO"})`, loops, `Promise.all`) and returns only what it needs, instead of one model step per call. Scripts run in a V8 isolate with no file system or network of their own, and each tool call inside goes through the same permissions and approvals as a direct call. `COGNITRIX_CODE_MODE_TIMEOUT` (seconds, default 600) and `COGNITRIX_CODE_MODE_MAX_CALLS` (default 200) limit one script.
+- **Load tools only when needed** sends the model full descriptions of a few core tools and just the names of the rest, which it loads with **Find Tools** when it needs them.
+
+## Self-hosting with Docker
+
+`docker-compose.yml` runs three services: the **web** app (FastAPI plus the in-process scheduler), a **worker** (Celery, which runs tasks and team runs), and **Redis** as the broker. Web and worker share the SQLite database over a named volume.
+
+```bash
+cp .env.example .env          # fill in provider keys and a JWT_SECRET_KEY
 docker compose up --build
 ```
 
-The UI is then at `http://localhost:8000`.
+The app is then at `http://localhost:8000`.
 
-- **Provider keys / config** come from `.env` (injected into both web and worker). `COGNITRIX_ENV=production` is set in compose, so `JWT_SECRET_KEY` is required — generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
-- **Scale execution** with `docker compose up --scale worker=3`. Keep **web at a single replica**: the schedule tick loop runs per-process, so multiple web containers would fire the same due schedules more than once.
-- **State** lives in the `cognitrix-data` volume (SQLite DB, JWT secret, MCP config) and `redis-data` (broker). For heavier task concurrency, point `DB_*` at PostgreSQL or MySQL instead of the shared SQLite file. MongoDB is not supported by the durable task runner because its cross-table lease fencing requires relational atomic predicates.
-- Without `CELERY_BROKER_URL`, a single container falls back to an in-process filesystem broker + auto-spawned worker — handy for a one-container deploy, but the dedicated-worker compose stack is the recommended setup.
+- `COGNITRIX_ENV=production` is set in compose, so `JWT_SECRET_KEY` is required. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+- Scale execution with `docker compose up --scale worker=3`. Keep **web at one replica**: the schedule loop runs per process, so several web containers would fire the same schedules more than once.
+- State lives in the `cognitrix-data` volume (database, secrets, MCP config) and `redis-data`. For heavier task concurrency, point `DB_*` at PostgreSQL or MySQL. MongoDB is not supported by the task runner.
+- Without `CELERY_BROKER_URL`, a single container falls back to an in-process filesystem broker and an auto-started worker.
+
+For a single image without compose: `docker build -t cognitrix .` then `docker run -p 8000:8000 --env-file .env cognitrix`.
 
 ### Fly.io
 
-`fly.toml` deploys the single-container shape to [Fly.io](https://fly.io): one always-warm machine running a Supervisor-managed web process and solo Celery worker. Configure the external Redis connection with the `CELERY_BROKER_URL` and `TASK_LIMIT_REDIS_URL` Fly secrets. SQLite persistence lives on the mounted volume. Keep the web process to one machine while using SQLite because the volume is not shared and the schedule loop is per-process.
+`fly.toml` deploys the single-container shape to [Fly.io](https://fly.io): one always-on machine running the web process and a Celery worker under Supervisor. Set the external Redis connection with the `CELERY_BROKER_URL` and `TASK_LIMIT_REDIS_URL` secrets. SQLite lives on the mounted volume, so keep the web process to one machine. To run the agents' sandboxed computers as Fly Machines too, see [docs/sandbox-on-fly.md](docs/sandbox-on-fly.md).
 
-## API Access
+## API access
 
 Cognitrix exposes an HTTP API for programmatic use by external apps, scripts, and automation platforms. Create an **API key** from the **API Keys** page in the web UI (or via `POST /api/v1/api-keys` with a session token). A key is shown **once** at creation — copy the key and its webhook signing secret then.
 
@@ -281,16 +261,6 @@ curl -X POST http://localhost:8000/api/v1/teams/<team_id>/run \
 ```
 
 Poll `GET /api/v1/tasks/<task_id>` and `GET /api/v1/tasks/<task_id>/runs`, or supply a `callback_url` to receive a webhook when the run finishes. `POST /api/v1/tasks/<task_id>/run` starts a pre-created task the same way.
-
-### Group chat with a team
-
-Open a team and click **Group chat** to talk with all of its agents in one conversation (web and desktop):
-
-- `@name` asks that agent; mention several and they answer in that order. `@all` asks everyone.
-- With no mention, the agent who spoke last answers (the team lead starts a new chat).
-- Agents hand work to each other by @mentioning a teammate in their reply. One message gets at most 6 agent replies (`COGNITRIX_GROUP_MAX_TURNS`), and each agent answers at most twice.
-
-Group chats run in the background like normal chats, so you can leave and come back. They use your signed-in session (`/api/v1/teams/<team_id>/chats`), not API keys.
 
 ### Schedule a task
 
@@ -345,14 +315,39 @@ client.chat.completions.create(
 
 Both blocking and `stream=True` are supported. Requires the `chat` scope.
 
+## Development
+
+Run the engine and the web UI's dev server side by side:
+
+```bash
+pip install -e .
+cognitrix --ui web                 # API on http://localhost:8000
+
+cd frontend
+pnpm install
+pnpm run dev                       # UI on http://localhost:5173, proxies /api to :8000
+```
+
+Tests: `pytest` for the engine and `pnpm test` in `frontend/` for the UI. Lint with `ruff check .`.
+
+The desktop app is a Tauri shell around the same UI with the engine bundled by PyInstaller; build steps are in [desktop/README.md](desktop/README.md). The sandbox image is built from [sandbox/desktop/Dockerfile](sandbox/desktop/Dockerfile).
+
+More docs:
+
+- [Pair your PC with a web server](docs/pair-your-pc.md)
+- [Sign in with a code](docs/sign-in-with-a-code.md)
+- [Run the sandboxed computers on Fly.io](docs/sandbox-on-fly.md)
+- [MCP servers](MCP_DYNAMIC_SERVERS.md)
+- Release notes for each version are in [cognitrix/release_notes](cognitrix/release_notes)
+
 ## Contributing
 
-Cognitrix is open source and contributions are welcome! Please refer to [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute.
+Cognitrix is open source and contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for more information.
+Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos) and is inspired by projects like AutoGPT and GPTEngineer. Special thanks to the open-source community and AI companies providing LLM APIs.
+Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos), inspired by projects like AutoGPT and GPTEngineer. Thanks to the open-source community and the AI companies whose APIs it builds on.
