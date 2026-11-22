@@ -136,7 +136,8 @@ class Agent(Model):
     tool_mode: dict[str, Any] = Field(default_factory=dict)
     """How the agent uses its tools (cognitrix/tools/code_mode.py): code
     (Run Code: one script calls many tools) and on_demand (only a few tool
-    descriptions are sent; Find Tools loads the rest). Empty means both off."""
+    descriptions are sent; Find Tools loads the rest). Both are on unless set
+    to False here; a missing key (including the empty default) means on."""
 
     credentials: list[str] | None = None
     """Saved sign-ins this agent may use by name. None means all of the owner's."""
