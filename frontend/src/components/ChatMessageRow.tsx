@@ -4,6 +4,8 @@ import { ArtifactCard } from '@/components/artifacts/ArtifactCard';
 import { AppViewCard } from '@/components/appviews/AppViewCard';
 import { InfoCard, InfoCardPending } from '@/components/cards/InfoCard';
 import { AppCard } from '@/components/hosted-apps/AppCard';
+import { FileCards } from '@/components/files/FileCards';
+import { FilesShelf } from '@/components/files/FilesShelf';
 import { MemoryNotice } from '@/components/MemoryNotice';
 import { ThemeNotice } from '@/components/ThemeNotice';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
@@ -159,6 +161,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
               {tool.status === 'done' && tool.card && <InfoCard card={tool.card} />}
               {tool.status === 'running' && isShowCard(tool.name) && <InfoCardPending />}
               {tool.status === 'done' && <AppCard toolName={tool.name} result={tool.result} />}
+              {tool.status === 'done' && !!tool.files?.length && <FileCards files={tool.files} caption={tool.files[0].caption} />}
               {tool.artifacts?.map((artifact) => (
                 <ArtifactPreview
                   key={artifact.id}
@@ -177,7 +180,8 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   const isUser = message.role === 'user';
   // What the model wrote for the person, without its reasoning.
   const reply = isUser ? message.content : withoutThinking(message.content);
-  if (message.role === 'assistant' && !reply && !(isLast && streaming)) return null;
+  const filesMade = !isUser ? message.filesMade ?? [] : [];
+  if (message.role === 'assistant' && !reply && !(isLast && streaming) && !filesMade.length) return null;
   const thinking = !isUser && !reply && message.content.includes('<think>');
 
   // A card button press: a small line, not a full message.
@@ -245,6 +249,12 @@ export const ChatMessageRow = memo(function ChatMessageRow({
             <span className="font-mono text-[10.5px] tracking-[0.06em] text-accent-ink">{tr('ui.chatMessageRow.nextStep')}</span>
             <span className="min-w-0 truncate">{step.step}</span>
           </button>
+        )}
+        {filesMade.length > 0 && !(isLast && streaming) && (
+          <div className="mt-3 space-y-2.5">
+            <FileCards files={filesMade.filter((f) => f.shown && !f.shared)} />
+            <FilesShelf files={filesMade.filter((f) => !f.shown)} />
+          </div>
         )}
         {isUser && message.artifacts?.map((artifact) => (
           <div key={artifact.id} className="mt-3">

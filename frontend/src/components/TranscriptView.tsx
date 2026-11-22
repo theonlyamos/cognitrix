@@ -1,6 +1,8 @@
 import { lazy, Suspense } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { InfoCard } from '@/components/cards/InfoCard';
+import { FileCards } from '@/components/files/FileCards';
+import { FilesShelf } from '@/components/files/FilesShelf';
 import { MemoryNotice } from '@/components/MemoryNotice';
 import { ThemeNotice } from '@/components/ThemeNotice';
 import { SignInNeededNotice, signInNeeded } from '@/components/SafetyNotices';
@@ -54,6 +56,12 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                       }>
                         <MarkdownMessage content={e.content} />
                       </Suspense>
+                    </div>
+                  )}
+                  {e.kind === 'assistant' && !!e.filesMade?.length && (
+                    <div className="mt-3 space-y-2.5">
+                      <FileCards files={e.filesMade.filter((f) => f.shown && !f.shared)} />
+                      <FilesShelf files={e.filesMade.filter((f) => !f.shown)} />
                     </div>
                   )}
                 </div>
@@ -113,6 +121,7 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                         <ArtifactPreview key={artifact.id} artifact={artifact} />
                       ))}
                       {tool.status === 'done' && tool.card && <InfoCard card={tool.card} />}
+                      {tool.status === 'done' && !!tool.files?.length && <FileCards files={tool.files} caption={tool.files[0].caption} />}
                     </div>
                   ))}
                 </div>

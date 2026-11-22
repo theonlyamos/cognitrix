@@ -36,6 +36,7 @@ WORK = (
 # Always deleted: private to the person, or secrets.
 PRIVATE = (
     ('cognitrix.sessions.base', 'Session', 'user_id'),
+    ('cognitrix.produced_files.models', 'ProducedFile', 'owner_id'),
     ('cognitrix.sessions.index', 'ChatIndex', 'user_id'),
     ('cognitrix.session_ownership', 'SessionOwnership', 'user_id'),
     ('cognitrix.models.memory', 'Memory', 'user_id'),

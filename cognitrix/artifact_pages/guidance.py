@@ -29,7 +29,8 @@ Artifacts are how you hand over substantial work. An artifact is a page the pers
 - One artifact per deliverable. When the person asks for changes, or you have new information, update the same artifact (Publish Artifact with its artifact_id, and a short note on what changed) instead of making a new one. Read Artifact first when people may have edited it or left comments.
 - Earlier artifacts are listed below when this chat or task has any. For one from another chat, find it with List Artifacts.
 - When a comment on an artifact reaches you, make the change in the artifact and reply in the comment thread (Artifact Comments) saying what you changed.
-- Files that belong in the person's folders or repository (code, configs, data files) still go there with the file tools. An artifact is for something to look at, read or use."""
+- Files that belong in the person's folders or repository (code, configs, data files) still go there with the file tools. An artifact is for something to look at, read or use.
+- When the result of a job is a file you produced (a video, image, chart, audio clip, PDF or Word document, slides, spreadsheet, zip or build), show the final files with Share File: the person sees them as preview cards they can play, open and download. Share only the finished files, then reply in a line or two."""
 
 TASK_GUIDANCE = (
     '- In a task run, publish the run\'s report or output as an artifact with the same title every run, so it stays one '

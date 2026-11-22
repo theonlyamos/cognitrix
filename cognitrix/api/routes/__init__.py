@@ -11,6 +11,7 @@ from ...api.routes.themes import themes_api
 from ...api.routes.swarms import swarms_api
 from ...api.routes.artifacts import artifacts_api
 from ...api.routes.artifact_pages import artifact_frame_api, artifact_pages_api
+from ...api.routes.produced_files import produced_file_content_api, produced_files_api
 from ...api.routes.app_views import app_view_frame_api, app_views_api
 from ...api.routes.assistant import assistant_api
 from ...api.routes.proactive import proactive_api
@@ -53,6 +54,7 @@ api_router.include_router(public_api)
 api_router.include_router(public_agent_api)
 api_router.include_router(public_links_api)
 api_router.include_router(artifact_frame_api)
+api_router.include_router(produced_file_content_api)
 api_router.include_router(app_view_frame_api)
 api_router.include_router(hooks_api)
 api_router.include_router(github_hooks_api)
@@ -66,6 +68,7 @@ api_router.include_router(agents_api)
 api_router.include_router(tools_api)
 api_router.include_router(artifacts_api)
 api_router.include_router(artifact_pages_api)
+api_router.include_router(produced_files_api)
 api_router.include_router(app_views_api)
 api_router.include_router(hosted_apps_api)
 api_router.include_router(skills_api)

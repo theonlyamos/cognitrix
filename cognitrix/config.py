@@ -918,6 +918,7 @@ async def _ensure_schema():
     from cognitrix.projects.models import MODELS as PROJECT_MODELS
     from cognitrix.safety.command_rules import MODELS as COMMAND_RULE_MODELS
     from cognitrix.file_changes.models import MODELS as FILE_CHANGE_MODELS
+    from cognitrix.produced_files.models import MODELS as PRODUCED_FILE_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
@@ -936,6 +937,7 @@ async def _ensure_schema():
         *PROJECT_MODELS,
         *COMMAND_RULE_MODELS,
         *FILE_CHANGE_MODELS,
+        *PRODUCED_FILE_MODELS,
         AgentOffer,
         SideQuestion,
         MeetingNote,
