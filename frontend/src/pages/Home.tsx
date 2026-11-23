@@ -61,6 +61,8 @@ import { getChatComputer, listDevices, setChatComputer, type PairedDevice } from
 import { getProject, listProjects, projectSwatch, type Project } from '@/lib/projects';
 import { ChillScreen, type ChillRailItem } from '@/components/chill/ChillScreen';
 import { FileCards } from '@/components/files/FileCards';
+import { ChillPageCard } from '@/components/chill/ChillPageCard';
+import { madeInTurn } from '@/lib/chillMade';
 import { InfoCard } from '@/components/cards/InfoCard';
 import { FilesShelf } from '@/components/files/FilesShelf';
 import { CHILL_PATH, isModeSwitchKey, setUiMode } from '@/lib/uiMode';
@@ -2569,6 +2571,12 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     }
     return [];
   }, [messages]);
+  // Previews under the answer: what this turn shared or published.
+  const chillMade = useMemo(() => {
+    let i = messages.length - 1;
+    while (i >= 0 && !isUserTurn(messages[i])) i -= 1;
+    return madeInTurn(messages.slice(i + 1));
+  }, [messages]);
 
   const switchToFull = useCallback(() => {
     setUiMode('full');
@@ -2810,9 +2818,10 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
                 {chillCards.map(({ key, card }) => <InfoCard key={key} card={card} />)}
               </div>
             )}
-            {!streaming && chillLastFiles.length > 0 && (
+            {!streaming && (chillMade.pages.length > 0 || chillMade.files.length > 0 || chillLastFiles.length > 0) && (
               <div className="space-y-2">
-                <FileCards files={chillLastFiles.filter((f) => f.shown && !f.shared)} />
+                {chillMade.pages.map((page) => <ChillPageCard key={page.id} {...page} />)}
+                <FileCards files={chillMade.files} />
                 <FilesShelf files={chillLastFiles.filter((f) => !f.shown)} />
               </div>
             )}

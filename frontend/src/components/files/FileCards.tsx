@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Box, Download, File, FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileText, FileVideo,
-  Loader2, Pause, Play, Presentation, Type,
+  Loader2, Maximize2, Pause, Play, Presentation, Type,
 } from 'lucide-react';
 import {
   downloadFile, fileMeta, fileSrc, fmtDuration, loadDetails, requestOpenFile,
@@ -271,9 +271,12 @@ export function FileCard({ file }: { file: ProducedFileRef }) {
       onClick={() => open(file, data?.url)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(file, data?.url); } }}
       aria-label={tr('ui.producedFiles.openName', { name: file.name })}
-      className="group flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-[10px] border border-line bg-panel text-left transition-colors hover:border-fg-dim focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+      className="group relative flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-[10px] border border-line bg-panel text-left transition-colors hover:border-fg-dim focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
     >
       <Preview file={file} d={data} />
+      <span aria-hidden className="pointer-events-none absolute right-2 top-2 hidden h-7 w-7 place-items-center rounded-md border border-line bg-panel/90 text-fg-dim [.chill_&]:grid">
+        <Maximize2 size={13} />
+      </span>
       <div className="flex min-w-0 items-center gap-2 border-t border-line px-2.5 py-2">
         <span className={cn('flex-none text-fg-dim', kindTone[file.kind])}><KindIcon kind={file.kind} size={15} /></span>
         <span className="min-w-0 flex-1">
