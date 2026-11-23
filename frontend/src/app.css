@@ -314,4 +314,13 @@ html.dark .chill-orb {
 }
 html.dark .chill-composer { box-shadow: 0 16px 48px rgb(0 0 0 / .55), 0 2px 8px rgb(0 0 0 / .4); }
 @keyframes chill-breathe { 0%, 100% { transform: scale(1); opacity: .75; } 50% { transform: scale(1.08); opacity: .95; } }
-@media (prefers-reduced-motion: reduce) { .chill-orb::after { animation: none; } }
+/* Moving between turns: the next one rises from below, the one before drops from above. */
+.chill-turn-down { animation: chill-turn-down .24s ease-out; }
+.chill-turn-up { animation: chill-turn-up .24s ease-out; }
+@keyframes chill-turn-down { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+@keyframes chill-turn-up { from { opacity: 0; transform: translateY(-28px); } to { opacity: 1; transform: none; } }
+@keyframes chill-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .chill-orb::after { animation: none; }
+  .chill-turn-down, .chill-turn-up { animation: chill-fade .15s ease-out; }
+}

@@ -67,6 +67,46 @@ describe('ChillScreen', () => {
     expect(screen.getByText('working on a part')).toBeTruthy();
   });
 
+  it('moves one turn at a time with the scroll wheel, keys and the marks', () => {
+    const onTurn = vi.fn();
+    const turns = [
+      { key: 'a', question: 'First question' },
+      { key: 'b', question: 'Make a page', made: 'page' as const, madeName: 'Q3 summary' },
+      { key: 'c', question: 'What is 17 times 23?' },
+    ];
+    const { rerender } = render(<ChillScreen {...base} turns={turns} turnIndex={2} onTurn={onTurn} />);
+    expect(screen.getByText('Turn 3 of 3')).toBeTruthy();
+    const log = screen.getByRole('log');
+    // Down from the newest turn goes nowhere; up goes to the turn before.
+    fireEvent.wheel(log, { deltaY: 100 });
+    expect(onTurn).not.toHaveBeenCalled();
+    fireEvent.wheel(log, { deltaY: -100 });
+    expect(onTurn).toHaveBeenLastCalledWith(1);
+
+    rerender(<ChillScreen {...base} turns={turns} turnIndex={0} onTurn={onTurn} />);
+    onTurn.mockClear();
+    fireEvent.keyDown(window, { key: 'ArrowUp', altKey: true });
+    expect(onTurn).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'ArrowDown', altKey: true });
+    expect(onTurn).toHaveBeenLastCalledWith(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Turn 2 of 3: Make a page' }));
+    expect(onTurn).toHaveBeenLastCalledWith(1);
+  });
+
+  it('takes you back to the newest turn while it is still being answered', () => {
+    const onTurn = vi.fn();
+    const turns = [{ key: 'a', question: 'One' }, { key: 'b', question: 'Two' }];
+    render(<ChillScreen {...base} turns={turns} turnIndex={0} onTurn={onTurn} replying />);
+    fireEvent.click(screen.getByRole('button', { name: /Replying to turn 2/ }));
+    expect(onTurn).toHaveBeenCalledWith(1);
+  });
+
+  it('has no turn marks in a chat with one turn', () => {
+    render(<ChillScreen {...base} turns={[{ key: 'a', question: 'One' }]} turnIndex={0} onTurn={() => {}} />);
+    expect(screen.queryByRole('navigation', { name: 'Turns in this chat' })).toBeNull();
+  });
+
   it('switches to the full app', () => {
     const onFullMode = vi.fn();
     render(<ChillScreen {...base} onFullMode={onFullMode} />);

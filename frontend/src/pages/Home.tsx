@@ -60,6 +60,7 @@ import { PcScreenPanel } from '@/components/PcScreen';
 import { getChatComputer, listDevices, setChatComputer, type PairedDevice } from '@/lib/devices';
 import { getProject, listProjects, projectSwatch, type Project } from '@/lib/projects';
 import { ChillScreen, type ChillRailItem } from '@/components/chill/ChillScreen';
+import { repliesOf, splitTurns, type ChillTurn } from '@/lib/chillTurns';
 import { FileCards } from '@/components/files/FileCards';
 import { ChillPageCard } from '@/components/chill/ChillPageCard';
 import { madeInTurn, usedComputer } from '@/lib/chillMade';
@@ -2433,13 +2434,39 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     closeFile();
     setComputerOpen(true);
   }, [closeArtifact, closeAppView, closeChanges, closeFile]);
+  // Turn by turn: null is the newest turn, which also follows new turns.
+  const [chillTurnPick, setChillTurnPick] = useState<number | null>(null);
   const chillWasBusyRef = useRef(false);
   useEffect(() => {
     const was = chillWasBusyRef.current;
     chillWasBusyRef.current = busy;
     // A new turn: the answer comes back on screen while it is written.
-    if (chill && busy && !was) closeStage();
+    if (chill && busy && !was) { closeStage(); setChillTurnPick(null); }
   }, [chill, busy, closeStage]);
+
+  useEffect(() => { setChillTurnPick(null); }, [activeSessionId]);
+  const chillTurnRanges = useMemo(() => (chill ? splitTurns(messages, isUserTurn) : []), [chill, messages]);
+  const chillLastTurn = chillTurnRanges.length - 1;
+  const chillTurnIndex = chillTurnPick !== null && chillTurnPick < chillLastTurn ? chillTurnPick : Math.max(0, chillLastTurn);
+  const chillOnLatest = chillTurnIndex >= chillLastTurn;
+  /** The assistant's part of the turn on screen. */
+  const chillReplies = useMemo(() => repliesOf(messages, chillTurnRanges[chillTurnIndex]), [messages, chillTurnRanges, chillTurnIndex]);
+  const chillTurns = useMemo((): ChillTurn[] => chillTurnRanges.map((range) => {
+    const asked = range.user === null ? null : messages[range.user];
+    const made = madeInTurn(repliesOf(messages, range));
+    const first = made.pages[0] ? { made: 'page' as const, madeName: made.pages[0].title }
+      : made.files[0] ? { made: 'file' as const, madeName: made.files[0].name } : { made: null, madeName: null };
+    return {
+      key: asked?.id ?? `start:${range.start}`,
+      question: asked ? asked.content.replace(/\n?📎 .*$/s, '') : '',
+      at: asked?.timestamp ?? messages[range.start]?.timestamp ?? null,
+      ...first,
+    };
+  }), [chillTurnRanges, messages]);
+  const pickChillTurn = useCallback((index: number) => {
+    closeStage();
+    setChillTurnPick(index >= chillLastTurn ? null : index);
+  }, [closeStage, chillLastTurn]);
 
   const chillRail = useMemo((): ChillRailItem[] => {
     if (!chill) return [];
@@ -2458,6 +2485,12 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     if (computerOpen && !items.some((i) => i.key === 'computer')) items.push({ key: 'computer', kind: 'computer', label: tr('ui.chill.assistantSComputer') });
     return items;
   }, [chill, chatItems, chatFiles, chatAppViews, agentDesktop, chatPcDevice, artifactOpen, fileOpen, appViewOpen, computerOpen]);
+  // Pages and files show as previews in their own turn; apps and the computer
+  // have none, so they get a strip over the stage.
+  const chillStripItems = useMemo(() => {
+    const others = chillRail.filter((item) => item.kind === 'app' || item.kind === 'computer');
+    return others.length ? [chillRail[0], ...others] : [];
+  }, [chillRail]);
   const chillActive = artifactOpen ? `page:${artifactOpen}` : fileOpen ? `file:${fileOpen}` : appViewOpen ? `app:${appViewOpen}`
     : changesOpen ? 'changes' : computerOpen ? 'computer' : 'answer';
   const openChillItem = (key: string) => {
@@ -2502,44 +2535,32 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     return null;
   }, [chill, busy, messages]);
 
-  const chillQuestion = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      if (isUserTurn(messages[i])) return messages[i].content.replace(/\n?📎 .*$/s, '');
-    }
-    return null;
-  }, [messages]);
+  const chillQuestion = chillTurns[chillTurnIndex]?.question || null;
   const chillAnswer = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0 && !isUserTurn(messages[i]); i -= 1) {
-      if (messages[i].role === 'assistant' && messages[i].content.trim()) return messages[i].content;
+    for (let i = chillReplies.length - 1; i >= 0; i -= 1) {
+      if (chillReplies[i].role === 'assistant' && chillReplies[i].content.trim()) return chillReplies[i].content;
     }
     return null;
-  }, [messages]);
+  }, [chillReplies]);
   // Cards the assistant showed this turn (Show Card): tables, charts, buttons.
   const chillCards = useMemo(() => {
     const out: { key: string; card: NonNullable<ToolUse['card']> }[] = [];
-    let i = messages.length - 1;
-    while (i >= 0 && !isUserTurn(messages[i])) i -= 1;
-    for (const message of messages.slice(i + 1)) {
+    for (const message of chillReplies) {
       (message.tools ?? []).forEach((tool, j) => {
         if (tool.status === 'done' && tool.card) out.push({ key: `${message.id}:${tool.id || j}`, card: tool.card });
       });
     }
     return out;
-  }, [messages]);
+  }, [chillReplies]);
   const chillLastFiles = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0 && !isUserTurn(messages[i]); i -= 1) {
-      const files = messages[i].filesMade;
+    for (let i = chillReplies.length - 1; i >= 0; i -= 1) {
+      const files = chillReplies[i].filesMade;
       if (files?.length) return files;
     }
     return [];
-  }, [messages]);
+  }, [chillReplies]);
   // Previews under the answer: what this turn shared or published.
-  const chillMade = useMemo(() => {
-    let i = messages.length - 1;
-    while (i >= 0 && !isUserTurn(messages[i])) i -= 1;
-    const turn = messages.slice(i + 1);
-    return { ...madeInTurn(turn), usedComputer: usedComputer(turn) };
-  }, [messages]);
+  const chillMade = useMemo(() => ({ ...madeInTurn(chillReplies), usedComputer: usedComputer(chillReplies) }), [chillReplies]);
 
   const switchToFull = useCallback(() => {
     setUiMode('full');
@@ -2769,9 +2790,9 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
         stage={chillStage}
         question={chillQuestion}
         answer={chillAnswer}
-        streaming={streaming}
-        thinking={busy && question === null ? (planning || chillDoing || (waiting || !chillAnswer ? tr('ui.home.thinking') : null)) : null}
-        helper={chillHelper}
+        streaming={streaming && chillOnLatest}
+        thinking={busy && chillOnLatest && question === null ? (planning || chillDoing || (waiting || !chillAnswer ? tr('ui.home.thinking') : null)) : null}
+        helper={chillOnLatest ? chillHelper : null}
         listening={liveVoice ? { phase: live.phase, heard: live.heard } : null}
         cards={(errorCard || questionCard || approvals.length > 0) ? <div className="chill-cards">{errorCard}{questionCard}{approvalCards}</div> : null}
         extras={(
@@ -2795,8 +2816,12 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
             {changesCards}
           </>
         )}
-        rail={chillRail}
+        rail={chillStripItems}
         railActive={chillActive}
+        turns={chillTurns}
+        turnIndex={chillTurnIndex}
+        onTurn={pickChillTurn}
+        replying={busy && !chillOnLatest}
         onRail={openChillItem}
         suggestions={newChatSuggestions()}
         onSuggestion={(text) => { setInput(text); inputRef.current?.focus(); }}
