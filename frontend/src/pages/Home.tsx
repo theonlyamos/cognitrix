@@ -61,6 +61,9 @@ import { getChatComputer, listDevices, setChatComputer, type PairedDevice } from
 import { getProject, listProjects, projectSwatch, type Project } from '@/lib/projects';
 import { ChillScreen, type ChillRailItem } from '@/components/chill/ChillScreen';
 import { FileCards } from '@/components/files/FileCards';
+import { ChillPageCard } from '@/components/chill/ChillPageCard';
+import { madeInTurn, usedComputer } from '@/lib/chillMade';
+import { ComputerPreview } from '@/components/ComputerPreview';
 import { InfoCard } from '@/components/cards/InfoCard';
 import { FilesShelf } from '@/components/files/FilesShelf';
 import { CHILL_PATH, isModeSwitchKey, setUiMode } from '@/lib/uiMode';
@@ -151,6 +154,8 @@ interface ApprovalRequest {
 }
 
 export default function Home({ chill = false }: { chill?: boolean } = {}) {
+  const chillRef = useRef(chill);
+  chillRef.current = chill;
   const { messages, addMessage, attachArtifactsToLatestUser: attachArtifactsToLatestUserFromSession, addArtifactsToLastUser, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, attachFilesMade, stopRunningTools, failRunningTools, markTurnDuration, clearMessages, setMessages } = useSession();
   const attachArtifactsToLatestUser = attachArtifactsToLatestUserFromSession ?? addArtifactsToLastUser;
   const messagesRef = useRef(messages);
@@ -1303,7 +1308,8 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
               const published = event.status === 'error' ? null : publishedFrom(event.tool_name, event.result);
               if (published) {
                 announceArtifactUpdate(published.id);
-                if (window.matchMedia?.('(min-width: 768px)').matches) showArtifact(published.id);
+                // Chill mode keeps it as a preview in the chat until it's clicked.
+                if (!chillRef.current && window.matchMedia?.('(min-width: 768px)').matches) showArtifact(published.id);
               }
               // A connected app opened (or changed) its own screen: show it
               // beside the chat, or update the one already showing.
@@ -2412,7 +2418,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
   );
 
   // ── Chill mode ──
-  // The newest thing the chat made fills the window; the rail flips back.
+  // What the chat made shows as previews; clicking one fills the window.
   const closeStage = useCallback(() => {
     closeArtifact();
     closeAppView();
@@ -2427,55 +2433,13 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     closeFile();
     setComputerOpen(true);
   }, [closeArtifact, closeAppView, closeChanges, closeFile]);
-  // Where this turn's messages start; things made after it go on the stage.
-  const chillTurnStartRef = useRef(Number.POSITIVE_INFINITY);
-  const chillShownRef = useRef(new Set<string>());
   const chillWasBusyRef = useRef(false);
-  useEffect(() => {
-    // A new chat gets its id during its first turn: that turn carries on.
-    if (busyRef.current) return;
-    chillTurnStartRef.current = Number.POSITIVE_INFINITY;
-    chillShownRef.current = new Set();
-  }, [activeSessionId]);
   useEffect(() => {
     const was = chillWasBusyRef.current;
     chillWasBusyRef.current = busy;
-    if (!chill || !busy || was) return;
     // A new turn: the answer comes back on screen while it is written.
-    const all = messagesRef.current;
-    let start = all.length - 1;
-    while (start > 0 && !isUserTurn(all[start])) start -= 1;
-    chillTurnStartRef.current = Math.max(0, start);
-    closeStage();
+    if (chill && busy && !was) closeStage();
   }, [chill, busy, closeStage]);
-  useEffect(() => {
-    if (!chill) return;
-    const made: string[] = [];
-    for (const message of messages.slice(chillTurnStartRef.current)) {
-      for (const tool of message.tools ?? []) {
-        if (tool.status !== 'done') continue;
-        const page = publishedFrom(tool.name, tool.result ?? undefined);
-        if (page) made.push(`page:${page.id}`);
-        for (const file of tool.files ?? []) made.push(`file:${file.id}`);
-      }
-      for (const file of message.filesMade ?? []) if (file.shown) made.push(`file:${file.id}`);
-    }
-    const fresh = made.filter((key) => !chillShownRef.current.has(key));
-    if (!fresh.length) return;
-    for (const key of fresh) chillShownRef.current.add(key);
-    const [kind, id] = [fresh[fresh.length - 1].slice(0, 4), fresh[fresh.length - 1].slice(5)];
-    if (kind === 'page') showArtifact(id);
-    else showFile(id);
-  }, [chill, messages, showArtifact, showFile]);
-  // The assistant started using its computer: show it, unless something it
-  // made is already on screen.
-  const chillDesktopRef = useRef<string | null>(null);
-  useEffect(() => {
-    const was = chillDesktopRef.current;
-    chillDesktopRef.current = agentDesktop?.name ?? null;
-    if (!chill || !busy || !agentDesktop || was) return;
-    if (!artifactOpen && !fileOpen && !appViewOpen && !changesOpen) showComputer();
-  }, [chill, busy, agentDesktop, artifactOpen, fileOpen, appViewOpen, changesOpen, showComputer]);
 
   const chillRail = useMemo((): ChillRailItem[] => {
     if (!chill) return [];
@@ -2568,6 +2532,13 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
       if (files?.length) return files;
     }
     return [];
+  }, [messages]);
+  // Previews under the answer: what this turn shared or published.
+  const chillMade = useMemo(() => {
+    let i = messages.length - 1;
+    while (i >= 0 && !isUserTurn(messages[i])) i -= 1;
+    const turn = messages.slice(i + 1);
+    return { ...madeInTurn(turn), usedComputer: usedComputer(turn) };
   }, [messages]);
 
   const switchToFull = useCallback(() => {
@@ -2810,9 +2781,14 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
                 {chillCards.map(({ key, card }) => <InfoCard key={key} card={card} />)}
               </div>
             )}
-            {!streaming && chillLastFiles.length > 0 && (
+            {chillMade.usedComputer && agentDesktop && !chatPcDevice && (
+              <ComputerPreview desktop={agentDesktop.name} label={currentAgent?.name || tr('ui.chill.assistant')}
+                onOpen={showComputer} className="mb-3 max-w-md" />
+            )}
+            {!streaming && (chillMade.pages.length > 0 || chillMade.files.length > 0 || chillLastFiles.length > 0) && (
               <div className="space-y-2">
-                <FileCards files={chillLastFiles.filter((f) => f.shown && !f.shared)} />
+                {chillMade.pages.map((page) => <ChillPageCard key={page.id} {...page} />)}
+                <FileCards files={chillMade.files} />
                 <FilesShelf files={chillLastFiles.filter((f) => !f.shown)} />
               </div>
             )}

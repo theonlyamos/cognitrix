@@ -188,6 +188,8 @@ html.dark {
 .md h3 { font-size: 1.05em; }
 .md h4 { font-size: .95em; }
 .md ul, .md ol { margin: 0 0 .7em; padding-left: 1.4em; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
 .md li { margin: .2em 0; }
 .md li > ul, .md li > ol { margin: .2em 0; }
 .md ul li::marker { color: var(--accent-ink); }
