@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { previewMayCall } from '@/lib/artifactPages';
 import { madeInTurn, usedComputer } from '@/lib/chillMade';
 import type { ProducedFileRef } from '@/lib/producedFiles';
 
 const file = (id: string, extra: Partial<ProducedFileRef> = {}) => ({ id, name: `${id}.md`, shown: true, ...extra }) as ProducedFileRef;
 const published = (version: number) => `Published "Report" (artifact_id ab12, version ${version}).`;
+
+describe('previewMayCall', () => {
+  it('lets a page preview read but not write, spend or call apps', () => {
+    for (const kind of ['data.get', 'data.list', 'apps.list']) expect(previewMayCall(kind)).toBe(true);
+    for (const kind of ['data.set', 'data.remove', 'ask', 'download', 'apps.call']) expect(previewMayCall(kind)).toBe(false);
+  });
+});
 
 describe('usedComputer', () => {
   it('sees window tools, called directly or from Run Code, and nothing else', () => {

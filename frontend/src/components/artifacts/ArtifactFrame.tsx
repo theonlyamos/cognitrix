@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { errorMessage } from '@/lib/api';
 import { useTheme } from '@/context/ThemeContext';
-import { bridgeCall, frameSrc, type CommentAnchor, type PagePower } from '@/lib/artifactPages';
+import { bridgeCall, frameSrc, previewMayCall, type CommentAnchor, type PagePower } from '@/lib/artifactPages';
 import { tr } from '@/lib/i18n';
 
 export interface FramePin { id: string; n: number; x: number; y: number; title: string; active: boolean }
@@ -14,6 +14,8 @@ interface ArtifactFrameProps {
   pageId?: string;
   /** Powers the viewer allowed. Calls outside it are refused here and on the server. */
   allowed?: PagePower[];
+  /** A small preview: the page may read its data, but nothing it calls can change anything. */
+  previewOnly?: boolean;
   pins?: FramePin[];
   /** True while the next click on the page places a comment. */
   picking?: boolean;
@@ -45,11 +47,11 @@ function saveFile(filename: string, content: string, mime: string) {
 
 /** One version of an artifact page, in a sandboxed iframe. The page has no
  *  access to this window; what it asks for arrives as messages handled here. */
-export function ArtifactFrame({ url, title, pageId, allowed = [], pins, picking = false, onPicked, onPin, className }: ArtifactFrameProps) {
+export function ArtifactFrame({ url, title, pageId, allowed = [], previewOnly = false, pins, picking = false, onPicked, onPin, className }: ArtifactFrameProps) {
   const ref = useRef<HTMLIFrameElement>(null);
   const { theme } = useTheme();
-  const live = useRef({ pageId, allowed, pins, picking, onPicked, onPin });
-  live.current = { pageId, allowed, pins, picking, onPicked, onPin };
+  const live = useRef({ pageId, allowed, previewOnly, pins, picking, onPicked, onPin });
+  live.current = { pageId, allowed, previewOnly, pins, picking, onPicked, onPin };
 
   const post = (message: Record<string, unknown>) => {
     // The frame's origin is opaque (sandboxed), so there is no origin to name.
@@ -74,7 +76,7 @@ export function ArtifactFrame({ url, title, pageId, allowed = [], pins, picking 
         const payload = message.payload || {};
         const power = kind.split('.')[0] as PagePower;
         const answer = (value: unknown, error?: string) => post({ type: 'result', id, value, error });
-        if (!now.allowed.includes(power)) {
+        if (!now.allowed.includes(power) || (now.previewOnly && !previewMayCall(kind))) {
           answer(null, now.pageId ? tr('ui.artifacts.artifactFrame.notAllowedTheViewerHas', { power }) : tr('ui.artifacts.artifactFrame.signInToCognitrixTo'));
         } else if (kind === 'download') {
           saveFile(String(payload.filename || ''), String(payload.content ?? ''), String(payload.mime || ''));

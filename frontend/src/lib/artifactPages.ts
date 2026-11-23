@@ -169,6 +169,9 @@ export const POWER_COPY: Record<PagePower, { title: string; detail: string; tag:
   download: { get title() { return tr('ui.artifactPages.power.downloadTitle'); }, get detail() { return tr('ui.artifactPages.power.downloadDetail'); }, tag: 'file' },
 };
 
+/** What a page may do while shown as a small preview: read, never write, spend or call out. */
+export const previewMayCall = (kind: string): boolean => ['data.get', 'data.list', 'apps.list'].includes(kind);
+
 export async function bridgeCall(pageId: string, kind: string, payload: unknown): Promise<unknown> {
   const { data } = await api.post<{ value: unknown }>(`/artifact-pages/${pageId}/bridge`, { kind, payload });
   return data.value;
