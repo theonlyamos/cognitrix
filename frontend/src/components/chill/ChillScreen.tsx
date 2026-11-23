@@ -1,5 +1,8 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppWindow, History, Monitor, MessageSquareText, Plus, SquareStack } from 'lucide-react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { AppWindow, ChevronDown, ChevronUp, History, Monitor, MessageSquareText, Plus, SquareStack } from 'lucide-react';
+import { ChillTurnMarks } from '@/components/chill/ChillTurnMarks';
+import { turnTime, type ChillTurn } from '@/lib/chillTurns';
+import { useTurnPaging, type TurnDirection } from '@/components/chill/useTurnPaging';
 import { KindIcon } from '@/components/files/FileCards';
 import type { FileKind } from '@/lib/producedFiles';
 import type { LivePhase } from '@/hooks/useLiveVoice';
@@ -47,8 +50,16 @@ export interface ChillScreenProps {
   cards: ReactNode;
   /** Under the answer: file cards, changes. */
   extras?: ReactNode;
+  /** Things with no preview in the answer (apps, the computer), to flip the stage to. */
   rail: ChillRailItem[];
   railActive: string;
+  /** Every turn of the chat, oldest first. */
+  turns?: ChillTurn[];
+  /** The turn on screen. */
+  turnIndex?: number;
+  onTurn?: (index: number) => void;
+  /** The newest turn is still being answered while an older one is on screen. */
+  replying?: boolean;
   onRail: (key: string) => void;
   suggestions: string[];
   onSuggestion: (text: string) => void;
@@ -173,6 +184,7 @@ export function ChillScreen(props: ChillScreenProps) {
   const {
     empty, name, assistantName, composer, stage, question, answer, streaming, thinking, helper, listening,
     cards, extras, rail, railActive, onRail, suggestions, onSuggestion, onFullMode,
+    turns = [], turnIndex = Math.max(0, turns.length - 1), onTurn, replying = false,
   } = props;
   const first = (name || '').trim().split(/\s+/)[0];
   const answerRef = useRef<HTMLDivElement>(null);
@@ -182,6 +194,33 @@ export function ChillScreen(props: ChillScreenProps) {
     if (el && streaming) el.scrollTop = el.scrollHeight;
   }, [answer, streaming]);
   const showListening = !!listening && !stage && (empty || listening.phase === 'hearing' || listening.phase === 'transcribing' || (!answer && !thinking));
+
+  // Turn by turn: scroll, swipe or keys flip to the turn before or after.
+  const paging = turns.length > 1 && !!onTurn;
+  const lastTurn = turns.length - 1;
+  const cameFrom = useRef<TurnDirection | 0>(0);
+  const pull = useTurnPaging({
+    scroller: answerRef,
+    enabled: paging && !stage && !showListening && !empty,
+    hasPrev: turnIndex > 0,
+    hasNext: turnIndex < lastTurn,
+    onMove: (direction) => {
+      cameFrom.current = direction;
+      onTurn?.(Math.min(lastTurn, Math.max(0, turnIndex + direction)));
+    },
+  });
+  const goTo = (index: number) => {
+    cameFrom.current = 0;
+    if (index !== turnIndex || stage) onTurn?.(index);
+  };
+  // Going back lands at the end of the turn before, like scrolling up would.
+  useLayoutEffect(() => {
+    const el = answerRef.current;
+    if (!el) return;
+    el.scrollTop = cameFrom.current < 0 ? el.scrollHeight : 0;
+  }, [turnIndex]);
+  const turn = turns[turnIndex];
+  const time = turnTime(turn?.at);
 
   const top = (
     <div className="relative z-30 flex h-16 flex-none items-center gap-2.5 px-3 sm:px-5">
@@ -229,10 +268,10 @@ export function ChillScreen(props: ChillScreenProps) {
   return (
     <div className="chill relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
       {top}
-      <div className="relative flex min-h-0 flex-1 flex-col gap-3 px-3 sm:px-5 md:flex-row">
-        {/* Phone: the rail is a strip over the stage. */}
+      <div className="relative flex min-h-0 flex-1 flex-col gap-3 px-3 sm:px-5">
+        {/* Apps and the computer: a strip over the stage. Pages and files show in their turn. */}
         {rail.length > 1 && (
-          <nav aria-label={tr('ui.chill.whatThisChatMade')} className="-m-1 flex flex-none gap-1.5 overflow-x-auto p-1 md:hidden">
+          <nav aria-label={tr('ui.chill.whatThisChatMade')} className="-m-1 flex flex-none gap-1.5 overflow-x-auto p-1">
             {rail.map((item) => (
               <button key={item.key} type="button" onClick={() => onRail(item.key)} aria-current={item.key === railActive}
                 title={item.label} aria-label={item.label}
@@ -242,14 +281,22 @@ export function ChillScreen(props: ChillScreenProps) {
             ))}
           </nav>
         )}
-        <section aria-label={tr('ui.chill.stage')} className="relative min-h-0 min-w-0 flex-1">
+        <section aria-label={tr('ui.chill.stage')} className={cn('relative min-h-0 min-w-0 flex-1', paging && 'mr-6 md:mr-12')}>
           {stage ? (
             <div className="chill-stage absolute inset-0 flex flex-col overflow-hidden rounded-2xl border border-line bg-panel">{stage}</div>
           ) : showListening ? (
             <div className="absolute inset-0 grid place-items-center px-4"><Listening listening={listening!} /></div>
           ) : (
             <div ref={answerRef} role="log" aria-live="polite" className="absolute inset-0 overflow-y-auto overscroll-contain">
-              <div className="mx-auto w-full max-w-[860px] px-1 pb-10 pt-4 sm:pt-10">
+              <div key={turnIndex}
+                className={cn('mx-auto w-full max-w-[860px] px-1 pb-10 pt-4 sm:pt-10',
+                  paging && cameFrom.current > 0 && 'chill-turn-down', paging && cameFrom.current < 0 && 'chill-turn-up')}>
+                {paging && turn && (
+                  <div className="mb-2.5 flex items-center gap-2 font-mono text-[11px] text-fg-dim">
+                    <span className="rounded-full border border-line px-2 py-px">{tr('ui.chill.turnNOfM', { n: turnIndex + 1, m: turns.length })}</span>
+                    {time && <span>{time}</span>}
+                  </div>
+                )}
                 {question && (
                   <p className="mb-4 line-clamp-3 text-[14px] text-fg-dim">
                     <span className="font-medium">{tr('ui.chill.you')}</span>{' '}{question}
@@ -272,22 +319,32 @@ export function ChillScreen(props: ChillScreenProps) {
               </div>
             </div>
           )}
+          {pull && !stage && (
+            <div role="status" className={cn('pointer-events-none absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full px-3 py-1 text-[12.5px] text-fg-dim chill-glass',
+              pull.direction > 0 ? 'bottom-2' : 'top-2')}>
+              {pull.direction > 0 ? <ChevronDown size={14} aria-hidden /> : <ChevronUp size={14} aria-hidden />}
+              {tr('ui.chill.keepScrollingForTurnN', { n: turnIndex + 1 + pull.direction })}
+              <span aria-hidden className="h-1 w-16 overflow-hidden rounded-full bg-line">
+                <i className="block h-full bg-accent-ink" style={{ width: `${Math.round(pull.progress * 100)}%` }} />
+              </span>
+            </div>
+          )}
         </section>
-        {rail.length > 1 && (
-          <nav aria-label={tr('ui.chill.whatThisChatMade')} className="hidden w-[62px] flex-none flex-col items-center justify-center gap-2.5 md:flex">
-            <span className="text-[10.5px] uppercase tracking-[0.06em] text-fg-dim">{tr('ui.chill.thisChat')}</span>
-            {rail.map((item) => (
-              <button key={item.key} type="button" onClick={() => onRail(item.key)} aria-current={item.key === railActive}
-                title={item.label} aria-label={item.label}
-                className={cn('chill-glass grid h-[42px] w-[58px] place-items-center rounded-[10px] text-fg-dim transition-colors hover:text-fg',
-                  item.key === railActive && 'text-fg outline outline-2 outline-offset-2 outline-accent')}>
-                <RailIcon item={item} />
-              </button>
-            ))}
-          </nav>
+        {paging && (
+          <ChillTurnMarks turns={turns} current={turnIndex} replying={replying} onPick={goTo} />
         )}
       </div>
       <div className="relative z-20 mx-auto w-full max-w-[760px] flex-none px-2.5 pb-3.5 pt-2 sm:px-4 sm:pb-6">
+        {replying && paging && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-full flex justify-center pb-1">
+            <button type="button" onClick={() => goTo(lastTurn)}
+              className="pointer-events-auto flex min-h-11 items-center gap-2 whitespace-nowrap rounded-full bg-fg py-2 pl-3 pr-3.5 text-[13px] font-medium text-bg shadow-lg md:min-h-0">
+              <span aria-hidden className="h-2 w-2 rounded-full bg-accent motion-safe:animate-pulse" />
+              {tr('ui.chill.replyingToTurnN', { n: lastTurn + 1 })}
+              <ChevronDown size={14} aria-hidden />
+            </button>
+          </div>
+        )}
         {stage && (answer || thinking) && (
           <div className="mb-2.5 px-1">
             <p className="line-clamp-2 text-[15px] leading-normal sm:text-[17px]">{answer ? plainText(answer) : thinking}</p>
