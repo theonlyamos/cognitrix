@@ -59,7 +59,7 @@ import ComputerChip from '@/components/ComputerChip';
 import { PcScreenPanel } from '@/components/PcScreen';
 import { getChatComputer, listDevices, setChatComputer, type PairedDevice } from '@/lib/devices';
 import { getProject, listProjects, projectSwatch, type Project } from '@/lib/projects';
-import { ChillScreen, type ChillRailItem } from '@/components/chill/ChillScreen';
+import { ChillScreen, ModeSwitch, type ChillRailItem } from '@/components/chill/ChillScreen';
 import { FileCards } from '@/components/files/FileCards';
 import { ChillPageCard } from '@/components/chill/ChillPageCard';
 import { madeInTurn, usedComputer } from '@/lib/chillMade';
@@ -2846,12 +2846,14 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
                 <span className="sr-only md:not-sr-only">{reconnecting ? tr('ui.home.reconnecting') : tr('ui.home.reconnect_4804')}</span>
               </Button>
             )}
+            {/* Chill / Full, the same switch chill mode shows; a single icon on phones. */}
+            <ModeSwitch chill={false} onChill={switchToChill} onFull={() => {}} className="chill hidden sm:flex" />
             <button
               type="button"
               onClick={switchToChill}
               aria-label={tr('ui.chill.switchToChillMode')}
               title={tr('ui.chill.chillModeCtrlShift')}
-              className="inline-flex h-11 min-w-11 flex-none items-center justify-center rounded-lg px-2.5 text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-9 md:min-w-9"
+              className="inline-flex h-11 sm:hidden min-w-11 flex-none items-center justify-center rounded-lg px-2.5 text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-9 md:min-w-9"
             >
               <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M8.5 14.5c1 1 2.2 1.5 3.5 1.5s2.5-.5 3.5-1.5" /><path d="M9 9.5h.01M15 9.5h.01" /></svg>
             </button>
