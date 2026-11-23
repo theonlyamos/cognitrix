@@ -675,8 +675,11 @@ async def _note(swarm: SwarmRun, text: str) -> None:
 
 
 def worker_brief(swarm: SwarmRun, worker: SwarmWorker, by_name: dict[str, SwarmWorker], *,
-                 edit_note: str = '') -> str:
-    """Everything a worker knows: it sees only this message."""
+                 edit_note: str = '', decisions: list[str] | None = None, board: bool = False) -> str:
+    """Everything a worker knows: it sees only this message.
+
+    ``decisions`` are the pinned decisions on the swarm's message board;
+    ``board`` says the worker has the Board tool (not inside task runs)."""
     who = f' Your role: {worker.role}.' if worker.role else ''
     lines = [
         f'{swarm.agent_name} (agent) started this chat. You are "{worker.name}", one of several workers '
@@ -691,6 +694,9 @@ def worker_brief(swarm: SwarmRun, worker: SwarmWorker, by_name: dict[str, SwarmW
         for dep in deps:
             lines.append(f'### {dep.name}\n{dep.summary or "(no summary)"}')
         lines.append('Use Swarm Team (action "result", worker name) to read a teammate\'s full result.')
+    if decisions:
+        lines += ['', '## Decisions on the swarm board', 'Follow these; they apply to every worker.']
+        lines += [f'- {d}' for d in decisions]
     lines += [
         '', '## How to work',
         '- This message is all you know about the job. Make sensible assumptions and list them; '
@@ -705,6 +711,11 @@ def worker_brief(swarm: SwarmRun, worker: SwarmWorker, by_name: dict[str, SwarmW
         '- You cannot start workers yourself. If you find a separate job that is needed, add it with '
         'Swarm Team (action "add_work"), or say so in your result.',
     ]
+    if board:
+        lines.append(
+            '- The swarm has a message board (Board tool). Post a finding there when other workers need it '
+            'now (not your whole result), ask a question anyone in the swarm may know, or read what others '
+            'found before you repeat their work.')
     return '\n'.join(lines)
 
 
@@ -715,9 +726,11 @@ async def _start_worker(live: _Live, swarm: SwarmRun, worker: SwarmWorker,
     })
     worker.status = 'running'
     worker.attempts += 1
+    decisions = await _board_decisions(swarm)
     if live.inline:
         text = worker_brief(swarm, worker, by_name, edit_note=(
-            '- You may change files in the working folders for this job.' if worker.may_edit else ''))
+            '- You may change files in the working folders for this job.' if worker.may_edit else ''),
+            decisions=decisions)
         task = asyncio.get_running_loop().create_task(_run_inline(live, swarm, worker, text))
         live.tasks[worker.name] = task
         _BACKGROUND.add(task)
@@ -761,8 +774,18 @@ async def _start_worker(live: _Live, swarm: SwarmRun, worker: SwarmWorker,
     await SwarmWorker.update_one({'id': worker.id}, row_changes)
     worker.chat_id = str(session.id)
     worker.worktree = tree or worker.worktree
-    text = worker_brief(swarm, worker, by_name, edit_note=edit_note)
+    text = worker_brief(swarm, worker, by_name, edit_note=edit_note, decisions=decisions, board=True)
     _run_chat_turn(live, swarm, worker, agent, session, text)
+
+
+async def _board_decisions(swarm: SwarmRun) -> list[str]:
+    try:
+        from cognitrix.board.service import swarm_decisions
+
+        return await swarm_decisions(swarm.user_id, str(swarm.id))
+    except Exception:
+        logger.debug('Could not read the board of swarm %s', swarm.id, exc_info=True)
+        return []
 
 
 def _run_chat_turn(live: _Live, swarm: SwarmRun, worker: SwarmWorker, agent: Any, session: Any, text: str) -> None:
@@ -1308,6 +1331,16 @@ async def _take_report(swarm: SwarmRun, workers: list[SwarmWorker], *, prefix: s
     if not fresh and not swarm.notes:
         return None
     text = report_text(swarm, workers, fresh, prefix=REPORT_PREFIX if prefix is None else prefix)
+    try:
+        from cognitrix.board.service import post_line, swarm_open_items
+
+        open_items = await swarm_open_items(swarm.user_id, str(swarm.id))
+    except Exception:
+        logger.debug('Could not read the board of swarm %s', swarm.id, exc_info=True)
+        open_items = []
+    if open_items:
+        text += ('\n\nStill open on the swarm board (answer with Board, action "answer", or mark done with '
+                 'action "close"):\n' + '\n'.join(f'- {post_line(p)}' for p in open_items))
     if fresh and ledger(swarm, workers)['finished']:
         # Every worker has ended: keep their full results as one artifact in
         # the lead's chat, so the work isn't lost in the chat's scrollback.
@@ -1588,6 +1621,41 @@ async def _send_message(user_key: str, swarm_id: str, to: str, text: str, *, sen
                 raise SwarmError('worker_gone', f'"{worker.name}" could not be reopened.')
         return f'"{worker.name}" had finished; it is working again and its new result will be reported.'
     raise SwarmError('worker_busy', f'"{worker.name}" cannot take a message right now. Try again shortly.')
+
+
+async def board_note(user_key: str, swarm_id: str, to: str, text: str, *, skip: str = '') -> int:
+    """Pass a message-board post to the swarm: ``to`` is a worker's name,
+    "lead", or "*" for every running worker (except ``skip``). Running
+    workers read it between steps, a waiting worker gets it in its brief;
+    finished workers are left alone (the board keeps it). Returns how many
+    were told."""
+    from cognitrix.sessions.agent_chats import REPORT_PREFIX
+
+    swarm = await get_swarm(user_key, swarm_id)
+    if swarm is None:
+        return 0
+    live = _LIVE.get(str(swarm_id))
+    if to == 'lead':
+        if swarm.status != 'running' or not swarm.session_id or swarm.run_id:
+            return 0
+        _spawn(_deliver(swarm, f'{REPORT_PREFIX}{text}'))
+        return 1
+    told = 0
+    for worker in await workers_of(str(swarm_id)):
+        if (to != '*' and worker.name != to) or worker.name == skip:
+            continue
+        run = live.runs.get(worker.name) if live is not None and not live.inline else None
+        if worker.status in ('running', 'reviewing') and run is not None and getattr(run, 'running', False):
+            try:
+                if run.steer(text, source='agent') is not None:
+                    told += 1
+            except Exception:
+                logger.debug('Could not pass a board post to %s', worker.name, exc_info=True)
+        elif worker.status == 'queued' and to != '*':
+            await SwarmWorker.update_one({'id': worker.id}, {
+                'brief': f'{worker.brief}\n\nFrom the swarm board:\n{text}'[:BRIEF_MAX_CHARS + 2000]})
+            told += 1
+    return told
 
 
 async def _revive(swarm: SwarmRun) -> _Live | None:

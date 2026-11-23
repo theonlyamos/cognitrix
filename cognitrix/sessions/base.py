@@ -889,6 +889,25 @@ class Session(Model):
             except Exception:
                 logger.debug('Swarm tools unavailable', exc_info=True)
 
+        # The message board (cognitrix/board): the Board tool, and a short
+        # note of what's on the board for this agent at the start of the turn.
+        try:
+            from cognitrix.board.service import board_note_ctx
+
+            board_note_ctx.set('')
+        except Exception:
+            pass
+        if (interface in ('web', 'ws', 'task') and owner and not getattr(self, 'incognito', False)
+                and not getattr(self, 'public_link_id', None) and getattr(agent.llm, 'supports_tool_use', True)
+                and not getattr(tool_context, 'restricted', False)):
+            try:
+                from cognitrix.safety.permissions import guest_run
+
+                if not guest_run.get():
+                    agent = await self._board_turn(agent, str(owner), tool_context)
+            except Exception:
+                logger.debug('Message board unavailable', exc_info=True)
+
         # Propose Skill lets an agent suggest saving how it did a job; the
         # person reviews the draft before it is used (skills/drafts.py).
         if interface in ('web', 'ws') and owner and not self.task_id and not getattr(self, 'incognito', False):
@@ -1732,6 +1751,37 @@ class Session(Model):
             logger.exception(e)
         finally:
             _code_mode.loaded_this_turn.reset(loaded_token)
+
+    async def _board_turn(self, agent: 'Agent', owner: str, tool_context: Any) -> 'Agent':
+        """Give this turn the Board tool and the board note (board/service.py)."""
+        from cognitrix.board import service as board
+        from cognitrix.tools.base import ToolManager
+
+        if not (await board.get_settings(owner)).enabled:
+            return agent
+        if not any(str(getattr(t, 'name', '')).lower() == 'board' for t in agent.tools):
+            board_tool = ToolManager.get_by_name('board')
+            if board_tool:
+                agent = agent.model_copy(update={'tools': [*agent.tools, board_tool]})
+        started_by = self.started_by or {}
+        sid = str(self.id or '')
+        notes = []
+        if started_by.get('swarm_id') and started_by.get('worker'):
+            notes.append(await board.digest(
+                owner, str(agent.id), str(agent.name), board=board.swarm_board(str(started_by['swarm_id'])),
+                worker=str(started_by['worker']), chat_id=sid))
+        else:
+            notes.append(await board.digest(owner, str(agent.id), str(agent.name)))
+            if sid and not self.task_id and not getattr(tool_context, 'run_id', None):
+                from cognitrix.swarms import service as swarms
+
+                led = await swarms.latest_for_chat(owner, sid)
+                if led is not None and led.status == 'running':
+                    notes.append(await board.digest(
+                        owner, str(agent.id), str(agent.name), board=board.swarm_board(str(led.id)),
+                        worker='lead', chat_id=sid))
+        board.board_note_ctx.set('\n\n'.join(n for n in notes if n))
+        return agent
 
     def _steering_run(self):
         """The chat run whose inbox this turn reads, if any."""

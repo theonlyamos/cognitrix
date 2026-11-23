@@ -14,6 +14,7 @@ const es: Messages = {
   'nav.projects': 'Proyectos',
   'nav.apps': 'Biblioteca',
   'nav.knowledge': 'Conocimiento',
+  'nav.board': 'Tablón de mensajes',
   'nav.meetings': 'Reuniones',
   'nav.payments': 'Pagos',
   'nav.settings': 'Ajustes',

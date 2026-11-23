@@ -38,6 +38,7 @@ const PublicArtifact = lazy(() => import('@/pages/PublicArtifact'));
 const Projects = lazy(() => import('@/pages/Projects'));
 const ProjectDetail = lazy(() => import('@/pages/ProjectDetail'));
 const Meetings = lazy(() => import('@/pages/Meetings'));
+const Board = lazy(() => import('@/pages/Board'));
 const Payments = lazy(() => import('@/pages/Payments'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const QuickAsk = lazy(() => import('@/pages/QuickAsk'));
@@ -133,6 +134,7 @@ function AppRoutes() {
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/projects/:projectId/:tab" element={<ProjectDetail />} />
           <Route path="/meetings" element={<Meetings />} />
+          <Route path="/board" element={<Board />} />
           <Route path="/payments" element={<Payments />} />
           <Route path="/notifications" element={<Navigate to="/inbox?tab=recent" replace />} />
           <Route path="/settings" element={<Settings />} />

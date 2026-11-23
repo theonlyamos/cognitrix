@@ -11,6 +11,8 @@ interface Props {
   onStopWorker: (swarmId: string, name: string) => void | Promise<void>;
   onMerge?: (swarmId: string, name: string) => Promise<string>;
   onOpenChat?: (chatId: string) => void;
+  /** Opens the swarm's message board. */
+  onOpenBoard?: (swarmId: string) => void;
 }
 
 const MARK: Record<string, string> = { queued: '○', running: '✱', reviewing: '✱', done: '✓', failed: '×', stopped: '■' };
@@ -28,7 +30,7 @@ function detail(w: SwarmWorker): string {
 }
 
 /** A swarm as the person sees it: how far along it is, and one row per worker. */
-export function SwarmCard({ swarm, compact = false, onStop, onStopWorker, onMerge, onOpenChat }: Props) {
+export function SwarmCard({ swarm, compact = false, onStop, onStopWorker, onMerge, onOpenChat, onOpenBoard }: Props) {
   const running = swarm.status === 'running';
   const [open, setOpen] = useState(running || compact);
   const [busy, setBusy] = useState('');
@@ -70,6 +72,9 @@ export function SwarmCard({ swarm, compact = false, onStop, onStopWorker, onMerg
             </span>
           </span>
         </button>
+        {onOpenBoard && (
+          <button type="button" onClick={() => onOpenBoard(swarm.id)} className={button}>{tr('ui.board.openBoard')}</button>
+        )}
         {running && (
           <button
             type="button"

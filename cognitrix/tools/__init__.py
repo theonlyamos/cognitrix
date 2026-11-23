@@ -9,6 +9,7 @@ from cognitrix.tools.automation import (
     update_notes,
 )
 from cognitrix.tools.base import Tool
+from cognitrix.tools.board import board
 from cognitrix.tools.cards import show_card
 from cognitrix.tools.chat_history import read_chat, search_chats
 from cognitrix.tools.chats import check_chat, message_chat, start_chat
@@ -118,7 +119,7 @@ __all__ = [
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me', 'offer_help',
     'request_folder',
     'start_chat', 'check_chat', 'message_chat',
-    'spawn_workers', 'swarm', 'swarm_team',
+    'spawn_workers', 'swarm', 'swarm_team', 'board',
     'memory', 'follow_up_later', 'publish_brief', 'search_chats', 'read_chat', 'set_theme', 'search_knowledge', 'learn_from_website', 'send_email',
     'join_meeting', 'meeting_transcript', 'say_in_meeting', 'leave_meeting', 'upcoming_calls',
     'request_payment', 'pay', 'cancel_payment',
