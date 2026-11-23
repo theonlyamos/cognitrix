@@ -15,6 +15,7 @@ const en = {
   'nav.projects': 'Projects',
   'nav.apps': 'Library',
   'nav.knowledge': 'Knowledge',
+  'nav.board': 'Message board',
   'nav.meetings': 'Meetings',
   'nav.payments': 'Payments',
   'nav.settings': 'Settings',

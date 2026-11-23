@@ -2941,6 +2941,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
                     onStopWorker={chatSwarms.stopWorker}
                     onMerge={chatSwarms.merge}
                     onOpenChat={openWorkerChat}
+                    onOpenBoard={(id) => navigate(`/board?board=swarm:${encodeURIComponent(id)}`)}
                   />
                 </div>
               ))}

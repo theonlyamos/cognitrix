@@ -2,7 +2,7 @@ import { PcScreen } from '@/components/PcScreen';
 import { PcChanges } from '@/components/PcChanges';
 import type { PairedDevice } from '@/lib/devices';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { ago, sizeLabel, type FileItem, type PageSummary } from '@/lib/artifactPages';
@@ -149,6 +149,7 @@ export interface ChatSidebarProps {
 
 /** The chat's side panel: what this chat's agent is doing and what it made. */
 export function ChatSidebar(props: ChatSidebarProps) {
+  const navigate = useNavigate();
   const { onClose, desktop, sandboxOn, waiting, pages, images, files, activity, about } = props;
   const madeFiles = props.madeFiles ?? [];
   const [closed, setClosed] = useState(() => loadSet(CLOSED_STORE));
@@ -255,6 +256,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
                   onStopWorker={(id, name) => props.onStopWorker?.(id, name)}
                   onMerge={props.onMergeWorker}
                   onOpenChat={props.onOpenChat}
+                  onOpenBoard={(id) => navigate(`/board?board=swarm:${encodeURIComponent(id)}`)}
                 />
               ))}
             </div>

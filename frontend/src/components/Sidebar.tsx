@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   House as DashboardIcon, Bot as BotIcon, ListChecks as ListChecksIcon,
   LibraryBig as LibraryIcon, Mic as MicIcon, CreditCard as CardIcon, FolderKanban as ProjectsIcon,
-  Plus as PlusIcon, Search as SearchIcon, Ellipsis as MoreIcon, PanelLeft as PanelLeftIcon, type LucideIcon,
+  Plus as PlusIcon, MessagesSquare as BoardIcon, Search as SearchIcon, Ellipsis as MoreIcon, PanelLeft as PanelLeftIcon, type LucideIcon,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
@@ -28,6 +28,7 @@ const NAV: NavItem[] = [
 ];
 // Behind "More".
 const MORE: NavItem[] = [
+  { path: '/board', label: 'nav.board', icon: BoardIcon },
   { path: '/meetings', label: 'nav.meetings', icon: MicIcon },
   { path: '/payments', label: 'nav.payments', icon: CardIcon },
 ];
