@@ -16,6 +16,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      no_cache:
+        description: Rebuild every layer (picks up Debian, npm and pip updates; everyone downloads the whole image again)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -39,7 +44,15 @@ jobs:
           tags="$image:latest,$image:sha-${GITHUB_SHA::12}"
           if [ "${{ github.event_name }}" = "release" ]; then tags="$tags,$image:${{ github.event.release.tag_name }}"; fi
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "cache=$image:buildcache" >> "$GITHUB_OUTPUT"
           echo "version=$(sed -n 's/^version = \"\(.*\)\"/\1/p' pyproject.toml | head -1)" >> "$GITHUB_OUTPUT"
+      # Layers whose inputs didn't change come from the build cache, so they
+      # keep the same digest and people's computers don't download them again
+      # (the image is ~3.6 GB; a version bump changes only the last few small
+      # layers, see the Dockerfile). Without the cache every layer was rebuilt
+      # and everyone re-downloaded the whole image on each bump. The cache
+      # lives next to the image as the :buildcache tag (both platforms, all
+      # stages).
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -49,3 +62,6 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
             COGNITRIX_VERSION=${{ steps.tags.outputs.version }}
+          cache-from: type=registry,ref=${{ steps.tags.outputs.cache }}
+          cache-to: type=registry,ref=${{ steps.tags.outputs.cache }},mode=max,image-manifest=true,oci-mediatypes=true
+          no-cache: ${{ github.event_name == 'workflow_dispatch' && inputs.no_cache }}

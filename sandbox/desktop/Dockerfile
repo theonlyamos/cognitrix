@@ -6,7 +6,14 @@
 # The engine starts one container per user (see cognitrix/computer/sandbox/
 # client.py) and one desktop per agent inside it. Only cognitrix/computer is
 # copied in: the engine, its keys and its database stay outside.
-FROM debian:bookworm-slim
+#
+# Layer order matters: people's computers download only the layers that
+# changed (see .github/workflows/sandbox-image.yml, which keeps a build
+# cache). Big, rarely changing layers (system packages, coding CLIs, the CLI's
+# dependencies) come first; anything that changes with every commit or
+# version bump (the app's own code, COGNITRIX_VERSION) comes last, so a new
+# version ships a few small layers instead of the whole image.
+FROM debian:bookworm-slim AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -37,6 +44,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && ! dpkg -s libnode108 >/dev/null 2>&1 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# The CLI's dependency list (see install.sh), worked out in a throwaway stage:
+# only the list is copied into the image, so its install layer below is
+# reused until a dependency changes, not on every version bump.
+FROM base AS cli-requirements
+RUN --mount=type=bind,source=pyproject.toml,target=/tmp/cognitrix-src/pyproject.toml,rw \
+    --mount=type=bind,source=README.md,target=/tmp/cognitrix-src/README.md,rw \
+    --mount=type=bind,source=cognitrix,target=/tmp/cognitrix-src/cognitrix,rw \
+    --mount=type=bind,source=sandbox/desktop/cognitrix-cli/install.sh,target=/tmp/install.sh \
+    sh /tmp/install.sh requirements /tmp/cognitrix-src /cognitrix-requirements.txt
+
+FROM base
 # Coding work (cognitrix/computer/sandbox/workspace.py): Node 22 with pnpm and
 # yarn, uv for Python, and the coding agent CLIs the Coding Agent tool runs
 # here (each signs in with the person's API key, passed per run; Antigravity
@@ -59,39 +77,38 @@ ENV DISABLE_AUTOUPDATER=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Browsers start with accessibility on (the driver reads pages through it) and
-# with a profile per desktop, because one profile can't be open on two
-# desktops at once. The container itself is the sandbox, so Chromium's own
-# sandbox (which needs privileges the container doesn't get) is off.
-COPY sandbox/desktop/bin/ /usr/local/bin/
-COPY sandbox/desktop/applications/ /usr/local/share/applications/
-# Firefox without first-run pages, telemetry prompts or captive-portal checks.
-COPY sandbox/desktop/firefox/policies.json /usr/lib/firefox-esr/distribution/policies.json
-# Chromium without the "unsupported command-line flag: --no-sandbox" bar
-# across the top of every window (the container is the sandbox, see above).
-COPY sandbox/desktop/chromium/policies.json /etc/chromium/policies/managed/cognitrix.json
 # Every app window opens maximized, so the screen people watch is the app and
 # not a small window in the corner of an empty desktop. The build fails if
 # openbox's default config no longer has the spot this rule goes in.
 RUN sed -i 's#^</applications>#  <application class="*" type="normal"><maximized>yes</maximized></application>\n</applications>#' \
         /etc/xdg/openbox/rc.xml \
     && grep -q '<maximized>yes</maximized></application>' /etc/xdg/openbox/rc.xml
-COPY sandbox/desktop/entrypoint.sh /usr/local/bin/cognitrix-sandbox
-COPY cognitrix/computer/ /opt/cognitrix-sandbox/cognitrix/computer/
-RUN chmod 755 /usr/local/bin/* \
-    && touch /opt/cognitrix-sandbox/cognitrix/__init__.py \
-    && rm -rf /opt/cognitrix-sandbox/cognitrix/computer/__pycache__ \
-       /opt/cognitrix-sandbox/cognitrix/computer/sandbox/__pycache__ \
-    && useradd --create-home --shell /bin/bash agent
 
-# A Linux user per agent (cognitrix/computer/sandbox/users.py): each in its
-# own group, which 'agent' (the supervisor) is also in. Their home folders
-# are set per agent at run time (~/work/<agent>).
-RUN for i in $(seq -w 1 64); do \
+# 'agent' runs the desktops. A Linux user per agent
+# (cognitrix/computer/sandbox/users.py): each in its own group, which 'agent'
+# (the supervisor) is also in. Their home folders are set per agent at run
+# time (~/work/<agent>).
+RUN useradd --create-home --shell /bin/bash agent \
+    && for i in $(seq -w 1 64); do \
         groupadd "cgx$i" \
         && useradd --no-create-home --home-dir /nonexistent --shell /bin/bash -g "cgx$i" "cgx$i" \
         && usermod -aG "cgx$i" agent || exit 1; \
     done
+
+# Browsers start with accessibility on (the driver reads pages through it) and
+# with a profile per desktop, because one profile can't be open on two
+# desktops at once. The container itself is the sandbox, so Chromium's own
+# sandbox (which needs privileges the container doesn't get) is off.
+# (--chmod, not a later chmod over /usr/local/bin, which would copy uv and agy
+# into another layer.)
+COPY --chmod=755 sandbox/desktop/bin/ /usr/local/bin/
+COPY --chmod=755 sandbox/desktop/entrypoint.sh /usr/local/bin/cognitrix-sandbox
+COPY sandbox/desktop/applications/ /usr/local/share/applications/
+# Firefox without first-run pages, telemetry prompts or captive-portal checks.
+COPY sandbox/desktop/firefox/policies.json /usr/lib/firefox-esr/distribution/policies.json
+# Chromium without the "unsupported command-line flag: --no-sandbox" bar
+# across the top of every window (the container is the sandbox, see above).
+COPY sandbox/desktop/chromium/policies.json /etc/chromium/policies/managed/cognitrix.json
 
 # The app's own CLI (`cognitrix`, and `cognitrix-python` for scripts that
 # import the package), built from this same source so it matches the engine
@@ -100,15 +117,26 @@ RUN for i in $(seq -w 1 64); do \
 # command that runs it gets the person's model keys at run time, as
 # placeholders the key proxy fills in (cognitrix_cli_env in
 # cognitrix/common/sandbox_work.py).
-# The source is mounted for this step only (not copied), so it isn't kept in
-# a layer of its own.
+# Its dependencies first (big, and cached while the list above is unchanged),
+# then the package itself (small, rebuilt on every change). The source is
+# mounted for that step only (not copied), so it isn't kept in a layer.
+COPY --from=cli-requirements /cognitrix-requirements.txt /tmp/cognitrix-requirements.txt
+RUN --mount=type=bind,source=sandbox/desktop/cognitrix-cli/install.sh,target=/tmp/install.sh \
+    sh /tmp/install.sh deps /tmp/cognitrix-requirements.txt /opt/cognitrix-cli \
+    && rm -rf /root/.cache /tmp/cognitrix-requirements.txt
 RUN --mount=type=bind,source=pyproject.toml,target=/tmp/cognitrix-src/pyproject.toml,rw \
     --mount=type=bind,source=README.md,target=/tmp/cognitrix-src/README.md,rw \
     --mount=type=bind,source=cognitrix,target=/tmp/cognitrix-src/cognitrix,rw \
     --mount=type=bind,source=sandbox/desktop/cognitrix-cli,target=/tmp/cognitrix-cli,rw \
-    sh /tmp/cognitrix-cli/install.sh /tmp/cognitrix-src /opt/cognitrix-cli \
+    sh /tmp/cognitrix-cli/install.sh package /tmp/cognitrix-src /opt/cognitrix-cli \
     && install -m 755 /tmp/cognitrix-cli/cognitrix /tmp/cognitrix-cli/cognitrix-python /usr/local/bin/ \
     && rm -rf /root/.cache
+
+# The desktop supervisor (changes with most commits, so it comes last).
+COPY cognitrix/computer/ /opt/cognitrix-sandbox/cognitrix/computer/
+RUN touch /opt/cognitrix-sandbox/cognitrix/__init__.py \
+    && rm -rf /opt/cognitrix-sandbox/cognitrix/computer/__pycache__ \
+       /opt/cognitrix-sandbox/cognitrix/computer/sandbox/__pycache__
 ARG COGNITRIX_VERSION=dev
 LABEL cognitrix.cli-version="${COGNITRIX_VERSION}"
 

@@ -92,11 +92,38 @@ def test_image_installs_the_cli_from_this_source_without_keys():
     dockerfile = (ROOT / 'sandbox/desktop/Dockerfile').read_text()
     assert 'source=pyproject.toml,target=/tmp/cognitrix-src/pyproject.toml' in dockerfile
     assert 'source=cognitrix,target=/tmp/cognitrix-src/cognitrix' in dockerfile
-    assert 'cognitrix-cli/install.sh /tmp/cognitrix-src /opt/cognitrix-cli' in dockerfile
-    assert 'API_KEY' not in dockerfile.split('cognitrix-cli/install.sh')[1].split('USER agent')[0]
+    assert 'cognitrix-cli/install.sh package /tmp/cognitrix-src /opt/cognitrix-cli' in dockerfile
+    assert 'API_KEY' not in dockerfile.split('cognitrix-cli/install.sh package')[1].split('USER agent')[0]
     install = (ROOT / 'sandbox/desktop/cognitrix-cli/install.sh').read_text()
     assert 'skip="chromadb"' in install
     for wrapper in ('cognitrix', 'cognitrix-python'):
         assert 'env -u PYTHONPATH /opt/cognitrix-cli/bin/' in (ROOT / 'sandbox/desktop/cognitrix-cli' / wrapper).read_text()
     workflow = (ROOT / '.github/workflows/sandbox-image.yml').read_text()
     assert "- 'pyproject.toml'" in workflow and 'COGNITRIX_VERSION=' in workflow
+
+
+def test_version_bump_only_rebuilds_the_last_layers():
+    """A version bump must not change the big layers' digests, or everyone
+    downloads the whole ~3.6 GB image again (sandbox-image.yml keeps a cache)."""
+    dockerfile = (ROOT / 'sandbox/desktop/Dockerfile').read_text()
+    final = dockerfile.split('\nFROM base\n')[1]
+    order = [
+        'npm install -g',
+        'install.sh deps',
+        'install.sh package',
+        'COPY cognitrix/computer/',
+        'ARG COGNITRIX_VERSION',
+    ]
+    positions = [final.index(step) for step in order]
+    assert positions == sorted(positions)
+    # The deps layer sees only the dependency list, never pyproject.toml
+    # (which holds the version) or the source.
+    deps_step = final.split('COPY --from=cli-requirements')[1].split('install.sh deps')[0]
+    assert 'pyproject.toml' not in deps_step and 'source=cognitrix' not in deps_step
+    before_package = final.split('install.sh package')[0].rsplit('RUN', 1)[0]
+    assert 'source=pyproject.toml' not in before_package and 'COPY cognitrix' not in before_package
+    # A chmod over /usr/local/bin would copy uv and agy into another layer.
+    assert 'chmod 755 /usr/local/bin/*' not in dockerfile
+    workflow = (ROOT / '.github/workflows/sandbox-image.yml').read_text()
+    assert 'cache-from: type=registry' in workflow and 'cache-to: type=registry' in workflow
+    assert 'mode=max' in workflow
