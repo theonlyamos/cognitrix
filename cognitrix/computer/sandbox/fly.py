@@ -45,8 +45,8 @@ from typing import Any
 
 import httpx
 
-from cognitrix.app_settings import get as app_setting
 from cognitrix.computer import DriverError, Unsupported
+from cognitrix.computer._app_setting import app_setting
 from cognitrix.computer.sandbox import SERVICE_PORT, TOKEN_ENV, VIEWER_PORT
 from cognitrix.computer.sandbox.client import IMAGE, Sandbox, SandboxManager, user_key
 

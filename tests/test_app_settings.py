@@ -106,3 +106,23 @@ def test_provider_keys_ignore_the_environment(monkeypatch, tmp_path):
     assert settings.get_api_key('anthropic') == ''
     saved_keys.set_saved_key('anthropic', 'sk-ant-saved-5678')
     assert settings.get_api_key('anthropic') == 'sk-ant-saved-5678'
+
+
+def test_changing_fly_settings_drops_the_cached_fly_manager(monkeypatch):
+    from cognitrix.computer.sandbox import client
+
+    closed = []
+
+    class Fly:
+        kind = 'fly'
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(client, '_manager', Fly())
+    client.forget_fly_manager()
+    assert client._manager is None and closed == [True]
+    docker = type('Docker', (), {'kind': 'docker'})()
+    monkeypatch.setattr(client, '_manager', docker)
+    client.forget_fly_manager()
+    assert client._manager is docker

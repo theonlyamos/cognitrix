@@ -54,5 +54,10 @@ async def save_app_settings(body: SettingsBody, page: str | None = None,
         from cognitrix.providers.base import LLMManager
 
         LLMManager._llm_cache = {}
+    if any(n == 'COGNITRIX_COMPUTER_SANDBOX' or n == 'COGNITRIX_FLY_API_TOKEN' or n.startswith('COGNITRIX_SANDBOX_FLY_')
+           for n in body.values):
+        from cognitrix.computer.sandbox import client
+
+        client.forget_fly_manager()
     groups = await asyncio.to_thread(app_settings.describe, _page(page))
     return {'groups': groups, 'can_edit': True}

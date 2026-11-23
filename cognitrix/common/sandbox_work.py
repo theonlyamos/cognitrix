@@ -961,6 +961,9 @@ def cognitrix_cli_env() -> dict[str, str]:
             value = ''
         if value:
             env[var] = HiddenValue(value, PROVIDER_HOSTS[provider], var)
+    if env:
+        from cognitrix.providers.saved_keys import SANDBOX_CLI_MARKER
+        env[SANDBOX_CLI_MARKER] = '1'  # tells that CLI to take its keys from these
     return env
 
 

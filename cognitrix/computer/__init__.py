@@ -26,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from cognitrix.app_settings import get as app_setting
+from cognitrix.computer._app_setting import app_setting
 
 logger = logging.getLogger('cognitrix.computer')
 

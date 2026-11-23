@@ -78,7 +78,22 @@ def _load() -> tuple[dict[str, str], dict[str, set[str]]]:
 
 def get_saved_key(provider: str) -> str:
     name = provider.strip().lower()
-    return _load()[0].get(name, '') or _test_env_key(name)
+    return _load()[0].get(name, '') or _sandbox_cli_key(name) or _test_env_key(name)
+
+
+# The engine hands the app's CLI in a sandbox computer its model keys as
+# variables (proxy placeholders, see sandbox_work.cognitrix_cli_env) and sets
+# this marker; that CLI has no key store of its own. Nothing else reads keys
+# from the environment.
+SANDBOX_CLI_MARKER = 'COGNITRIX_SANDBOX_CLI'
+_SANDBOX_CLI_VARS = {'anthropic': ('ANTHROPIC_API_KEY',), 'openai': ('OPENAI_API_KEY',),
+                     'google': ('GOOGLE_API_KEY', 'GEMINI_API_KEY')}
+
+
+def _sandbox_cli_key(name: str) -> str:
+    if os.environ.get(SANDBOX_CLI_MARKER) != '1':
+        return ''
+    return next((os.environ[v] for v in _SANDBOX_CLI_VARS.get(name, ()) if os.environ.get(v)), '')
 
 
 _OLD_ENV_NAMES = {'cohere': 'CO_API_KEY', 'huggingface': 'HUGGINGFACE_ACCESS_TOKEN',

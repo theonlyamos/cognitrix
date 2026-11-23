@@ -28,7 +28,7 @@ import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
 
-from cognitrix.app_settings import get as app_setting
+from cognitrix.computer._app_setting import app_setting
 
 DESKTOP = (1280, 800)
 PHONE = (390, 844)

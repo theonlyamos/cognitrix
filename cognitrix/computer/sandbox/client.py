@@ -27,7 +27,6 @@ from typing import Any
 
 import httpx
 
-from cognitrix.app_settings import get as app_setting
 from cognitrix.computer import (
     Actor,
     Blocked,
@@ -41,6 +40,7 @@ from cognitrix.computer import (
     _global_listeners,
     current_actor,
 )
+from cognitrix.computer._app_setting import app_setting
 from cognitrix.computer.sandbox import (
     SERVICE_PORT,
     TOKEN_ENV,
@@ -809,6 +809,19 @@ def get_manager() -> SandboxManager:
             else:
                 _manager = SandboxManager()
         return _manager
+
+
+def forget_fly_manager() -> None:
+    """Drop a Fly manager after its settings change in Settings, so the next
+    use builds one with the new token, app and region. Its machines keep
+    running; the new manager finds them by their metadata."""
+    global _manager
+    with _manager_guard:
+        if _manager is not None and _manager.kind == 'fly':
+            stop = getattr(_manager, 'close', None)
+            if callable(stop):
+                stop()
+            _manager = None
 
 
 def sandbox_driver(actor: Actor | None = None) -> RemoteDriver:

@@ -14,7 +14,7 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
-from cognitrix.app_settings import get as app_setting
+from cognitrix.computer._app_setting import app_setting
 from cognitrix.computer.paired import (
     APPS,
     CALL_TIMEOUT_S,

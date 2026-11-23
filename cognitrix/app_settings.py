@@ -323,7 +323,8 @@ ENV_ONLY: dict[str, str] = {
     'COGNITRIX_CORS_ORIGINS / COGNITRIX_CSP / COGNITRIX_FRONTEND_DIR': 'Web server plumbing.',
     'COGNITRIX_DESKTOP / COGNITRIX_ENGINE_PID / COGNITRIX_DESKTOP_TOKEN / COGNITRIX_TOOLS_ROOT / COGNITRIX_CWD_FILE':
         'Set by the desktop app for its own engine.',
-    'COGNITRIX_SANDBOX_* inside the computer image, COGNITRIX_API_URL / COGNITRIX_API_KEY':
+    'COGNITRIX_SANDBOX_* inside the computer image, COGNITRIX_API_URL / COGNITRIX_API_KEY, '
+    'COGNITRIX_SANDBOX_CLI with the model key placeholders for the CLI there':
         'Set by the engine when it starts a sandbox computer.',
     'COGNITRIX_INTERNAL_URL / FLY_APP_NAME / FLY_PRIVATE_IP / FLY_REGION': 'Set by the hosting platform.',
     'COGNITRIX_PAIRED_CONFIG / COGNITRIX_PAIRED_KEYCHAIN / COGNITRIX_PAIRED_ALLOW_HTTP': 'The pairing helper on a paired PC.',
