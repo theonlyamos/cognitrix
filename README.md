@@ -172,31 +172,23 @@ The chat works in the editor's project folder, tool calls show up in the editor,
 
 ## Configuration
 
-Most settings live in the app under **Settings**: models and API keys, connected apps, chat apps, computers, memory, voice, notifications and people. For servers and the command line, settings come from environment variables or a `.env` file; [.env.example](.env.example) lists them with comments.
+Everything is set in the app under **Settings**: model providers and API keys, web search keys, email sending, sign-in with Google or GitHub, the GitHub App, chat apps, the agents' computers (Docker or Fly.io), push alerts, safety, sharing, and limits and timeouts (**Settings > Advanced**). Only an admin can change the app-wide ones. Cognitrix does not read these from environment variables or `.env`, so whoever downloads it can set it up without touching a config file.
 
-The ones you are most likely to need:
+A few deployment values stay environment variables because they are needed before the app can start or they are plumbing between processes ([.env.example](.env.example) lists them):
 
 | Variable | Purpose |
 | --- | --- |
-| `AI_PROVIDER` | Default provider for the first agent and the CLI (`openai`, `anthropic`, `google`, `openrouter`, `groq`, `cerebras`, `ollama`) |
-| `<PROVIDER>_API_KEY`, `<PROVIDER>_BASE_URL`, `<PROVIDER>_MODEL` | Key, endpoint and default model for a provider, for example `ANTHROPIC_API_KEY` |
 | `JWT_SECRET_KEY` | Required when `COGNITRIX_ENV=production` |
-| `COGNITRIX_SECRETS_KEY` | Encrypts saved sign-ins and tokens in the database |
-| `CELERY_BROKER_URL` | Redis broker for task runs; leave blank for the built-in local fallback |
+| `COGNITRIX_SECRETS_KEY` | Encrypts saved keys, sign-ins and tokens |
+| `CELERY_BROKER_URL`, `TASK_LIMIT_REDIS_URL` | Redis for task runs; leave blank for the built-in local fallback |
 | `DB_TYPE`, `DB_HOST`, … | Use PostgreSQL or MySQL instead of the default SQLite at `~/.cognitrix/cognitrix.db` |
-| `COGNITRIX_COMPUTER_SANDBOX` | `docker` or `fly` to force the agents' sandboxed computer on; by default it is on when Docker is installed |
-| `TAVILY_API_KEY`, `BRAVE_SEARCH_API_KEY` | Web search tools |
+| `COGNITRIX_CORS_ORIGINS`, `COGNITRIX_CSP`, `COGNITRIX_FRONTEND_DIR` | Web server plumbing |
 
 ### Second-model review of risky actions
 
 Tool calls that would normally ask for approval can be screened by a second model first. It answers **allow** (runs without asking), **block** (refused, and the agent is told why) or **ask** (you get the usual approval prompt). Errors, timeouts and unclear answers count as **ask**.
 
-```bash
-COGNITRIX_REVIEWER=unattended          # off | unattended (task runs, auto mode) | always
-COGNITRIX_REVIEWER_PROVIDER=anthropic  # defaults to AI_PROVIDER
-COGNITRIX_REVIEWER_MODEL=claude-haiku-5-5
-COGNITRIX_REVIEWER_MAX_ALLOW=medium    # high lets it allow deletes on its own too
-```
+Turn it on in **Settings > Advanced > Safety** (off, when nobody is watching, or always), and pick the reviewer's provider and model there. Agents can override it.
 
 The reviewer never answers for tools you set to "Ask first" or for commands that need the full shell. Task runs record each verdict as an `action_reviewed` run event.
 
@@ -204,7 +196,7 @@ The reviewer never answers for tools you set to "Ask first" or for commands that
 
 Both are on by default for every agent, and can be turned off on an agent's **Tools** tab:
 
-- **Run Code** lets the agent write one short JavaScript snippet that calls many tools (`await tools.grep({pattern: "TODO"})`, loops, `Promise.all`) and returns only what it needs, instead of one model step per call. Scripts run in a V8 isolate with no file system or network of their own, and each tool call inside goes through the same permissions and approvals as a direct call. `COGNITRIX_CODE_MODE_TIMEOUT` (seconds, default 600) and `COGNITRIX_CODE_MODE_MAX_CALLS` (default 200) limit one script.
+- **Run Code** lets the agent write one short JavaScript snippet that calls many tools (`await tools.grep({pattern: "TODO"})`, loops, `Promise.all`) and returns only what it needs, instead of one model step per call. Scripts run in a V8 isolate with no file system or network of their own, and each tool call inside goes through the same permissions and approvals as a direct call. A time limit (default 600 seconds) and a call limit (default 200) per script are in **Settings > Advanced**.
 - **Load tools only when needed** sends the model full descriptions of a few core tools and just the names of the rest, which it loads with **Find Tools** when it needs them.
 
 ## Self-hosting with Docker
@@ -212,7 +204,7 @@ Both are on by default for every agent, and can be turned off on an agent's **To
 `docker-compose.yml` runs three services: the **web** app (FastAPI plus the in-process scheduler), a **worker** (Celery, which runs tasks and team runs), and **Redis** as the broker. Web and worker share the SQLite database over a named volume.
 
 ```bash
-cp .env.example .env          # fill in provider keys and a JWT_SECRET_KEY
+cp .env.example .env          # set a JWT_SECRET_KEY; provider keys go in Settings
 docker compose up --build
 ```
 
@@ -297,7 +289,7 @@ def verify(body: bytes, timestamp: str, signature: str, secret: str) -> bool:
     return hmac.compare_digest(expected, signature)
 ```
 
-By default webhook targets on loopback/private/link-local addresses are rejected (SSRF guard); set `COGNITRIX_WEBHOOK_ALLOW_PRIVATE=1` to allow them in local/dev setups.
+By default webhook targets on loopback/private/link-local addresses are rejected (SSRF guard); turn on **Let webhooks call private network addresses** in Settings > Advanced to allow them in local/dev setups.
 
 ### OpenAI-compatible endpoint
 

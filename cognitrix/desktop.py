@@ -31,6 +31,8 @@ import threading
 import time
 from pathlib import Path
 
+from cognitrix.app_settings import get as app_setting
+
 logger = logging.getLogger('cognitrix.desktop')
 
 DEFAULT_PORT = 48210
@@ -53,7 +55,7 @@ DESKTOP_SESSION_MINUTES = 60 * 24 * 30
 def desktop_session_minutes() -> int:
     """Session length for the desktop app: at least 30 days."""
     try:
-        configured = int(os.environ.get('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', '0'))
+        configured = int(app_setting('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', '0'))
     except ValueError:
         configured = 0
     return max(configured, DESKTOP_SESSION_MINUTES)
@@ -61,18 +63,13 @@ def desktop_session_minutes() -> int:
 
 def _prepare_environment(working_folder: str | None) -> None:
     os.environ['COGNITRIX_DESKTOP'] = '1'
-    # Provider keys for the desktop app live in ~/.cognitrix/.env (the app has
-    # no project folder of its own to hold one). Real env vars still win.
-    env_file = Path.home() / '.cognitrix' / '.env'
-    if env_file.is_file():
-        from dotenv import load_dotenv
-        load_dotenv(env_file, override=False)
-    # A desktop app shouldn't sign you out every half hour. A short
-    # JWT_ACCESS_TOKEN_EXPIRE_MINUTES copied into ~/.cognitrix/.env from a
-    # server setup used to do exactly that, so it can only make sessions
-    # longer here. The UI also refreshes its token while in use, and sessions
-    # still end with "Sign out of all devices" in Settings.
-    os.environ['JWT_ACCESS_TOKEN_EXPIRE_MINUTES'] = str(desktop_session_minutes())
+    # Everything else is set in Settings (app_settings); no .env is read.
+    # A desktop app shouldn't sign you out every half hour, so the sign-in
+    # length set in Settings can only make sessions longer here. The UI also
+    # refreshes its token while in use, and sessions still end with "Sign out
+    # of all devices" in Settings.
+    from cognitrix import app_settings
+    app_settings.override('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', str(desktop_session_minutes()))
     folder = working_folder or os.environ.get('COGNITRIX_TOOLS_ROOT')
     if not folder:
         path = default_working_folder()

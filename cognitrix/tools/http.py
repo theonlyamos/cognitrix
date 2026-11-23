@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.credentials import (
     PLACEHOLDER_RE,
     Resolver,
@@ -113,7 +113,7 @@ async def http_request(
             'no_credentials', 'Error: saved credentials are only available to a signed-in person',
         )
 
-    allow_private = os.getenv('COGNITRIX_WEBFETCH_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
+    allow_private = app_setting('COGNITRIX_WEBFETCH_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
 
     # The address itself may carry a placeholder (an API key in the query).
     # Its host is the part before any placeholder, so check that first.

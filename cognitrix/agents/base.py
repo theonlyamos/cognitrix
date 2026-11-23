@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Optional, TypeAlias
 
 from cognitrix import audit
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.encoding import status_print
 from cognitrix.computer import apps as computer_apps
 from cognitrix.errors import ExecutionControlError
@@ -78,7 +79,7 @@ def _parse_max_concurrent_tool_calls(raw: str | None) -> int:
 
 
 MAX_CONCURRENT_TOOL_CALLS = _parse_max_concurrent_tool_calls(
-    os.getenv('COGNITRIX_MAX_CONCURRENT_TOOL_CALLS')
+    app_setting('COGNITRIX_MAX_CONCURRENT_TOOL_CALLS')
 )
 
 _TOOL_EXECUTION_LIMITERS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()

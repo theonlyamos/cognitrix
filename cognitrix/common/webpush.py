@@ -26,6 +26,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
+from cognitrix.app_settings import get as app_setting
+
 logger = logging.getLogger('cognitrix.log')
 
 MAX_SUBSCRIPTIONS_PER_USER = 10
@@ -47,7 +49,7 @@ _background: set[asyncio.Task] = set()
 def enabled() -> bool:
     if os.getenv('COGNITRIX_DESKTOP', '').strip() == '1':
         return False  # the desktop app raises its own system notifications
-    return os.getenv('COGNITRIX_WEB_PUSH', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+    return app_setting('COGNITRIX_WEB_PUSH', '1').strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 def b64url(data: bytes) -> str:
@@ -86,7 +88,7 @@ def private_key() -> ec.EllipticCurvePrivateKey:
     global _private_key
     if _private_key is not None:
         return _private_key
-    pem = os.getenv('COGNITRIX_VAPID_PRIVATE_KEY', '').strip().replace('\\n', '\n').encode()
+    pem = app_setting('COGNITRIX_VAPID_PRIVATE_KEY', '').strip().replace('\\n', '\n').encode()
     path = _key_file()
     if not pem and path.exists():
         pem = path.read_bytes()
@@ -116,10 +118,10 @@ def public_key() -> str:
 
 
 def _subject() -> str:
-    subject = os.getenv('COGNITRIX_VAPID_SUBJECT', '').strip()
+    subject = app_setting('COGNITRIX_VAPID_SUBJECT', '').strip()
     if subject:
         return subject
-    public_url = os.getenv('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/')
+    public_url = app_setting('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/')
     return public_url if public_url.startswith('https://') else 'https://github.com/theonlyamos/cognitrix'
 
 

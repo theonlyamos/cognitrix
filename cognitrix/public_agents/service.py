@@ -22,7 +22,6 @@ import asyncio
 import contextvars
 import hashlib
 import logging
-import os
 import secrets
 import time
 from collections import deque
@@ -30,6 +29,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urlsplit
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.public_agents.models import (
     DEFAULT_DAILY_LIMIT,
     DEFAULT_VISITOR_HOURLY_LIMIT,
@@ -65,7 +65,7 @@ This conversation is with a member of the public who opened {owner_ref} public l
 
 def public_links_allowed() -> bool:
     """Public agent links are on unless the server turns them off."""
-    return os.getenv('COGNITRIX_PUBLIC_AGENT_LINKS', '').strip().lower() not in ('off', '0', 'false', 'no')
+    return app_setting('COGNITRIX_PUBLIC_AGENT_LINKS', '').strip().lower() not in ('off', '0', 'false', 'no')
 
 
 def new_token() -> str:

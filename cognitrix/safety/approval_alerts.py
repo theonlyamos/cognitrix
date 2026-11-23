@@ -22,9 +22,10 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import time
 from typing import Any
+
+from cognitrix.app_settings import get as app_setting
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -37,7 +38,7 @@ _TOKEN_TYPE = 'approval_action'
 def alert_delay() -> float:
     """Seconds an unanswered chat approval waits before it is sent elsewhere."""
     try:
-        return max(0.0, float(os.getenv('COGNITRIX_APPROVAL_ALERT_DELAY', '10')))
+        return max(0.0, float(app_setting('COGNITRIX_APPROVAL_ALERT_DELAY', '10')))
     except ValueError:
         return 10.0
 
@@ -46,7 +47,7 @@ def away_delay() -> float:
     """Seconds after the chat page last showed the card before it counts as
     left unanswered. Longer than the page's 15-second report interval."""
     try:
-        return max(0.0, float(os.getenv('COGNITRIX_APPROVAL_AWAY_DELAY', '60')))
+        return max(0.0, float(app_setting('COGNITRIX_APPROVAL_AWAY_DELAY', '60')))
     except ValueError:
         return 60.0
 

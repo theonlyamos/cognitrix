@@ -18,12 +18,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.tasks.automation import (
     EVENT_MAX_BYTES,
     FMT,
@@ -51,7 +51,7 @@ class MailCheckError(Exception):
 
 def check_seconds() -> int:
     try:
-        return max(MIN_SECONDS, int(os.getenv('COGNITRIX_MAIL_CHECK_SECONDS', '') or DEFAULT_SECONDS))
+        return max(MIN_SECONDS, int(app_setting('COGNITRIX_MAIL_CHECK_SECONDS', '') or DEFAULT_SECONDS))
     except ValueError:
         return DEFAULT_SECONDS
 

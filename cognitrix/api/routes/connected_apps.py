@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from cognitrix.agents.access import is_admin, owner_key
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.security import AuthContext, jwt_only
 from cognitrix.mcp import catalog, composio, native, oauth, registry
 from cognitrix.mcp import setup as app_setup
@@ -33,7 +34,7 @@ def _desktop() -> bool:
 
 
 def base_url(request: Request) -> str:
-    return os.getenv('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/') or str(request.base_url).rstrip('/')
+    return app_setting('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/') or str(request.base_url).rstrip('/')
 
 
 async def _allow_private(ctx: AuthContext) -> bool:

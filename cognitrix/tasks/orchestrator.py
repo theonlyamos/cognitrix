@@ -17,29 +17,28 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from cognitrix.agents.base import Agent
+from cognitrix.app_settings import get as app_setting
 from cognitrix.errors import ExecutionControlError, ProviderExecutionError
 from cognitrix.planning.structured_planner import PlanningError
 from cognitrix.providers.limits import (
     LimitBackendUnavailable,
     LimitExceeded,
 )
-from cognitrix.tasks.events import TaskRunEventEmitter
+from cognitrix.tasks.authority import TaskAuthorityError, reconstruct_tool_context
 from cognitrix.tasks.budget import (
     BudgetExceeded,
     BudgetLedger,
     configured_model_pricing,
 )
-from cognitrix.tasks.authority import TaskAuthorityError, reconstruct_tool_context
+from cognitrix.tasks.completion import deliver_completion_notification
 from cognitrix.tasks.context import (
     DEFAULT_DEPENDENCY_CONTEXT_CHARS,
     dependency_context,
     untrusted_text_block,
 )
-from cognitrix.tasks.completion import deliver_completion_notification
 from cognitrix.tasks.dag import (
     DagExecutionCancelled,
     DagNode,
-    DagNodeFailed,
     DagNodeState,
     DagPersistenceError,
     DagValidationError,
@@ -47,8 +46,10 @@ from cognitrix.tasks.dag import (
     run_dag,
 )
 from cognitrix.tasks.evaluation import evaluate_step
+from cognitrix.tasks.events import TaskRunEventEmitter
 from cognitrix.tasks.executor import TaskStepExecutor
 from cognitrix.tasks.metrics import TaskRunPhase, TaskRunPhaseRecorder
+from cognitrix.tasks.recovery import LeaseController
 from cognitrix.tasks.repository import (
     ActiveRunExists,
     LeaseClaim,
@@ -56,7 +57,6 @@ from cognitrix.tasks.repository import (
     RunRepository,
     RunStateConflict,
 )
-from cognitrix.tasks.recovery import LeaseController
 from cognitrix.tasks.results import StepResult, UsageSummary
 from cognitrix.tasks.run import (
     TaskRun,
@@ -70,8 +70,8 @@ from cognitrix.tasks.runtime import (
     MissingRequiredTools,
     RuntimeInstantiationError,
     TaskCapabilityRegistry,
-    build_task_capability_registry,
     build_runtime_snapshot,
+    build_task_capability_registry,
     instantiate_runtime,
 )
 from cognitrix.tasks.step import TaskRunStep, TaskRunStepStatus
@@ -81,9 +81,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger('cognitrix.log')
 
-STEP_TIMEOUT = int(os.getenv('COGNITRIX_STEP_TIMEOUT', '600'))
-GATE_THRESHOLD = float(os.getenv('COGNITRIX_GATE_THRESHOLD', '7'))
-MAX_PARALLEL_STEPS = int(os.getenv('COGNITRIX_MAX_PARALLEL_STEPS', '3'))
+STEP_TIMEOUT = int(app_setting('COGNITRIX_STEP_TIMEOUT', '600'))
+GATE_THRESHOLD = float(app_setting('COGNITRIX_GATE_THRESHOLD', '7'))
+MAX_PARALLEL_STEPS = int(app_setting('COGNITRIX_MAX_PARALLEL_STEPS', '3'))
 MAX_PLAN_STEPS = 10
 
 

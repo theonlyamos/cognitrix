@@ -11,6 +11,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from cognitrix.app_settings import get as app_setting
+
 load_dotenv()
 
 logger = logging.getLogger('cognitrix.log')
@@ -57,7 +59,7 @@ class CognitrixSettings:
 
         try:
             self.task_recovery_interval_seconds = float(
-                os.getenv('TASK_RECOVERY_INTERVAL_SECONDS', '30')
+                app_setting('TASK_RECOVERY_INTERVAL_SECONDS', '30')
             )
         except ValueError as exc:
             raise ValueError(
@@ -77,32 +79,7 @@ class CognitrixSettings:
         # JWT settings
         self.jwt_secret_key = self._resolve_jwt_secret()
         self.jwt_algorithm = os.getenv('JWT_ALGORITHM', 'HS256')
-        self.jwt_access_token_expire_minutes = int(os.getenv('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', '30'))
-
-        # API Keys for LLM providers
-        self.openai_api_key = os.getenv('OPENAI_API_KEY', '')
-        self.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY', '')
-        self.google_api_key = os.getenv('GOOGLE_API_KEY', '')
-        self.groq_api_key = os.getenv('GROQ_API_KEY', '')
-        self.cohere_api_key = os.getenv('CO_API_KEY', '')
-        self.together_api_key = os.getenv('TOGETHER_API_KEY', '')
-        self.huggingface_access_token = os.getenv('HUGGINGFACE_ACCESS_TOKEN', '')
-        self.clarifai_access_token = os.getenv('CLARIFAI_ACCESS_TOKEN', '')
-        self.aimlapi_api_key = os.getenv('AIMLAPI_API_KEY', '')
-        self.minds_api_key = os.getenv('MINDS_API_KEY', '')
-        self.github_token = os.getenv('GITHUB_TOKEN', '')
-
-        # Tool API Keys
-        self.tavily_api_key = os.getenv('TAVILY_API_KEY', '')
-        self.brave_search_api_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
-        self.deepgram_api_key = os.getenv('DEEPGRAM_API_KEY', '')
-
-        # Monitoring and Analytics
-        self.helicone_api_key = os.getenv('HELICONE_API_KEY', '')
-        self.helicone_base_url = os.getenv('HELICONE_BASE_URL', 'https://gateway.helicone.ai/v1')
-
-        # LLM provider config (AI_PROVIDER, OPENROUTER_*, OPENAI_*, etc.)
-        self.ai_provider = os.getenv('AI_PROVIDER', 'openrouter')
+        self.jwt_access_token_expire_minutes = int(app_setting('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', '30'))
 
         # Filesystem tool confinement: Read/Write/Edit may not escape this root.
         # Defaults to the current working directory.
@@ -162,27 +139,65 @@ class CognitrixSettings:
         self.workdir.mkdir(exist_ok=True)
         self.mcp_config_file.parent.mkdir(exist_ok=True)
 
+    # Keys and provider choices come from Settings (app_settings and the
+    # provider key store), read live so a change applies without a restart.
+    _SAVED_KEY_PROVIDERS = frozenset({
+        'openai', 'openrouter', 'anthropic', 'google', 'groq', 'cerebras', 'cohere', 'together',
+        'huggingface', 'clarifai', 'aimlapi', 'minds', 'deepgram',
+    })
+    _SETTING_KEYS = {
+        'github': 'GITHUB_TOKEN',
+        'tavily': 'TAVILY_API_KEY',
+        'brave': 'BRAVE_SEARCH_API_KEY',
+        'helicone': 'HELICONE_API_KEY',
+    }
+
+    @property
+    def ai_provider(self) -> str:
+        return app_setting('AI_PROVIDER', 'openrouter')
+
+    @property
+    def helicone_base_url(self) -> str:
+        return app_setting('HELICONE_BASE_URL', 'https://gateway.helicone.ai/v1')
+
+    @property
+    def openai_api_key(self) -> str:
+        return self.get_api_key('openai')
+
+    @property
+    def anthropic_api_key(self) -> str:
+        return self.get_api_key('anthropic')
+
+    @property
+    def google_api_key(self) -> str:
+        return self.get_api_key('google')
+
+    @property
+    def github_token(self) -> str:
+        return self.get_api_key('github')
+
+    @property
+    def tavily_api_key(self) -> str:
+        return self.get_api_key('tavily')
+
+    @property
+    def brave_search_api_key(self) -> str:
+        return self.get_api_key('brave')
+
+    @property
+    def deepgram_api_key(self) -> str:
+        return self.get_api_key('deepgram')
+
     def get_api_key(self, provider: str) -> str:
-        """Get API key for a specific provider"""
-        key_mapping = {
-            'openai': self.openai_api_key or os.getenv('OPENAI_API_KEY', ''),
-            'openrouter': os.getenv('OPENROUTER_API_KEY', ''),
-            'anthropic': self.anthropic_api_key,
-            'google': self.google_api_key or os.getenv('GOOGLE_API_KEY', ''),
-            'groq': self.groq_api_key,
-            'cohere': self.cohere_api_key,
-            'together': self.together_api_key,
-            'huggingface': self.huggingface_access_token,
-            'clarifai': self.clarifai_access_token,
-            'aimlapi': self.aimlapi_api_key,
-            'minds': self.minds_api_key,
-            'github': self.github_token,
-            'tavily': self.tavily_api_key,
-            'brave': self.brave_search_api_key,
-            'deepgram': self.deepgram_api_key,
-            'helicone': self.helicone_api_key,
-        }
-        return key_mapping.get(provider.lower(), '')
+        """The key saved in Settings for a provider or tool ('' when none)."""
+        provider = (provider or '').strip().lower()
+        if provider in self._SETTING_KEYS:
+            return app_setting(self._SETTING_KEYS[provider], '')
+        if provider in self._SAVED_KEY_PROVIDERS:
+            from cognitrix.providers.saved_keys import get_saved_key
+
+            return get_saved_key(provider)
+        return ''
 
     def get_default_model(self, provider: str) -> str:
         """Get default model for a provider"""
@@ -853,26 +868,26 @@ async def _ensure_schema():
     log = _logging.getLogger('cognitrix.log')
 
     from cognitrix.artifacts import Artifact, DocumentArtifact
+    from cognitrix.audit import AuditEvent
+    from cognitrix.knowledge.models import KnowledgeCollection, KnowledgeDocument
     from cognitrix.models.api_key import APIKey
     from cognitrix.models.chat_channel import ChannelDelivery, ChannelThread, ChatChannel
+    from cognitrix.models.computer_app import ComputerAppPermission
     from cognitrix.models.credential import Credential
+    from cognitrix.models.invite import Invite
     from cognitrix.models.mcp_server import MCPServer
     from cognitrix.models.memory import Memory, MemorySettings
-    from cognitrix.knowledge.models import KnowledgeCollection, KnowledgeDocument
-    from cognitrix.models.invite import Invite
     from cognitrix.models.push_subscription import PushSubscription
-    from cognitrix.models.computer_app import ComputerAppPermission
     from cognitrix.models.usage import UsageDay
-    from cognitrix.usage.caps import SpendingCap
-    from cognitrix.audit import AuditEvent
-    from cognitrix.sessions.index import ChatIndex
     from cognitrix.models.voice_settings import VoiceSettings
-    from cognitrix.themes import ThemeSettings
     from cognitrix.session_ownership import SessionOwnership
+    from cognitrix.sessions.index import ChatIndex
     from cognitrix.tasks.events import TaskRunEvent
     from cognitrix.tasks.metrics import TaskRunPhaseMetric
     from cognitrix.tasks.run import TaskRun, TaskRunHead
     from cognitrix.tasks.step import TaskRunStep
+    from cognitrix.themes import ThemeSettings
+    from cognitrix.usage.caps import SpendingCap
 
     if getattr(DBMS.Database, 'dbms', '') != 'mongodb':
         # Core tables. Without these a fresh database started with plain
@@ -894,32 +909,32 @@ async def _ensure_schema():
             if hasattr(result, '__await__'):
                 await result
 
-    from cognitrix.meetings.notes import MeetingNote
-    from cognitrix.skills.drafts import SkillDraft
-    from cognitrix.skills.personal import PersonalSkill
-    from cognitrix.tasks.approvals import TaskApproval
-    from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent
-    from cognitrix.tasks.reports import TaskReport, TaskReportClaim
-    from cognitrix.tasks.standing import AgentOffer
+    from cognitrix.agent_email.models import MODELS as EMAIL_MODELS
     from cognitrix.artifact_pages.models import MODELS as ARTIFACT_PAGE_MODELS
+    from cognitrix.assistant.models import MODELS as ASSISTANT_MODELS
+    from cognitrix.board.models import MODELS as BOARD_MODELS
+    from cognitrix.file_changes.models import MODELS as FILE_CHANGE_MODELS
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
     from cognitrix.mcp.app_views import MODELS as APP_VIEW_MODELS
-    from cognitrix.swarms.models import MODELS as SWARM_MODELS
-    from cognitrix.board.models import MODELS as BOARD_MODELS
-    from cognitrix.public_agents.models import MODELS as PUBLIC_AGENT_MODELS
-    from cognitrix.sessions.sharing import MODELS as CHAT_SHARE_MODELS
-    from cognitrix.agent_email.models import MODELS as EMAIL_MODELS
-    from cognitrix.sessions.side_questions import SideQuestion
-    from cognitrix.payments.models import MODELS as PAYMENT_MODELS
     from cognitrix.meetings.calendar_calls import MODELS as CALENDAR_CALL_MODELS
-    from cognitrix.assistant.models import MODELS as ASSISTANT_MODELS
-    from cognitrix.tasks.pr_watch import MODELS as PR_WATCH_MODELS
+    from cognitrix.meetings.notes import MeetingNote
     from cognitrix.models.paired_device import MODELS as PAIRED_DEVICE_MODELS
     from cognitrix.models.sign_in import MODELS as SIGN_IN_MODELS
-    from cognitrix.projects.models import MODELS as PROJECT_MODELS
-    from cognitrix.safety.command_rules import MODELS as COMMAND_RULE_MODELS
-    from cognitrix.file_changes.models import MODELS as FILE_CHANGE_MODELS
+    from cognitrix.payments.models import MODELS as PAYMENT_MODELS
     from cognitrix.produced_files.models import MODELS as PRODUCED_FILE_MODELS
+    from cognitrix.projects.models import MODELS as PROJECT_MODELS
+    from cognitrix.public_agents.models import MODELS as PUBLIC_AGENT_MODELS
+    from cognitrix.safety.command_rules import MODELS as COMMAND_RULE_MODELS
+    from cognitrix.sessions.sharing import MODELS as CHAT_SHARE_MODELS
+    from cognitrix.sessions.side_questions import SideQuestion
+    from cognitrix.skills.drafts import SkillDraft
+    from cognitrix.skills.personal import PersonalSkill
+    from cognitrix.swarms.models import MODELS as SWARM_MODELS
+    from cognitrix.tasks.approvals import TaskApproval
+    from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent
+    from cognitrix.tasks.pr_watch import MODELS as PR_WATCH_MODELS
+    from cognitrix.tasks.reports import TaskReport, TaskReportClaim
+    from cognitrix.tasks.standing import AgentOffer
 
     for model in (
         *ARTIFACT_PAGE_MODELS,

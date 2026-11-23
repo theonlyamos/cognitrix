@@ -25,11 +25,11 @@ import asyncio
 import contextvars
 import json
 import logging
-import os
 import re
 import uuid
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import ArtifactRef, ToolOutcome
 
@@ -48,11 +48,11 @@ CORE_TOOL_NAMES = frozenset({
 })
 
 # Below this many tools, loading on demand saves too little to be worth a step.
-ON_DEMAND_MIN_TOOLS = int(os.getenv('COGNITRIX_ON_DEMAND_MIN_TOOLS', '12') or 12)
+ON_DEMAND_MIN_TOOLS = int(app_setting('COGNITRIX_ON_DEMAND_MIN_TOOLS', '12') or 12)
 
-CODE_TIMEOUT_SECONDS = float(os.getenv('COGNITRIX_CODE_MODE_TIMEOUT', '600') or 600)
+CODE_TIMEOUT_SECONDS = float(app_setting('COGNITRIX_CODE_MODE_TIMEOUT', '600') or 600)
 CODE_MEMORY_BYTES = 256 * 1024 * 1024
-MAX_CALLS_PER_SCRIPT = int(os.getenv('COGNITRIX_CODE_MODE_MAX_CALLS', '200') or 200)
+MAX_CALLS_PER_SCRIPT = int(app_setting('COGNITRIX_CODE_MODE_MAX_CALLS', '200') or 200)
 MAX_OUTPUT_CHARS = 20_000
 
 # Tools a script can't call: no scripts inside scripts, no loading tools

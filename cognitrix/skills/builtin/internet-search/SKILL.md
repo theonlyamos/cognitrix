@@ -37,6 +37,5 @@ Tavily Search query="AI news 2026" max_results=20
 ## Notes
 
 - Requires TAVily API key (free tier available)
-- Set API key via: `export TAVILY_API_KEY=your-api-key`
-- Or set `tavily_api_key` in configuration
+- Add the key in Settings, Models and keys, Tools and services
 - Returns search results with title, content snippet, and URL

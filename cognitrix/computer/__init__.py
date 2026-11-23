@@ -19,13 +19,14 @@ import contextvars
 import hashlib
 import itertools
 import logging
-import os
 import sys
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+from cognitrix.app_settings import get as app_setting
 
 logger = logging.getLogger('cognitrix.computer')
 
@@ -1014,7 +1015,7 @@ def get_driver() -> Driver:
             elif sys.platform.startswith('linux'):
                 from cognitrix.computer.linux import LinuxBackend
                 _driver = Driver(LinuxBackend())  # raises Unsupported without an X11 session
-            elif sys.platform == 'darwin' and os.environ.get('COGNITRIX_MAC_BACKGROUND') == '1':
+            elif sys.platform == 'darwin' and app_setting('COGNITRIX_MAC_BACKGROUND') == '1':
                 # Experimental (not yet run on a Mac), so it has to be switched on.
                 from cognitrix.computer.macos import MacBackend
                 _driver = Driver(MacBackend())

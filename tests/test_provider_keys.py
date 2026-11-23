@@ -31,8 +31,6 @@ async def db(tmp_path, monkeypatch):
     monkeypatch.delenv('COGNITRIX_ADMIN_EMAILS', raising=False)
     for name in ('ANTHROPIC', 'OPENAI', 'GOOGLE', 'OPENROUTER', 'GROQ', 'CEREBRAS'):
         monkeypatch.delenv(f'{name}_API_KEY', raising=False)
-    for attr in ('anthropic_api_key', 'openai_api_key', 'google_api_key', 'groq_api_key'):
-        monkeypatch.setattr(settings, attr, '', raising=False)
     from cognitrix.providers import saved_keys
     monkeypatch.setattr(saved_keys, '_cache', None)
     yield tmp_path
@@ -83,15 +81,16 @@ async def test_admin_saves_key_sealed_and_engine_uses_it(db):
         _resolve_runtime_config('groq')
 
 
-async def test_environment_key_wins_and_cannot_be_overwritten(db, monkeypatch):
+async def test_environment_key_is_ignored(db, monkeypatch):
+    from cognitrix import app_settings
     from cognitrix.api.routes import providers
 
+    monkeypatch.setattr(app_settings, '_env_fallback', False)
     monkeypatch.setenv('OPENAI_API_KEY', 'fake' + 'e' * 12)
     admin = _ctx(await _user('Ada', 'ada@example.com'))
-    assert _row(await providers.list_provider_keys(admin), 'openai')['source'] == 'env'
-    with pytest.raises(HTTPException) as err:
-        await providers.save_provider_key('openai', providers.KeyBody(api_key='fake' + 'o' * 12), admin)
-    assert err.value.status_code == 409
+    assert _row(await providers.list_provider_keys(admin), 'openai')['source'] == 'none'
+    saved = await providers.save_provider_key('openai', providers.KeyBody(api_key='fake' + 'o' * 12), admin)
+    assert saved['source'] == 'saved'
 
 
 async def test_only_admin_can_change_keys(db):

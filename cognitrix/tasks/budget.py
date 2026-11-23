@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import json
-import os
 import time
 from contextlib import asynccontextmanager
 from decimal import Decimal
@@ -11,6 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.errors import ExecutionControlError
 
 
@@ -48,7 +48,7 @@ def _estimated_cost(
 
 def configured_model_pricing(raw: str | None = None) -> dict[str, ModelPrice]:
     """Load and validate the production provider/model pricing registry."""
-    source = raw if raw is not None else os.getenv("COGNITRIX_MODEL_PRICING_JSON", "{}")
+    source = raw if raw is not None else app_setting("COGNITRIX_MODEL_PRICING_JSON", "{}")
     try:
         payload = json.loads(source or "{}")
     except json.JSONDecodeError as exc:

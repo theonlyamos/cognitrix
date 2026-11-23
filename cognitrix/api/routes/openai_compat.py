@@ -10,7 +10,6 @@ native generate endpoint.
 import asyncio
 import json
 import logging
-import os
 import time
 import uuid
 
@@ -20,13 +19,14 @@ from pydantic import BaseModel
 
 from cognitrix.agents import Agent
 from cognitrix.agents import access as agent_access
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.security import AuthContext, get_auth_context, require
 from cognitrix.providers.base import usage_sink
 from cognitrix.sessions.base import Session
 
 logger = logging.getLogger('cognitrix.log')
 
-CHAT_TIMEOUT = float(os.getenv('COGNITRIX_API_CHAT_TIMEOUT', '300'))
+CHAT_TIMEOUT = float(app_setting('COGNITRIX_API_CHAT_TIMEOUT', '300'))
 
 # Own router at the app root — NOT under /api/v1. Registered before the SPA
 # catch-all in api/main.py so /v1/* isn't served index.html.

@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 from collections.abc import Callable
 from typing import Any
+
+from cognitrix.app_settings import get as app_setting
 
 from . import mail
 from .models import AgentAddress, EmailAccount, EmailLink
@@ -41,12 +42,12 @@ _NO = re.compile(r'^\s*(deny|denied|no|n|reject|stop|don\'t)\b', re.I)
 
 
 def email_enabled() -> bool:
-    return os.getenv('COGNITRIX_EMAIL', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+    return app_setting('COGNITRIX_EMAIL', '1').strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 def poll_seconds() -> float:
     try:
-        return max(5.0, float(os.getenv('COGNITRIX_EMAIL_POLL_SECONDS', '') or 30))
+        return max(5.0, float(app_setting('COGNITRIX_EMAIL_POLL_SECONDS', '') or 30))
     except ValueError:
         return 30.0
 

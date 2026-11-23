@@ -213,7 +213,7 @@ async def test_setup_guide_is_for_admins_and_fills_in_this_server(db):
     assert problems['google'] is None and 'https' in problems['slack']
 
 
-async def test_saved_client_is_sealed_and_the_environment_wins(db, monkeypatch, tmp_path):
+async def test_saved_client_is_sealed_and_the_environment_is_ignored(db, monkeypatch, tmp_path):
     from cognitrix.api.routes import connected_apps
     from cognitrix.mcp import catalog
 
@@ -231,12 +231,12 @@ async def test_saved_client_is_sealed_and_the_environment_wins(db, monkeypatch, 
     listing = await connected_apps.list_apps(_request(), _ctx(member))
     assert next(a for a in listing['apps'] if a['id'] == 'slack')['available'] is True
 
+    # The environment is never read: the client saved in Settings is the one.
+    from cognitrix import app_settings
+    monkeypatch.setattr(app_settings, '_env_fallback', False)
     monkeypatch.setenv('SLACK_CLIENT_ID', 'env-id')
     monkeypatch.setenv('SLACK_CLIENT_SECRET', 'env-secret')
-    assert catalog.provider_credentials('slack') == ('env-id', 'env-secret')
-    with pytest.raises(HTTPException) as err:
-        await connected_apps.save_provider_client('slack', body, _request(), _ctx(admin))
-    assert err.value.status_code == 409
+    assert catalog.provider_credentials('slack') == ('slack-id', 'slack-secret')
     monkeypatch.delenv('SLACK_CLIENT_ID')
     monkeypatch.delenv('SLACK_CLIENT_SECRET')
 

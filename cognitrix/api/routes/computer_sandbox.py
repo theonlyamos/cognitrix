@@ -153,14 +153,14 @@ class SettingsBody(BaseModel):
 @sandbox_api.put('/settings')
 async def put_settings(body: SettingsBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     """Switch the sandboxed computer on or off for everyone on this server
-    (admins only; the environment variable, when set, wins)."""
+    (admins only; "Where agents get a computer", when set, wins)."""
     from cognitrix.agents.access import is_admin
     from cognitrix.computer.sandbox.client import mode_from_env, save_enabled
 
     if not await is_admin(ctx.user):
         raise HTTPException(status_code=403, detail='Only an admin can change this.')
     if mode_from_env():
-        raise HTTPException(status_code=409, detail='COGNITRIX_COMPUTER_SANDBOX is set on the server, so it decides.')
+        raise HTTPException(status_code=409, detail='"Where agents get a computer" is set below, so it decides.')
     save_enabled(body.enabled)
     return await get_settings(ctx)
 

@@ -232,8 +232,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
           )}
           {askForKey && (
             <p className="-mt-2 text-[12px] leading-relaxed text-fg-dim">
-              {tr('ui.assistantSetup.noItemKeyIsSet', { item: PROVIDER_LABELS[provider] || provider })}{' '}
-              <span className="font-mono text-[11.5px]">{provider.toUpperCase()}_API_KEY</span>{' '}{tr('ui.assistantSetup.toTheEngineSEnv')}
+              {tr('ui.assistantSetup.noItemKeyIsSet', { item: PROVIDER_LABELS[provider] || provider })}{' '}{tr('ui.assistantSetup.toTheEngineSEnv')}
             </p>
           )}
           {option?.sign_in && (

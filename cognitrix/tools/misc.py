@@ -15,6 +15,7 @@ from typing import Any
 
 import regex as regex_engine
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common import folders as folder_paths
 from cognitrix.common.encoding import status_print
 from cognitrix.common.process_security import (
@@ -1126,7 +1127,7 @@ def Search(query: str, max_results: int = 10):
     if not api_key:
         return ToolOutcome.failure(
             'brave_search_not_configured',
-            'Brave Search is not configured. Set BRAVE_SEARCH_API_KEY.',
+            'Brave Search is not set up. Add a key in Settings, Models and keys.',
         )
 
     result_count = max(1, min(max_results, 20))
@@ -1191,14 +1192,12 @@ def Tavily_Search(query: str, max_results: int = 10):
         # every startup but is only needed when the Search tool actually runs.
         from tavily import TavilyClient
 
-        api_key = settings.tavily_api_key if settings.tavily_api_key else None
-        if not api_key:
-            api_key = os.getenv('TAVILY_API_KEY')
+        api_key = settings.tavily_api_key or None
 
         if not api_key:
             return ToolOutcome.failure(
                 'tavily_search_not_configured',
-                'Tavily Search is not configured. Set TAVILY_API_KEY.',
+                'Tavily Search is not set up. Add a key in Settings, Models and keys.',
             )
 
         client = TavilyClient(api_key=api_key)
@@ -1255,7 +1254,7 @@ def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
         }
         # Block internal addresses (the app itself, cloud metadata, the LAN),
         # re-checking every redirect hop so a public URL can't bounce there.
-        allow_private = os.getenv('COGNITRIX_WEBFETCH_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
+        allow_private = app_setting('COGNITRIX_WEBFETCH_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
         current = url
         for _hop in range(6):
             reason = check_public_url(

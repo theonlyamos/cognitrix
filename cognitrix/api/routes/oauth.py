@@ -20,7 +20,6 @@ account, or COGNITRIX_ALLOW_SIGNUP=true), the same rule as password signup.
 """
 
 import html
-import os
 import secrets
 import time
 from typing import Any
@@ -31,6 +30,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.config import API_VERSION
 from cognitrix.models import User
 
@@ -69,10 +69,10 @@ class OAuthError(Exception):
 
 
 def _credentials(provider: str) -> tuple[str, str] | None:
-    prefix = provider.upper()
-    client_id = os.getenv(f'{prefix}_CLIENT_ID', '').strip()
-    secret = os.getenv(f'{prefix}_CLIENT_SECRET', '').strip()
-    return (client_id, secret) if client_id and secret else None
+    # The same OAuth client as Settings, Connected apps.
+    from cognitrix.mcp.catalog import provider_credentials
+
+    return provider_credentials(provider)
 
 
 def _prune() -> None:
@@ -83,7 +83,7 @@ def _prune() -> None:
 
 
 def _redirect_uri(request: Request, provider: str) -> str:
-    base = os.getenv('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/') or str(request.base_url).rstrip('/')
+    base = app_setting('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/') or str(request.base_url).rstrip('/')
     return f'{base}/api/{API_VERSION}/auth/oauth/{provider}/callback'
 
 
@@ -165,7 +165,7 @@ async def _profile(provider: str, access_token: str) -> tuple[str, str]:
 
 
 async def _signup_open() -> bool:
-    allow = os.getenv('COGNITRIX_ALLOW_SIGNUP', '').strip().lower()
+    allow = app_setting('COGNITRIX_ALLOW_SIGNUP', '').strip().lower()
     if allow in ('0', 'false', 'no'):
         return False
     if allow in ('1', 'true', 'yes'):

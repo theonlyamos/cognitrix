@@ -9,10 +9,9 @@ Arguments:
     depth          Optional: "basic" (default) or "advanced"
 
 Requires: tavily (pip install tavily)
-Environment: TAVILY_API_KEY (set via environment variable)
+Key: the Tavily key in Cognitrix Settings, Models and keys
 """
 
-import os
 import sys
 
 
@@ -23,11 +22,14 @@ def main():
 
     query = sys.argv[1]
     depth = sys.argv[2] if len(sys.argv) > 2 else "basic"
-    api_key = os.environ.get("TAVILY_API_KEY")
+    try:
+        from cognitrix.app_settings import get as app_setting
+        api_key = app_setting("TAVILY_API_KEY")
+    except ImportError:
+        api_key = ""
 
     if not api_key:
-        print("Error: TAVILY_API_KEY environment variable not set.", file=sys.stderr)
-        print("Set it with: export TAVILY_API_KEY=your-api-key", file=sys.stderr)
+        print("Error: no Tavily key. Add one in Settings, Models and keys.", file=sys.stderr)
         sys.exit(1)
 
     try:

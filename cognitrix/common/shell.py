@@ -38,6 +38,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.encoding import decode_output, utf8_child_env
 from cognitrix.common.safe_exec import CommandNotAllowed, build_argv
 
@@ -76,12 +77,12 @@ class ShellSyntaxError(ValueError):
 def shell_mode() -> str:
     """``ask`` (default): commands outside the allowlist run in a real shell
     once the person approves them. ``allowlist``: they are refused."""
-    mode = os.getenv('COGNITRIX_SHELL_MODE', 'ask').strip().lower()
+    mode = app_setting('COGNITRIX_SHELL_MODE', 'ask').strip().lower()
     return mode if mode in ('ask', 'allowlist') else 'ask'
 
 
 def sandbox_shell_enabled() -> bool:
-    return os.getenv('COGNITRIX_SANDBOX_SHELL', '').strip().lower() in ('1', 'true', 'yes')
+    return app_setting('COGNITRIX_SANDBOX_SHELL', '').strip().lower() in ('1', 'true', 'yes')
 
 
 # ── Parsing ──────────────────────────────────────────────────────────────
@@ -529,7 +530,7 @@ def detect_shell() -> tuple[str, str]:
 
     ``COGNITRIX_SHELL`` overrides it, e.g. Git Bash's ``bash.exe`` on Windows.
     """
-    override = os.getenv('COGNITRIX_SHELL', '').strip()
+    override = app_setting('COGNITRIX_SHELL', '').strip()
     if override:
         name = Path(override).name.lower()
         if 'pwsh' in name or 'powershell' in name:

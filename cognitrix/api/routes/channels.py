@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from cognitrix.agents import access as agent_access
+from cognitrix.app_settings import get as app_setting
 from cognitrix.channels import service as channel_service
 from cognitrix.channels.base import ChannelAuthError
 from cognitrix.channels.slack import SLACK_MANIFEST
@@ -435,7 +436,6 @@ async def whatsapp_messages(channel_id: str, request: Request) -> Response:
 async def sms_messages(channel_id: str, request: Request) -> Response:
     """Where Twilio posts texts sent to a connected number. Anyone can reach
     this, so the call is only used once its signature has been checked."""
-    import os
     from urllib.parse import parse_qsl
 
     from cognitrix.channels.sms import SmsAuthError
@@ -451,7 +451,7 @@ async def sms_messages(channel_id: str, request: Request) -> Response:
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail='Bad form') from None
     try:
-        await service.deliver_sms(channel_id, _twilio_urls(request, os.getenv('COGNITRIX_PUBLIC_URL', '')),
+        await service.deliver_sms(channel_id, _twilio_urls(request, app_setting('COGNITRIX_PUBLIC_URL', '')),
                                   request.headers.get('x-twilio-signature', ''), params)
     except LookupError:
         raise HTTPException(status_code=404, detail='Not found') from None

@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import time
 import uuid
 from contextvars import ContextVar
@@ -13,6 +12,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.encoding import status_print
 from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 
@@ -47,7 +47,7 @@ def _normal_name(name: str) -> str:
 
 
 def _auto_approve_enabled() -> bool:
-    return os.getenv('COGNITRIX_AUTO_APPROVE', '').strip().lower() in ('1', 'true', 'yes')
+    return app_setting('COGNITRIX_AUTO_APPROVE', '').strip().lower() in ('1', 'true', 'yes')
 
 
 # Per-turn web context: lets check_approval reach the SSE emit callback and the

@@ -32,6 +32,7 @@ import { AuditLog } from '@/components/settings/AuditLog';
 import { ComputersSettings } from '@/components/settings/Computers';
 import { ThisPcLink } from '@/components/settings/ThisPcLink';
 import { SignInsSettings } from '@/components/settings/SignIns';
+import { AppSettings } from '@/components/settings/AppSettings';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -40,7 +41,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'notifications' | 'models' | 'usage' | 'assistant' | 'memory' | 'voice' | 'apps' | 'computers' | 'people' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'notifications' | 'models' | 'usage' | 'assistant' | 'memory' | 'voice' | 'apps' | 'computers' | 'people' | 'advanced' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -63,6 +64,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'apps', get label() { return tr('ui.settings.connectedApps'); }, group: 'AGENTS', keywords: 'connected apps github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp servers tools passwords credentials secrets tokens telegram slack discord teams microsoft whatsapp sms text message twilio phone bot email mail address imap smtp mailbox' },
   { id: 'computers', get label() { return tr('ui.settings.computers'); }, group: 'AGENTS', keywords: 'pc pair pairing my computer laptop desktop device link connect sandbox remote machine working folder files apps agents can use' },
   { id: 'people', get label() { return tr('ui.settings.people'); }, group: 'SERVER', keywords: 'users admin invite invitation members roles disable remove delete accounts email smtp reset spending limit cap budget audit log activity history who did what tool calls approvals sign ins security' },
+  { id: 'advanced', get label() { return tr('ui.settings.advanced'); }, group: 'SERVER', keywords: 'environment variables env setup server public url address web address safety reviewer shell allowlist auto approve folders private network webhooks limits timeouts rate limit tool rounds swarm automation sharing public links apps' },
   { id: 'desktop', get label() { return tr('ui.settings.desktopApp'); }, group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
   { id: 'engine', get label() { return tr('ui.settings.engine'); }, group: 'THIS COMPUTER', keywords: 'server status restart log version database queue worker data folder' },
 ];
@@ -433,9 +435,9 @@ function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boo
     case 'appearance':
       return <AppearanceSection />;
     case 'notifications':
-      return (<><SectionHeader title={tr('ui.settings.notifications')} description={tr('ui.settings.chooseWhichEventsReachYou')} /><NotificationPrefsCard /></>);
+      return (<><SectionHeader title={tr('ui.settings.notifications')} description={tr('ui.settings.chooseWhichEventsReachYou')} /><NotificationPrefsCard /><AppSettings page="notifications" /></>);
     case 'models':
-      return (<><SectionHeader title={tr('ui.settings.modelsAndKeys')} description={tr('ui.settings.yourChatgptPlanAndApi')} /><ChatGPTPlanCard /><CodingAgents /><ProviderKeys /></>);
+      return (<><SectionHeader title={tr('ui.settings.modelsAndKeys')} description={tr('ui.settings.yourChatgptPlanAndApi')} /><ChatGPTPlanCard /><CodingAgents /><ProviderKeys /><AppSettings page="models" /></>);
     case 'usage':
       return (
         <>
@@ -493,6 +495,7 @@ function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boo
           <div id="mcp-servers" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
             <McpServersCard />
           </div>
+          <AppSettings page="apps" />
         </>
       );
     case 'computers':
@@ -508,6 +511,7 @@ function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boo
             </>
           )}
           <ComputerAccess desktopApp={desktopApp} />
+          <AppSettings page="computers" />
         </>
       );
     case 'people':
@@ -518,10 +522,13 @@ function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boo
             description={admin ? tr('ui.settings.whoHasAnAccountOn_2d6b') : tr('ui.settings.whoDidWhatOnThis')}
           />
           {admin && <PeopleSettings />}
+          {admin && <AppSettings page="people" />}
           {admin && <SubHeading className="mt-7"><span id="activity" className="scroll-mt-4">{tr('ui.settings.activity')}</span></SubHeading>}
           <AuditLog />
         </>
       );
+    case 'advanced':
+      return (<><SectionHeader title={tr('ui.settings.advanced')} description={tr('ui.settings.advancedDescription')} /><AppSettings page="advanced" /></>);
     case 'desktop': return <DesktopSection />;
     case 'engine': return <EngineSection desktopApp={desktopApp} />;
   }

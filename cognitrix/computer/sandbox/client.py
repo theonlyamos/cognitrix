@@ -27,6 +27,7 @@ from typing import Any
 
 import httpx
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.computer import (
     Actor,
     Blocked,
@@ -58,7 +59,7 @@ MODE_ENV = 'COGNITRIX_COMPUTER_SANDBOX'
 AGENT_USER_CAPS = ('CHOWN', 'FOWNER', 'SETGID', 'SETUID')
 AGENT_USERS_LABEL = 'cognitrix.agent-users'
 # Published by .github/workflows/sandbox-image.yml; Docker pulls it on first use.
-IMAGE = os.environ.get('COGNITRIX_SANDBOX_IMAGE', 'ghcr.io/theonlyamos/cognitrix-desktop:latest')
+IMAGE = app_setting('COGNITRIX_SANDBOX_IMAGE', 'ghcr.io/theonlyamos/cognitrix-desktop:latest')
 SETTINGS_FILE = Path.home() / '.cognitrix' / 'computer-sandbox.json'
 LABEL = 'cognitrix.sandbox'
 # How often the engine pulls the image to see whether a newer one was
@@ -73,7 +74,7 @@ _PULL_TIMEOUT_S = 3 * 3600.0
 # A running computer made from an older image moves onto the newer one once
 # it has been idle this long (0 turns that off; the panel's Update button
 # still works). Checked every AUTO_UPDATE_EVERY_S.
-AUTO_UPDATE_IDLE_S = float(os.environ.get('COGNITRIX_SANDBOX_AUTO_UPDATE_IDLE_S', '600') or 0)
+AUTO_UPDATE_IDLE_S = float(app_setting('COGNITRIX_SANDBOX_AUTO_UPDATE_IDLE_S', '600') or 0)
 AUTO_UPDATE_EVERY_S = 300.0
 
 _NO_OWNER = object()
@@ -84,10 +85,10 @@ _ERRORS = {'human_control': HumanControl, 'stale': Stale, 'busy': Busy, 'blocked
 
 def sandbox_mode() -> str | None:
     """'docker' or 'fly' when agents use the sandboxed computer, else None.
-    The environment variable wins; then the setting saved from Settings
+    "Where agents get a computer" in Settings wins; then the on/off switch
     (which only switches the local Docker one on); with neither, it is on
     when Docker is installed."""
-    value = os.environ.get(MODE_ENV, '').strip().lower()
+    value = app_setting(MODE_ENV, '').strip().lower()
     if value:
         if value == 'fly':
             return 'fly'
@@ -112,8 +113,8 @@ def _docker_installed() -> bool:
 
 
 def mode_from_env() -> bool:
-    """True when the environment decides, so Settings can't change it."""
-    return bool(os.environ.get(MODE_ENV, '').strip())
+    """True when "Where agents get a computer" decides, so the switch can't change it."""
+    return bool(app_setting(MODE_ENV, '').strip())
 
 
 _saved_cache: tuple[float, dict] = (-1.0, {})
@@ -327,7 +328,7 @@ class SandboxManager:
             '--add-host', 'host.docker.internal:host-gateway',
             '--cap-drop', 'ALL', *self._agent_user_args(),
             '--security-opt', 'no-new-privileges',
-            '--pids-limit', '2048', '--memory', os.environ.get('COGNITRIX_SANDBOX_MEMORY', '4g'),
+            '--pids-limit', '2048', '--memory', app_setting('COGNITRIX_SANDBOX_MEMORY', '4g'),
             '--shm-size', '1g',
             self.image, timeout=1200)  # the first start downloads the image
 
@@ -495,7 +496,7 @@ class SandboxManager:
         """Pull the image in the background when the last pull is old enough.
         Returns True when a pull was started."""
         try:
-            hours = float(os.environ.get(UPDATE_CHECK_HOURS_ENV, '6') or 0)
+            hours = float(app_setting(UPDATE_CHECK_HOURS_ENV, '6') or 0)
         except ValueError:
             hours = 6.0
         if hours <= 0 and not force:

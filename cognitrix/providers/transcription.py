@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import base64
 import logging
-import os
 import struct
 from dataclasses import dataclass
 
 import httpx
+
+from cognitrix.app_settings import get as app_setting
 
 from .base import _DEFAULT_BASE_URLS, _get_or_create_client, assert_key_destination_allowed
 
@@ -88,26 +89,17 @@ class TranscriptionError(Exception):
 
 def server_key(provider: str) -> str:
     """The engine's own key for ``provider`` (environment or settings)."""
-    from cognitrix.config import settings
 
     spec = VOICE_PROVIDERS.get(provider)
     if spec is None:
         return ''
-    value = os.getenv(spec.key_env, '')
-    if not value:
-        try:
-            value = settings.get_api_key(provider) or ''
-        except Exception:
-            value = ''
-    if not value:
-        from cognitrix.providers.saved_keys import get_saved_key
+    from cognitrix.providers.saved_keys import get_saved_key
 
-        value = get_saved_key(provider)
-    return value.strip()
+    return (get_saved_key(provider) or '').strip()
 
 
 def _base_url(provider: str) -> str:
-    return (os.getenv(f'{provider.upper()}_BASE_URL') or _DEFAULT_BASE_URLS.get(provider, '')).rstrip('/')
+    return (app_setting(f'{provider.upper()}_BASE_URL') or _DEFAULT_BASE_URLS.get(provider, '')).rstrip('/')
 
 
 # ---------------------------------------------------------------- WAV helpers

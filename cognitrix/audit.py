@@ -16,13 +16,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from odbms import Model
 from pydantic import field_validator
+
+from cognitrix.app_settings import get as app_setting
 
 logger = logging.getLogger('cognitrix.audit')
 
@@ -61,7 +62,7 @@ class AuditEvent(Model):
 
 def retention_days() -> int:
     try:
-        return max(0, int(os.environ.get('COGNITRIX_AUDIT_DAYS', '90')))
+        return max(0, int(app_setting('COGNITRIX_AUDIT_DAYS', '90')))
     except ValueError:
         return 90
 

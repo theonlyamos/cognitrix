@@ -16,11 +16,10 @@ browser logins). Inside it, each agent still gets its own desktop.
   Fly's private network (6PN), so the engine must run on Fly in the same
   organisation. Every call still needs the machine's own token.
 
-Settings (environment of the engine):
+Settings (Settings > Computers; names as in cognitrix/app_settings.py):
 
     COGNITRIX_COMPUTER_SANDBOX=fly
-    FLY_API_TOKEN                     a token that can manage the sandbox app
-                                      (COGNITRIX_FLY_API_TOKEN wins when set)
+    COGNITRIX_FLY_API_TOKEN           a token that can manage the sandbox app
     COGNITRIX_SANDBOX_FLY_APP         the Fly app the machines live in
     COGNITRIX_SANDBOX_FLY_REGION      default: the engine's own region (FLY_REGION)
     COGNITRIX_SANDBOX_FLY_CPUS        default 2 (shared CPUs)
@@ -46,6 +45,7 @@ from typing import Any
 
 import httpx
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.computer import DriverError, Unsupported
 from cognitrix.computer.sandbox import SERVICE_PORT, TOKEN_ENV, VIEWER_PORT
 from cognitrix.computer.sandbox.client import IMAGE, Sandbox, SandboxManager, user_key
@@ -63,28 +63,28 @@ ENTRYPOINT = ['/usr/bin/tini', '--', '/usr/local/bin/cognitrix-sandbox-root']
 
 def _int_env(name: str, default: int) -> int:
     try:
-        return int(os.environ.get(name, '') or default)
+        return int(app_setting(name, '') or default)
     except ValueError:
         return default
 
 
 def _float_env(name: str, default: float) -> float:
     try:
-        return float(os.environ.get(name, '') or default)
+        return float(app_setting(name, '') or default)
     except ValueError:
         return default
 
 
 def fly_token() -> str:
-    return (os.environ.get('COGNITRIX_FLY_API_TOKEN') or os.environ.get('FLY_API_TOKEN') or '').strip()
+    return (app_setting('COGNITRIX_FLY_API_TOKEN') or '').strip()
 
 
 def fly_app() -> str:
-    return (os.environ.get('COGNITRIX_SANDBOX_FLY_APP') or '').strip()
+    return (app_setting('COGNITRIX_SANDBOX_FLY_APP') or '').strip()
 
 
 def fly_region() -> str:
-    return (os.environ.get('COGNITRIX_SANDBOX_FLY_REGION') or os.environ.get('FLY_REGION') or '').strip()
+    return (app_setting('COGNITRIX_SANDBOX_FLY_REGION') or os.environ.get('FLY_REGION') or '').strip()
 
 
 def idle_minutes() -> float:
@@ -92,13 +92,13 @@ def idle_minutes() -> float:
 
 
 def idle_action() -> str:
-    return 'suspend' if os.environ.get('COGNITRIX_SANDBOX_FLY_IDLE', '').strip().lower() == 'suspend' else 'stop'
+    return 'suspend' if app_setting('COGNITRIX_SANDBOX_FLY_IDLE', '').strip().lower() == 'suspend' else 'stop'
 
 
 def fly_settings() -> dict[str, Any]:
     """What Settings shows about the hosted computer (never the token)."""
-    missing = [name for name, value in (('FLY_API_TOKEN', fly_token()), ('COGNITRIX_SANDBOX_FLY_APP', fly_app()),
-                                        ('COGNITRIX_SANDBOX_FLY_REGION', fly_region())) if not value]
+    missing = [name for name, value in (('Fly API token', fly_token()), ('Fly app name', fly_app()),
+                                        ('Region', fly_region())) if not value]
     return {'app': fly_app(), 'region': fly_region(), 'configured': not missing, 'missing': missing,
             'idle_minutes': idle_minutes(), 'idle_action': idle_action(),
             'size': f"{_int_env('COGNITRIX_SANDBOX_FLY_CPUS', 2)} CPU, "
@@ -133,8 +133,8 @@ class FlyMachines:
             except ValueError:
                 detail = resp.text
             if resp.status_code in (401, 403):
-                raise Unsupported("Fly refused the server's token for the agents' computer. Check FLY_API_TOKEN "
-                                  'and COGNITRIX_SANDBOX_FLY_APP.')
+                raise Unsupported("Fly refused the server's token for the agents' computer. Check the Fly API token "
+                                  'and app name in Settings, Computers.')
             raise FlyError(f"Fly couldn't do that: {str(detail)[:300]}")
         if not resp.content:
             return {}
@@ -215,7 +215,7 @@ class FlyManager(SandboxManager):
     def _need_api(self) -> FlyMachines:
         if self.api is None:
             raise Unsupported("The agents' computer is set to run on Fly, but the server has no Fly settings. "
-                              'Set FLY_API_TOKEN and COGNITRIX_SANDBOX_FLY_APP (see docs/sandbox-on-fly.md).')
+                              'Add a Fly API token and app name in Settings, Computers (see docs/sandbox-on-fly.md).')
         return self.api
 
     def machine_name(self, user_id: Any) -> str:
@@ -261,7 +261,7 @@ class FlyManager(SandboxManager):
                 'COGNITRIX_SANDBOX_VIEWER_LISTEN': f'[::]:{VIEWER_PORT}',
             },
             'guest': {
-                'cpu_kind': os.environ.get('COGNITRIX_SANDBOX_FLY_CPU_KIND', 'shared') or 'shared',
+                'cpu_kind': app_setting('COGNITRIX_SANDBOX_FLY_CPU_KIND', 'shared') or 'shared',
                 'cpus': _int_env('COGNITRIX_SANDBOX_FLY_CPUS', 2),
                 'memory_mb': _int_env('COGNITRIX_SANDBOX_FLY_MEMORY_MB', 4096),
             },
@@ -277,7 +277,7 @@ class FlyManager(SandboxManager):
         api = self._need_api()
         region = fly_region()
         if not region:
-            raise Unsupported('Set COGNITRIX_SANDBOX_FLY_REGION (or run the server on Fly) so the agents\' '
+            raise Unsupported('Set a region in Settings, Computers (or run the server on Fly) so the agents\' '
                               'computer knows where to start.')
         volume = self._volume(user_id, region)
         token = secrets.token_urlsafe(24)

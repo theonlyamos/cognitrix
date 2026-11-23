@@ -10,11 +10,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from types import SimpleNamespace
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.computer.paired import (
     APPS,
     CALL_TIMEOUT_S,
@@ -272,7 +272,7 @@ _gave_up: dict[tuple[str, str], float] = {}
 
 def offline_wait_s() -> float:
     try:
-        return float(os.environ.get('COGNITRIX_PAIRED_TASK_WAIT_S', '') or OFFLINE_WAIT_S)
+        return float(app_setting('COGNITRIX_PAIRED_TASK_WAIT_S', '') or OFFLINE_WAIT_S)
     except ValueError:
         return OFFLINE_WAIT_S
 

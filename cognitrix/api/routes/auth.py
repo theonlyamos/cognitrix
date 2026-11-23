@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import logging
-import os
 import secrets
 import time
 from typing import Annotated
@@ -10,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.security import (
     AuthContext,
     Token,
@@ -45,7 +45,7 @@ def _reset_by_email_ready() -> bool:
 
 
 async def _signup_open() -> bool:
-    allow = os.getenv('COGNITRIX_ALLOW_SIGNUP', '').strip().lower()
+    allow = app_setting('COGNITRIX_ALLOW_SIGNUP', '').strip().lower()
     if allow in ('0', 'false', 'no'):
         return False
     if allow in ('1', 'true', 'yes'):

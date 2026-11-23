@@ -18,11 +18,12 @@ import asyncio
 import base64
 import json
 import logging
-import os
 import struct
 from dataclasses import dataclass
 
 import httpx
+
+from cognitrix.app_settings import get as app_setting
 
 from .base import _DEFAULT_BASE_URLS, assert_key_destination_allowed
 
@@ -55,7 +56,7 @@ class SpeechProvider:
 
     @property
     def model(self) -> str:
-        return os.getenv(self.model_env, '').strip() or self.default_model
+        return app_setting(self.model_env, '').strip() or self.default_model
 
 
 SPEECH_PROVIDERS: dict[str, SpeechProvider] = {
@@ -118,7 +119,7 @@ def _friendly(provider: str, status: int | None) -> SpeechError:
 
 
 async def _openai(text: str, voice: str, model: str, api_key: str) -> tuple[bytes, str]:
-    base_url = (os.getenv('OPENAI_BASE_URL') or _DEFAULT_BASE_URLS.get('openai', '')).rstrip('/')
+    base_url = (app_setting('OPENAI_BASE_URL') or _DEFAULT_BASE_URLS.get('openai', '')).rstrip('/')
     assert_key_destination_allowed(base_url, api_key)
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
@@ -218,7 +219,7 @@ async def _openai_realtime(text: str, voice: str, model: str, api_key: str) -> t
         import websockets
     except ImportError as exc:  # pragma: no cover - installed with uvicorn[standard]
         raise SpeechError('Read aloud with OpenAI needs the websockets package.', 500) from exc
-    base_url = (os.getenv('OPENAI_BASE_URL') or _DEFAULT_BASE_URLS.get('openai', '')).rstrip('/')
+    base_url = (app_setting('OPENAI_BASE_URL') or _DEFAULT_BASE_URLS.get('openai', '')).rstrip('/')
     assert_key_destination_allowed(base_url, api_key)
     try:
         async with asyncio.timeout(REALTIME_TIMEOUT):

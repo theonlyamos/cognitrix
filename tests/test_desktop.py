@@ -49,7 +49,8 @@ def test_engine_environment_defaults(tmp_path, monkeypatch):
     import os
     assert os.environ['COGNITRIX_TOOLS_ROOT'] == str(folder)
     assert os.environ['COGNITRIX_DESKTOP'] == '1'
-    assert int(os.environ['JWT_ACCESS_TOKEN_EXPIRE_MINUTES']) >= 60 * 24
+    from cognitrix import app_settings
+    assert int(app_settings.get('JWT_ACCESS_TOKEN_EXPIRE_MINUTES')) >= 60 * 24
     assert os.getcwd() == str(folder)
     # The settings object other modules already hold sees the new values.
     from cognitrix.config import settings

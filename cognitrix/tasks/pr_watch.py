@@ -62,6 +62,8 @@ import httpx
 from odbms import Model
 from pydantic import validator
 
+from cognitrix.app_settings import get as app_setting
+
 logger = logging.getLogger('cognitrix.log')
 
 GITHUB_APP = 'github'
@@ -125,13 +127,13 @@ def utcnow() -> datetime:
 
 def check_seconds() -> int:
     try:
-        return max(MIN_SECONDS, int(os.getenv('COGNITRIX_GITHUB_CHECK_SECONDS', '') or DEFAULT_SECONDS))
+        return max(MIN_SECONDS, int(app_setting('COGNITRIX_GITHUB_CHECK_SECONDS', '') or DEFAULT_SECONDS))
     except ValueError:
         return DEFAULT_SECONDS
 
 
 def public_url() -> str:
-    return os.getenv('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/')
+    return app_setting('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/')
 
 
 def webhooks_possible() -> bool:
@@ -139,7 +141,7 @@ def webhooks_possible() -> bool:
     and only over https."""
     if os.environ.get('COGNITRIX_DESKTOP') == '1':
         return False
-    if os.getenv('COGNITRIX_GITHUB_WEBHOOKS', '1').strip().lower() in ('0', 'false', 'off', 'no'):
+    if app_setting('COGNITRIX_GITHUB_WEBHOOKS', '1').strip().lower() in ('0', 'false', 'off', 'no'):
         return False
     return public_url().startswith('https://')
 
@@ -1138,7 +1140,7 @@ async def receive(hook_id: str, event: str, body: bytes, signature: str | None) 
 # --- webhooks: the GitHub App ----------------------------------------------------------
 
 def _app_env(name: str) -> str:
-    return os.getenv(name, '').strip()
+    return app_setting(name, '').strip()
 
 
 def app_configured() -> bool:

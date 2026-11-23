@@ -1,8 +1,19 @@
 """Test configuration and shared fixtures for Cognitrix tests."""
 
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+from cognitrix import app_settings as _app_settings
+
+# Settings saved from the app live in a throwaway file during tests, and a
+# value a test sets with monkeypatch.setenv still counts when nothing is
+# saved (the app itself never reads these from the environment).
+_APP_SETTINGS_DIR = Path(tempfile.mkdtemp(prefix='cognitrix-app-settings-'))
+_app_settings.settings_file = lambda: _APP_SETTINGS_DIR / 'app_settings.json'
+_app_settings._env_fallback = True
 
 
 @pytest.fixture
@@ -17,6 +28,18 @@ def mock_llm_response():
 def mock_embedding():
     """Create a mock embedding vector."""
     return [0.1, 0.2, 0.3, 0.4, 0.5]
+
+
+@pytest.fixture(autouse=True)
+def _app_settings_per_test(monkeypatch):
+    """Process-only overrides (command line flags, the desktop's sign-in
+    length) and saved values don't leak from one test into the next."""
+    monkeypatch.setattr(_app_settings, '_overrides', {})
+    path = _app_settings.settings_file()
+    if path.exists():
+        path.unlink()
+    _app_settings._cache = None
+    yield
 
 
 @pytest.fixture(autouse=True)

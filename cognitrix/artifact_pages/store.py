@@ -13,13 +13,13 @@ Sources are files under ``<workdir>/artifacts/<page id>/<version>.src``.
 from __future__ import annotations
 
 import hashlib
-import os
 import secrets
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.artifact_pages import documents
 from cognitrix.artifact_pages.models import (
     EVERYONE,
@@ -60,7 +60,7 @@ def now() -> str:
 
 def public_links_allowed() -> bool:
     """Public links are on unless the server turns them off."""
-    return os.getenv('COGNITRIX_ARTIFACT_PUBLIC_LINKS', '').strip().lower() not in ('off', '0', 'false', 'no')
+    return app_setting('COGNITRIX_ARTIFACT_PUBLIC_LINKS', '').strip().lower() not in ('off', '0', 'false', 'no')
 
 
 def root_dir() -> Path:

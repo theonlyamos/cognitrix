@@ -3,7 +3,7 @@
 Prices come from OpenRouter's public model list, which carries the list price
 of nearly every hosted model, and are kept in the app folder for a day so the
 page does not wait on the network. The request sends nothing about the person
-or what they used. Set COGNITRIX_PRICE_LOOKUP=0 to turn the lookup off; the
+or what they used. Turn "Look up model prices" off in Settings to stop the lookup; the
 page then shows tokens without a cost. A model that is not in the list (a
 local model's own name, a private deployment) has no cost either, apart from
 Ollama, which runs on the person's own machine and is counted as free.
@@ -13,10 +13,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import time
 from typing import Any
+
+from cognitrix.app_settings import get as app_setting
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -32,7 +33,7 @@ _PREFIX = {'openai': 'openai', 'anthropic': 'anthropic', 'google': 'google', 'ge
 
 
 def lookup_enabled() -> bool:
-    return os.environ.get('COGNITRIX_PRICE_LOOKUP', '1').strip().lower() not in ('0', 'false', 'off', 'no')
+    return app_setting('COGNITRIX_PRICE_LOOKUP', '1').strip().lower() not in ('0', 'false', 'off', 'no')
 
 
 def _cache_file():

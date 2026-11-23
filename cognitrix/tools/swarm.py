@@ -6,9 +6,9 @@ worker gets. See ``cognitrix/swarms/service.py`` for how a swarm runs.
 from __future__ import annotations
 
 import contextvars
-import os
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.swarms import service
 from cognitrix.swarms.service import SwarmError
 from cognitrix.tools.tool import tool
@@ -32,7 +32,7 @@ SWARM_MODE_NOTE = (
 def wait_seconds() -> float:
     """How long Swarm (action "wait") holds the lead's turn for a report."""
     try:
-        return max(0.0, float(os.environ.get('COGNITRIX_SWARM_WAIT_SECONDS', '') or 45))
+        return max(0.0, float(app_setting('COGNITRIX_SWARM_WAIT_SECONDS', '') or 45))
     except ValueError:
         return 45.0
 
