@@ -123,6 +123,16 @@ def _stopped_tool_messages(tool_calls: list[dict[str, Any]]) -> list[dict[str, A
 _CODE_TOOLS = frozenset({'bash', 'read', 'write', 'edit', 'glob', 'grep', 'coding agent', 'run tests'})
 
 
+def _turn_helper_names(names: set[str]) -> tuple[str, ...]:
+    """Tools that come along for a turn with the (lowercase) tools an agent has."""
+    helpers: tuple[str, ...] = ()
+    if names & {'bash', 'coding agent'}:
+        helpers += ('bash_output', 'kill_shell')
+    if 'look at window' in names:
+        helpers += ('show_screenshot',)
+    return helpers
+
+
 def _code_tool_names(agent: Any) -> set[str]:
     """The shell, file and coding tools the agent has itself."""
     return {str(getattr(t, 'name', '')).lower() for t in getattr(agent, 'tools', None) or []} & _CODE_TOOLS
@@ -989,14 +999,16 @@ class Session(Model):
                 logger.debug('sandbox tools unavailable', exc_info=True)
 
         # Bash's background mode and the Coding Agent tool need the two
-        # background helpers; agents that have either get them for the turn
-        # without changing the saved agent.
+        # background helpers, and agents saved before Show Screenshot existed
+        # still have the window tools it goes with. They get these for the
+        # turn without changing the saved agent.
         try:
             names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
-            if names & {'bash', 'coding agent'}:
+            wanted_helpers = _turn_helper_names(names)
+            if wanted_helpers:
                 from cognitrix.tools.base import ToolManager
                 helpers = [
-                    t for t in (ToolManager.get_by_name(n) for n in ('bash_output', 'kill_shell'))
+                    t for t in (ToolManager.get_by_name(n) for n in wanted_helpers)
                     if t is not None and t.name.lower() not in names
                 ]
                 if helpers:
