@@ -2806,7 +2806,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
               <ComputerPreview desktop={agentDesktop.name} label={currentAgent?.name || tr('ui.chill.assistant')}
                 onOpen={showComputer} className="mb-3 max-w-md" />
             )}
-            {!streaming && (chillMade.pages.length > 0 || chillMade.files.length > 0 || chillLastFiles.length > 0) && (
+            {!(streaming && chillOnLatest) && (chillMade.pages.length > 0 || chillMade.files.length > 0 || chillLastFiles.length > 0) && (
               <div className="space-y-2">
                 {chillMade.pages.map((page) => <ChillPageCard key={page.id} {...page} />)}
                 <FileCards files={chillMade.files} />
