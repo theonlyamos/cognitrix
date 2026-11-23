@@ -2,8 +2,19 @@ import { publishedFrom } from '@/lib/artifactPages';
 import type { ProducedFileRef } from '@/lib/producedFiles';
 
 interface TurnMessage {
-  tools?: { name: string; status?: string; result?: string | null; files?: ProducedFileRef[] }[];
+  tools?: { name: string; status?: string; params?: string | null; result?: string | null; files?: ProducedFileRef[] }[];
   filesMade?: ProducedFileRef[];
+}
+
+const WINDOW_TOOLS = ['list_windows', 'open_app', 'look_at_window', 'show_screenshot', 'click_element', 'set_text',
+  'click_in_window', 'type_in_window', 'press_key_in_window', 'scroll_window', 'ask_to_take_over'];
+const IN_CODE = new RegExp(`tools\\.(${WINDOW_TOOLS.join('|')})\\b`);
+
+/** True once this turn drove the agent's desktop, directly or from Run Code. */
+export function usedComputer(messages: TurnMessage[]): boolean {
+  return messages.some((message) => (message.tools ?? []).some((tool) => (
+    WINDOW_TOOLS.includes(tool.name.toLowerCase().replace(/[\s-]+/g, '_')) || IN_CODE.test(tool.params ?? '')
+  )));
 }
 
 /** The pages and files one turn put in front of the person, each once. */
