@@ -87,6 +87,12 @@ async def get_proactivity(ctx: AuthContext = Depends(jwt_only)):
     }
 
 
+@proactive_api.get('/main')
+async def get_main_assistant(ctx: AuthContext = Depends(jwt_only)):
+    """The person's main assistant, for chill mode: {id, name, ...} or null."""
+    return {'main_assistant': await _main_view(_me(ctx))}
+
+
 @proactive_api.put('/proactivity')
 async def put_proactivity(body: ProactivityBody, ctx: AuthContext = Depends(jwt_only)):
     from cognitrix.common.clock import client_timezone

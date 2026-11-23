@@ -295,6 +295,9 @@ async def test_first_run_turns_check_ins_on(db, monkeypatch):  # noqa: F811
     view = await proactive.get_proactivity(_ctx(user))
     assert view['needs_setup'] is False and view['level'] == 'balanced'
     assert view['main_assistant']['name'] == 'Jarvis'
+    # Chill mode asks for just the main assistant.
+    main = await proactive.get_main_assistant(_ctx(user))
+    assert main['main_assistant']['id'] == result['agent']['id']
     changed = await proactive.put_proactivity(proactive.ProactivityBody(max_pushes=5, brief_time='07:30'), _ctx(user))
     assert changed['max_pushes'] == 5 and changed['brief_time'] == '07:30'
     with pytest.raises(HTTPException):

@@ -15,6 +15,15 @@ export default function ChatScreen() {
   );
 }
 
+/** /chill: chill mode, one box and the main assistant. */
+export function ChillChatScreen() {
+  return (
+    <Suspense fallback={<div className="h-full min-w-0 flex-1 bg-bg" />}>
+      <Home chill />
+    </Suspense>
+  );
+}
+
 /** /teams/:teamId/chat, the team chat's old address. */
 export function TeamChatLink() {
   const { teamId = '' } = useParams();

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import AppLayout from '@/components/AppLayout';
 import { ThemeProvider } from '@/context/ThemeContext';
@@ -157,5 +157,32 @@ describe('AppLayout', () => {
     view.unmount();
 
     expect(document.documentElement).not.toHaveClass('app-scroll-locked');
+  });
+
+  it('reopens in chill mode once, then lets other pages open', async () => {
+    localStorage.setItem('uiMode', 'chill');
+    function GoAgents() {
+      const navigate = useNavigate();
+      return <button type="button" onClick={() => navigate('/agents')}>go agents</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/home']} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+        <ThemeProvider>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/home" element={<div>Authenticated home</div>} />
+              <Route path="/chill" element={<div>Chill page<GoAgents /></div>} />
+              <Route path="/agents" element={<div>Authenticated agents</div>} />
+            </Route>
+          </Routes>
+        </ThemeProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('Chill page')).toBeTruthy();
+    // No sidebar in chill mode.
+    expect(screen.queryByRole('button', { name: /open navigation/i })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'go agents' }));
+    expect(await screen.findByText('Authenticated agents')).toBeTruthy();
+    localStorage.removeItem('uiMode');
   });
 });
