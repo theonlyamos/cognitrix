@@ -751,3 +751,52 @@ async def test_review_findings_circles_waiting_swarms_and_task_models(db, world,
     set_execution_context(ToolExecutionContext(user_id='u1', agent_id=BOSS.id, task_id='t9', run_id='r9'))
     out = await _call(spawn_workers, workers=[{'brief': 'cheap part', 'model': 'openai/gpt-5.4-mini'}, {'brief': 'other part'}])
     assert out.status == 'success' and sorted(used, key=str) == [None, 'openai/gpt-5.4-mini']
+
+
+# --- the swarm's message board ---------------------------------------------------
+
+async def test_the_swarm_board_reaches_workers_new_briefs_and_the_report(db, world):
+    from cognitrix.board import service as board
+    from cognitrix.swarms import service
+    from cognitrix.tools.board import board as board_tool
+    from cognitrix.tools.swarm import spawn_workers
+
+    lead = await _lead()
+    world.gate = asyncio.Event()
+    sid = _swarm_id(await _call(spawn_workers, title='Pricing', workers=[
+        {'name': 'one', 'brief': 'part one'}, {'name': 'two', 'brief': 'part two'}]))
+    await asyncio.sleep(0.05)
+    live = service._LIVE[sid]
+
+    # A worker posts to its swarm's board by default; a question for a teammate reaches it now.
+    await _as_worker(sid, 'one')
+    found = await _call(board_tool, action='post', kind='finding', text='Acme lists prices with VAT.')
+    assert found.status == 'success', found.text
+    asked = await _call(board_tool, action='post', kind='question', text='Is Globex monthly or yearly?', to='two')
+    assert asked.status == 'success', asked.text
+    await board.settle()
+    posts = await board.posts_on('u1', board.swarm_board(sid))
+    assert {p.author_name for p in posts} == {'one'}
+    assert any('Is Globex monthly' in m.content for m in live.runs['two'].inbox)
+    assert not any('Acme lists' in m.content for m in live.runs['two'].inbox)  # findings aren't pushed
+
+    # The lead's decision goes to every running worker and into briefs of workers that start later.
+    set_execution_context(ToolExecutionContext(user_id='u1', session_id=str(lead.id), agent_id=BOSS.id))
+    decided = await _call(board_tool, action='post', board='swarm', kind='decision', text='Compare monthly prices only.')
+    assert decided.status == 'success', decided.text
+    await board.settle()
+    assert all(any('Compare monthly' in m.content for m in live.runs[n].inbox) for n in ('one', 'two'))
+    await service.add_workers('u1', sid, service.parse_specs([{'name': 'three', 'brief': 'part three'}]))
+
+    # A worker's turn note lists what concerns it.
+    note = await board.digest('u1', BOSS.id, 'Boss', board=board.swarm_board(sid), worker='two',
+                              chat_id=(await service.find_worker(sid, 'two')).chat_id)
+    assert 'For you:' in note and 'Is Globex monthly' in note and 'Compare monthly' in note
+
+    world.gate.set()
+    await _settle()
+    three = next(t for t in world.turns if 'part three' in t[2])
+    assert '## Decisions on the swarm board' in three[2] and 'Compare monthly prices only.' in three[2]
+    assert 'message board (Board tool)' in three[2]
+    reports = [t[2] for t in _lead_turns(world, lead)]
+    assert any('Still open on the swarm board' in r and 'Is Globex monthly' in r for r in reports)

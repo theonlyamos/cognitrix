@@ -99,6 +99,8 @@ _KNOWN_LOW = frozenset({
     'memory', 'search_chats', 'read_chat',
     # coming back to this same chat later; the follow-up turn's own risky calls still ask
     'follow_up_later',
+    # the message board only the person's own agents (and the person) read
+    'board',
     # the morning brief only lands in the person's Inbox and dashboard
     'publish_brief',
     # the app's colours: each change shows in the chat with Undo

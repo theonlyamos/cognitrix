@@ -905,6 +905,7 @@ async def _ensure_schema():
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
     from cognitrix.mcp.app_views import MODELS as APP_VIEW_MODELS
     from cognitrix.swarms.models import MODELS as SWARM_MODELS
+    from cognitrix.board.models import MODELS as BOARD_MODELS
     from cognitrix.public_agents.models import MODELS as PUBLIC_AGENT_MODELS
     from cognitrix.sessions.sharing import MODELS as CHAT_SHARE_MODELS
     from cognitrix.agent_email.models import MODELS as EMAIL_MODELS
@@ -925,6 +926,7 @@ async def _ensure_schema():
         *HOSTED_APP_MODELS,
         *APP_VIEW_MODELS,
         *SWARM_MODELS,
+        *BOARD_MODELS,
         *PUBLIC_AGENT_MODELS,
         *CHAT_SHARE_MODELS,
         *EMAIL_MODELS,

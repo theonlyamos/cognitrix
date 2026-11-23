@@ -234,6 +234,14 @@ class HybridContextManager(BaseContextManager):
                     system_content += "\n\n" + note
             except Exception:
                 logger.exception("Could not build the what's-going-on note")
+        try:
+            from cognitrix.board.service import board_note_ctx
+
+            board_note = board_note_ctx.get()
+            if board_note:
+                system_content += "\n\n" + board_note
+        except Exception:
+            logger.debug("Could not add the message board note", exc_info=True)
         if getattr(session, 'incognito', False):
             system_content += "\n\n" + INCOGNITO_NOTE
 
