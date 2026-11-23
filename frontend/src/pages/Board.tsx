@@ -365,7 +365,13 @@ export default function Board() {
   };
   const pick = (key: string) => setParams(key === 'agents' ? {} : { board: key });
 
-  const all = useMemo(() => posts.data || [], [posts.data]);
+  const listed = useMemo(() => posts.data || [], [posts.data]);
+  const missing = !!highlight && !!posts.data && !listed.some((p) => p.id === highlight);
+  const linked = useResource<BoardPost>(missing ? `/board/posts/${encodeURIComponent(highlight)}` : null);
+  const all = useMemo(
+    () => (missing && linked.data && linked.data.board === board ? [linked.data, ...listed] : listed),
+    [missing, linked.data, listed, board],
+  );
   const shown = all.filter((p) => filter === 'all' || (filter === 'open' ? p.status === 'open' : p.kind === filter));
   const pinned = filter === 'all' ? shown.filter((p) => p.pinned) : [];
   const rest = filter === 'all' ? shown.filter((p) => !p.pinned) : shown;

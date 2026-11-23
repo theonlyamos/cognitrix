@@ -275,3 +275,30 @@ async def test_boards_list_counts_and_answers_reach_the_asking_chat(db, agents, 
 
     rows = await service.boards('u1')
     assert rows[0]['key'] == 'agents' and rows[0]['total'] == 1 and rows[0]['open'] == 0
+
+
+async def test_answers_and_wakes_at_the_same_time_are_all_kept(db, agents):
+    import asyncio
+
+    from cognitrix.board import service
+
+    post = await service.create_post('u1', board='agents', kind='question', text='Both?')
+    writer = service.Author(kind='agent', id=WRITER.id, name='Writer')
+    await asyncio.gather(service.reply('u1', str(post.id), 'One.', service.PERSON),
+                         service.reply('u1', str(post.id), 'Two.', writer))
+    assert {r['text'] for r in (await service.get_post('u1', str(post.id))).replies} == {'One.', 'Two.'}
+
+    await service.save_settings('u1', {'wakes_per_day': 1})
+    taken = await asyncio.gather(*(service._take_wake('u1') for _ in range(4)))
+    assert taken.count(True) == 1
+
+
+async def test_old_open_and_pinned_posts_stay_in_the_list(db, agents, monkeypatch):
+    from cognitrix.board import service
+
+    monkeypatch.setattr(service, 'POSTS_PER_HOUR', 1000)
+    await service.create_post('u1', board='agents', kind='question', text='Still open?')
+    for i in range(5):
+        await service.create_post('u1', board='agents', kind='finding', text=f'f{i}')
+    texts = [p.text for p in await service.list_posts('u1', 'agents', limit=2)]
+    assert texts[:2] == ['f4', 'f3'] and 'Still open?' in texts and 'f0' not in texts

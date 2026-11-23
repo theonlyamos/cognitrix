@@ -26,6 +26,7 @@ import asyncio
 import contextvars
 import logging
 import re
+import weakref
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -80,6 +81,17 @@ board_note_ctx: contextvars.ContextVar[str] = contextvars.ContextVar('board_note
 
 # Strong references for background work (a bare create_task can be collected).
 _TASKS: set[asyncio.Task] = set()
+_LOCKS: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+
+
+def _lock(key: str) -> asyncio.Lock:
+    """One lock per post or person, so a read-modify-write isn't lost to a
+    concurrent one (two answers at once, two wakes at once)."""
+    lock = _LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _LOCKS[key] = lock
+    return lock
 
 
 class BoardError(Exception):
@@ -197,6 +209,11 @@ def public_settings(row: BoardSettings) -> dict[str, Any]:
 
 
 async def save_settings(user_key: str, changes: dict[str, Any]) -> BoardSettings:
+    async with _lock(f'settings:{user_key}'):
+        return await _save_settings(user_key, changes)
+
+
+async def _save_settings(user_key: str, changes: dict[str, Any]) -> BoardSettings:
     row = await BoardSettings.find_one({'user_id': str(user_key)})
     data: dict[str, Any] = {}
     if 'enabled' in changes and changes['enabled'] is not None:
@@ -288,7 +305,9 @@ async def list_posts(user_key: str, board: str, *, kind: str = '', status: str =
     kind = clean_kind(kind) if kind else ''
     tag = (clean_tags([tag]) or [''])[0] if tag else ''
     rows = [p for p in await posts_on(user_key, board) if matches(p, kind=kind, status=status, tag=tag)]
-    return rows[:max(1, min(int(limit or 50), LIST_MAX))]
+    cut = max(1, min(int(limit or 50), LIST_MAX))
+    # Older open questions and pinned decisions still count, past the limit.
+    return rows[:cut] + [p for p in rows[cut:] if p.pinned or p.status == 'open']
 
 
 def public_post(post: BoardPost) -> dict[str, Any]:
@@ -466,6 +485,21 @@ def _swarm_note(post: BoardPost) -> str:
 
 async def reply(user_key: str, post_id: str, text: str, author: Author = PERSON, *,
                 close: bool = False) -> BoardPost:
+    lock = _lock(f'post:{post_id}')
+    async with lock:
+        post, entry = await _add_reply(user_key, post_id, text, author, close=close)
+    asker_spoke = author.kind == post.author_kind and author.id == post.author_id \
+        and author.name == post.author_name
+    if not asker_spoke:
+        try:
+            await _tell_asker(user_key, post, entry)
+        except Exception:
+            logger.exception('Could not tell the author of board post %s', post.id)
+    return post
+
+
+async def _add_reply(user_key: str, post_id: str, text: str, author: Author, *,
+                     close: bool) -> tuple[BoardPost, dict[str, Any]]:
     post = await get_post(user_key, post_id)
     text = str(text or '').strip()
     if not text:
@@ -485,14 +519,7 @@ async def reply(user_key: str, post_id: str, text: str, author: Author = PERSON,
     await BoardPost.update_one({'id': post.id}, changes)
     for key, value in changes.items():
         setattr(post, key, value)
-    asker_spoke = author.kind == post.author_kind and author.id == post.author_id \
-        and author.name == post.author_name
-    if not asker_spoke:
-        try:
-            await _tell_asker(user_key, post, entry)
-        except Exception:
-            logger.exception('Could not tell the author of board post %s', post.id)
-    return post
+    return post, entry
 
 
 async def _tell_asker(user_key: str, post: BoardPost, entry: dict[str, Any]) -> None:
@@ -565,6 +592,11 @@ async def delete_post(user_key: str, post_id: str) -> None:
 
 async def _take_wake(user_key: str) -> bool:
     """Count one wake against today's allowance; False when it's used up."""
+    async with _lock(f'settings:{user_key}'):
+        return await _take_wake_locked(user_key)
+
+
+async def _take_wake_locked(user_key: str) -> bool:
     row = await BoardSettings.find_one({'user_id': str(user_key)})
     today = datetime.now(UTC).strftime('%Y-%m-%d')
     current = row or BoardSettings(user_id=str(user_key))
