@@ -110,6 +110,8 @@ class ChatRun:
     finished_at: float | None = None
     # Messages waiting to be read by the running turn (see steer()).
     inbox: list[InboxMessage] = field(default_factory=list)
+    # Called once with the run when it ends (sessions/resume.py).
+    on_finish: list[Callable[['ChatRun'], None]] = field(default_factory=list)
     # Messages the model has already read this turn, oldest first.
     read: list[InboxMessage] = field(default_factory=list)
     _changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
@@ -201,6 +203,14 @@ class ChatRun:
         self.finished_at = time.monotonic()
         self.stop = None
         self._notify()
+        hooks, self.on_finish = self.on_finish, []
+        for hook in hooks:
+            try:
+                hook(self)
+            except Exception:
+                import logging
+
+                logging.getLogger('cognitrix.log').exception('A chat run end hook failed')
 
     def summary(self) -> dict[str, Any]:
         return {

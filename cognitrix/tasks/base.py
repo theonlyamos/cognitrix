@@ -162,6 +162,12 @@ class Task(Model):
     """Runs see the owner's global saved memories (read-only; runs never save
     memories). Off by default: task runs are memory-free unless asked."""
 
+    done_when: str | None = None
+    """What a finished result must have ("Done when"), in the person's words.
+    Every run's final result is checked against it by a separate reviewer;
+    a result that falls short goes back to the lead agent with the
+    reviewer's notes, at most DONE_WHEN_FIXES times. See tasks/done_when.py."""
+
     result_artifact: str | None = None
     """Keep each finished run's result as an artifact (one page per task, a
     version per run): auto (None: when the result is long or structured and

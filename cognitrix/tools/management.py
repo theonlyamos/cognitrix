@@ -157,6 +157,7 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
                       schedule_interval_seconds: int | None = None, schedule_cron: str | None = None,
                       schedule_enabled: bool | None = None, swarm: bool = False,
                       report_to: str | None = None, report_only_on: str | None = None,
+                      done_when: str | None = None,
                       *, parent=None) -> ToolOutcome:
     """Create a task, optionally assign it, schedule it, or queue it once now. A task that starts now or
     runs on a schedule needs an agent to run it: pass agent_refs or team_ref, or leave both out to have
@@ -166,7 +167,9 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
     starts a new run of the task you are running, and you decide whether to tell the person with
     Notify Me), "person" (the person is notified, you are not), or "both". Left out, a one-off task
     reports to you and a scheduled one to the person. report_only_on limits reports to you:
-    "always" (default), "failure", or "changed" (only when the result differs from the last one)."""
+    "always" (default), "failure", or "changed" (only when the result differs from the last one).
+    done_when says what a finished result must have (e.g. "a table of 5 vendors with prices and links"):
+    each run's result is checked against it and sent back for fixing when it falls short."""
     from cognitrix.tasks.base import Task
     from cognitrix.tasks.scheduler import compute_next_run, normalize_schedule_at, validate_schedule
     _require_scope('write')
@@ -226,7 +229,8 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
                     assigned_agents=agent_ids, team_id=str(team.id) if team else None, autostart=False,
                     schedule_at=schedule_at, schedule_interval=schedule_interval_seconds,
                     schedule_cron=schedule_cron, schedule_enabled=enabled, swarm=swarm,
-                    created_by=created_by, report_to=report_to, report_only_on=report_only_on)
+                    created_by=created_by, report_to=report_to, report_only_on=report_only_on,
+                    done_when=(done_when or '').strip()[:4000] or None)
         if enabled:
             authority = current_execution_context()
             task.schedule_requested_by = authority.user_id
@@ -317,12 +321,13 @@ async def update_task(task_ref: str, title: str | None = None, description: str 
                       schedule_interval_seconds: int | None = None, schedule_cron: str | None = None,
                       schedule_enabled: bool | None = None, clear_schedule: bool = False,
                       swarm: bool | None = None, report_to: str | None = None,
-                      report_only_on: str | None = None) -> ToolOutcome:
+                      report_only_on: str | None = None, done_when: str | None = None) -> ToolOutcome:
     """Change an existing task's title, description, steps, schedule or swarm mode. Only the fields you pass change.
     steps replaces all steps. Setting one of schedule_at / schedule_interval_seconds / schedule_cron replaces
     the schedule; schedule_enabled alone pauses or resumes it; clear_schedule removes it.
     report_to (person, creator or both) and report_only_on (always, failure or changed) change who hears
-    when a run ends; creator only works on a task an agent created."""
+    when a run ends; creator only works on a task an agent created. done_when replaces what a finished
+    result must have (an empty string removes it)."""
     from cognitrix.tasks.scheduler import compute_next_run, normalize_schedule_at, validate_schedule
     _require_scope('write')
     if (not isinstance(clear_schedule, bool) or (swarm is not None and not isinstance(swarm, bool))
@@ -344,7 +349,7 @@ async def update_task(task_ref: str, title: str | None = None, description: str 
         return ToolOutcome.failure('invalid_task', reason)
     if not (title is not None or description is not None or steps is not None or new_type
             or schedule_enabled is not None or clear_schedule or swarm is not None
-            or report_to is not None or report_only_on is not None):
+            or report_to is not None or report_only_on is not None or done_when is not None):
         return ToolOutcome.failure('nothing_to_update', 'Pass at least one field to change')
     try:
         task = await _task(task_ref)
@@ -364,6 +369,8 @@ async def update_task(task_ref: str, title: str | None = None, description: str 
             task.report_to = report_to
         if report_only_on is not None:
             task.report_only_on = report_only_on
+        if done_when is not None:
+            task.done_when = done_when.strip()[:4000] or None
 
         schedule_touched = new_type or clear_schedule or schedule_enabled is not None
         if clear_schedule:

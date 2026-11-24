@@ -202,6 +202,11 @@ class TaskRun(Model):
     budget: dict[str, Any] = Field(default_factory=dict)
     usage: dict[str, Any] = Field(default_factory=dict)
 
+    done_when_check: dict[str, Any] | None = None
+    """How the final result did against the task's "Done when": {status
+    (met, not_met, unverified), score, notes, fixes}. None when the task has
+    no "Done when". See tasks/done_when.py."""
+
     error_code: str | None = None
 
     error: str | None = None

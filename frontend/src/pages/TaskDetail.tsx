@@ -91,10 +91,49 @@ interface TaskRunRecord {
   trigger_note?: string | null;
   usage?: Record<string, number | string | null> | null;
   budget?: Record<string, number | string | null> | null;
+  done_when_check?: DoneWhenCheck | null;
   queued_at?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
   created_at?: string;
+}
+
+/** How a run's final result did against the task's "Done when" (tasks/done_when.py). */
+interface DoneWhenCheck {
+  status: 'met' | 'not_met' | 'unverified';
+  score?: number | null;
+  notes?: string[];
+  fixes?: number;
+}
+
+function DoneWhenBanner({ check }: { check: DoneWhenCheck }) {
+  const fixes = check.fixes ?? 0;
+  const fixed = fixes === 1 ? tr('ui.taskDetail.afterOneFix') : fixes > 1 ? tr('ui.taskDetail.afterFixes', { n: fixes }) : '';
+  return (
+    <div
+      role="status"
+      className={cn(
+        'mx-6 mt-4 rounded border px-3 py-2.5 text-[12.5px]',
+        check.status === 'not_met' ? 'border-danger/40 bg-danger/5' : 'border-line bg-panel-2',
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span aria-hidden className={check.status === 'met' ? 'text-accent-ink' : check.status === 'not_met' ? 'text-danger-ink' : 'text-fg-dim'}>
+          {check.status === 'met' ? '✓' : check.status === 'not_met' ? '✗' : '?'}
+        </span>
+        <span className="font-medium">
+          {check.status === 'met' ? tr('ui.taskDetail.meetsDoneWhen') : check.status === 'not_met' ? tr('ui.taskDetail.doesNotMeetDoneWhen') : tr('ui.taskDetail.couldNotCheckDoneWhen')}
+        </span>
+        {fixed && <span className="text-fg-dim">{fixed}</span>}
+        {typeof check.score === 'number' && <span className="font-mono text-[11px] text-fg-dim">{check.score}/10</span>}
+      </div>
+      {check.status !== 'met' && !!check.notes?.length && (
+        <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-fg-dim">
+          {check.notes.slice(0, 4).map((note, i) => <li key={i}>{note}</li>)}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 interface ResultArtifact {
@@ -1320,6 +1359,9 @@ export default function TaskDetail() {
         )}
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
+          {selected === 'synthesis' && selectedRun?.done_when_check && (
+            <DoneWhenBanner check={selectedRun.done_when_check} />
+          )}
           {selectedRun?.status === 'queued' && (
             <div role="status" className="mx-6 my-4 flex items-center gap-2.5 rounded border border-line bg-panel-2 px-3 py-2.5 font-mono text-[12px] text-fg-dim">
               <span className="think-bars"><i /><i /><i /><i /></span>

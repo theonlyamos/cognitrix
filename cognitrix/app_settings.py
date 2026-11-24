@@ -280,6 +280,11 @@ def _registry() -> list[Setting]:
     add(Setting('COGNITRIX_WEBHOOK_BUDGET', 'advanced', g, 'Webhook time limit (seconds)', kind='number',
                 default='15', restart=True))
 
+    g = 'Restarts'
+    add(Setting('COGNITRIX_RESUME_CHATS', 'advanced', g, 'Carry on replies after a restart',
+                'A reply that was running when the app or server stopped is picked up again '
+                'where it left off.', kind=ON_OFF, default='1'))
+
     g = 'Sharing and apps'
     add(Setting('COGNITRIX_PUBLIC_AGENT_LINKS', 'advanced', g, 'Public links to agents', kind=ON_OFF, default='1'))
     add(Setting('COGNITRIX_ARTIFACT_PUBLIC_LINKS', 'advanced', g, 'Public links to artifacts', kind=ON_OFF,
@@ -297,6 +302,7 @@ def _registry() -> list[Setting]:
         ('COGNITRIX_MAX_PARALLEL_STEPS', 'Task steps at once', '3', True),
         ('COGNITRIX_STEP_TIMEOUT', 'Task step time limit (seconds)', '600', True),
         ('COGNITRIX_GATE_THRESHOLD', 'Task review pass mark (out of 10)', '7', True),
+        ('COGNITRIX_DONE_WHEN_FIXES', 'Fix rounds when a result misses "Done when"', '2', False),
         ('COGNITRIX_TASK_APPROVAL_TIMEOUT', 'Task approval wait (seconds)', '1800', False),
         ('COGNITRIX_TASK_APPROVAL_POLL', 'Task approval check every (seconds)', '1.0', False),
         ('COGNITRIX_GROUP_MAX_TURNS', 'Agent turns per group chat message', '6', True),
@@ -484,6 +490,7 @@ _WHOLE_NUMBERS = frozenset({
     'COGNITRIX_SANDBOX_MAX_COPY_MB', 'COGNITRIX_SANDBOX_FLY_CPUS', 'COGNITRIX_SANDBOX_FLY_MEMORY_MB',
     'COGNITRIX_SANDBOX_FLY_VOLUME_GB', 'COGNITRIX_API_RATE_LIMIT', 'COGNITRIX_MAX_TOOL_ROUNDS',
     'COGNITRIX_MAX_CONCURRENT_TOOL_CALLS', 'COGNITRIX_MAX_PARALLEL_STEPS', 'COGNITRIX_STEP_TIMEOUT',
+    'COGNITRIX_DONE_WHEN_FIXES',
     'COGNITRIX_GROUP_MAX_TURNS', 'COGNITRIX_CODE_MODE_MAX_CALLS', 'COGNITRIX_ON_DEMAND_MIN_TOOLS',
     'COGNITRIX_CODING_AGENT_TIMEOUT', 'COGNITRIX_SWARM_MAX_CONCURRENCY', 'COGNITRIX_SWARM_MAX_WORKERS',
     'COGNITRIX_SWARM_MAX_TOKENS', 'COGNITRIX_AUTOMATION_MAX_RUNS_PER_DAY', 'COGNITRIX_MEDIA_PROCESSING_CONCURRENCY',

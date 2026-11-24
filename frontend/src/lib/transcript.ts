@@ -22,6 +22,8 @@ export interface BackendChatEntry {
   completion_tokens?: number | null;
   /** turn_timing: the files the turn made (cognitrix/produced_files). */
   files?: unknown;
+  /** steer: the note added when a turn was picked up after a restart (sessions/resume.py). */
+  resumed?: boolean;
 }
 
 export type TranscriptTool = {
@@ -43,7 +45,7 @@ export type TranscriptEntry =
   | { kind: 'image'; artifact: ToolArtifact }
   | { kind: 'timing'; label: string; tokens?: string }
   | { kind: 'summary'; content: string }
-  | { kind: 'system'; content: string };
+  | { kind: 'system'; content: string; notice?: boolean };
 
 const asText = (v: unknown): string =>
   typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v);
@@ -180,6 +182,9 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
       }
     } else if (role === 'user' && type === 'text') {
       if (content.trim()) out.push({ kind: 'user', content });
+    } else if (role === 'user' && type === 'steer' && m.resumed) {
+      // Not the person's words: a note that the turn carried on after a restart.
+      out.push({ kind: 'system', content: tr('ui.transcript.pickedUpAfterRestart'), notice: true });
     } else if (role === 'user' && type === 'steer') {
       // Sent while the agent was working; read between its steps.
       if (content.trim()) out.push({ kind: 'user', content, steered: true });
@@ -247,6 +252,7 @@ export function toChatMessages(
         out.push({ id: `hist-${out.length}`, role: 'user', content: '', artifacts: [e.artifact] });
       }
     }
+    else if (e.kind === 'system' && e.notice) out.push({ id: `hist-${out.length}`, role: 'system', content: e.content });
     else if (e.kind === 'assistant') {
       out.push({
         id: `hist-${out.length}`,

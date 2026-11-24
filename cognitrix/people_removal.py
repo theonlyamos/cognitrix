@@ -77,6 +77,7 @@ PRIVATE = (
     ('cognitrix.artifact_pages.models', 'ArtifactConsent', 'user_id'),
     ('cognitrix.artifact_pages.models', 'ArtifactData', 'user_id'),
     ('cognitrix.usage.caps', 'SpendingCap', 'user_id'),
+    ('cognitrix.sessions.resume', 'ChatTurnLease', 'user_id'),
 )
 
 # Things shared with the person: their entry in shared_with is dropped.

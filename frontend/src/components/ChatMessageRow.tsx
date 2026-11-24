@@ -177,6 +177,19 @@ export const ChatMessageRow = memo(function ChatMessageRow({
     );
   }
 
+  if (message.role === 'system') {
+    // A note from the app in the conversation (e.g. a reply picked up after a restart).
+    return (
+      <div role="note" className="mx-auto w-full max-w-3xl px-4 py-1.5 sm:px-6">
+        <div className="flex items-center gap-2 font-mono text-[11px] text-fg-dim">
+          <span aria-hidden className="h-px flex-1 bg-line" />
+          <span className="text-center">{message.content}</span>
+          <span aria-hidden className="h-px flex-1 bg-line" />
+        </div>
+      </div>
+    );
+  }
+
   const isUser = message.role === 'user';
   // What the model wrote for the person, without its reasoning.
   const reply = isUser ? message.content : withoutThinking(message.content);

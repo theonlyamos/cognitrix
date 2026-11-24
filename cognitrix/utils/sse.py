@@ -726,6 +726,9 @@ class SSEManager:
                 history_len=len(getattr(session, 'chat', None) or []),
                 stop=self.stop_current_turn,
             )
+            # Picked up again if the engine stops mid-turn (sessions/resume.py).
+            from cognitrix.sessions import resume as chat_resume
+            chat_resume.track(run, 'web', prompt=action.get('content') or '')
             session_agent_id = getattr(session, 'agent_id', None)
             if session_agent_id and str(session_agent_id) != str(self.agent.id):
                 logger.warning(

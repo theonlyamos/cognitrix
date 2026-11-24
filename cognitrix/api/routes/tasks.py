@@ -541,6 +541,7 @@ def _public_run_projection(run: TaskRun) -> dict:
         'cancel_requested_at',
         'error_code',
         'error',
+        'done_when_check',
         'budget',
         'usage',
         'created_at',
@@ -761,7 +762,8 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
         # projections) and schedule fields may be omitted by API clients —
         # carry them over instead of silently wiping them.
         for field in ('callback_url', 'callback_key_id', 'notes', 'max_runs_per_day', 'swarm', 'read_memory',
-                      'report_to', 'report_only_on', 'result_artifact', 'computer', 'project_id'):
+                      'report_to', 'report_only_on', 'result_artifact', 'computer', 'project_id',
+                      'done_when'):
             if field not in task.model_fields_set:
                 setattr(task, field, getattr(stored, field))
         if not respecified:

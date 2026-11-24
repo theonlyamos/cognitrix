@@ -58,6 +58,7 @@ async def lifespan(app: FastAPI):
     recovery = None
     app_sleeper = None
     knowledge_refresher = None
+    chat_resumer = None
     maintenance_started = False
     try:
         scheduler = asyncio.create_task(scheduler_loop())
@@ -133,8 +134,22 @@ async def lifespan(app: FastAPI):
         except Exception:
             import logging
             logging.getLogger('cognitrix.log').exception('Agent email did not start')
+        try:
+            # Chat turns that were running when the engine stopped carry on
+            # (sessions/resume.py). The first pass runs now.
+            from ..sessions.resume import recovery_loop as chat_recovery_loop
+            chat_resumer = asyncio.create_task(chat_recovery_loop())
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Could not start picking up interrupted chats')
         yield
     finally:
+        try:
+            # Turns cancelled from here on were interrupted, not stopped.
+            from ..sessions.resume import shutting_down
+            shutting_down()
+        except Exception:
+            pass
         cleanup_errors = []
         try:
             from ..computer.paired.connector import get_connector
@@ -151,7 +166,8 @@ async def lifespan(app: FastAPI):
             await stop_email()
         except BaseException as exc:
             cleanup_errors.append(exc)
-        tasks = tuple(task for task in (scheduler, recovery, app_sleeper, knowledge_refresher) if task is not None)
+        tasks = tuple(task for task in (scheduler, recovery, app_sleeper, knowledge_refresher, chat_resumer)
+                      if task is not None)
         for task in tasks:
             task.cancel()
         for task in tasks:
