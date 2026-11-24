@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import AppLayout from '@/components/AppLayout';
 import { ThemeProvider } from '@/context/ThemeContext';
@@ -183,6 +183,29 @@ describe('AppLayout', () => {
     expect(screen.queryByRole('button', { name: /open navigation/i })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'go agents' }));
     expect(await screen.findByText('Authenticated agents')).toBeTruthy();
+    localStorage.removeItem('uiMode');
+  });
+
+  it('switches to chill mode on a new chat with Ctrl+Shift+. from a page that is not a chat', async () => {
+    function ChillPage() {
+      const { search } = useLocation();
+      return <div>Chill page {search}</div>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/agents']} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+        <ThemeProvider>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/chill" element={<ChillPage />} />
+              <Route path="/agents" element={<div>Authenticated agents</div>} />
+            </Route>
+          </Routes>
+        </ThemeProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('Authenticated agents')).toBeTruthy();
+    await userEvent.keyboard('{Control>}{Shift>}.{/Shift}{/Control}');
+    expect(await screen.findByText('Chill page ?new=1')).toBeTruthy();
     localStorage.removeItem('uiMode');
   });
 });
