@@ -17,6 +17,7 @@ from celery.signals import (
     worker_process_init,
 )
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.encoding import utf8_child_env
 from cognitrix.config import COGNITRIX_WORKDIR, initialize_database
 from cognitrix.tasks.base import Task, TaskStatus
@@ -34,7 +35,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger('cognitrix.log')
 
-REDIS_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+# Settings > Advanced > Database and job queue (or the first-start Server setup).
+_CONFIGURED_BROKER = app_setting('CELERY_BROKER_URL', '').strip()
+REDIS_BROKER_URL = _CONFIGURED_BROKER or 'redis://localhost:6379/0'
 
 # Filesystem-broker fallback: queue messages as files under the cognitrix
 # workdir, consumed by a locally auto-spawned worker (see ensure_local_worker).
@@ -54,13 +57,13 @@ def _redis_reachable(timeout: float = 2.0) -> bool:
 
 
 # Broker mode is decided once, at import: Redis when it is reachable (or was
-# explicitly configured via CELERY_BROKER_URL), otherwise the filesystem
+# set in Settings), otherwise the filesystem
 # fallback. The auto-spawned fallback worker inherits CELERY_FORCE_FILESYSTEM=1
 # so the enqueuing process and the worker always agree on the broker, even if
 # Redis comes up in between.
 USE_FILESYSTEM_BROKER = (
     bool(os.environ.get('CELERY_FORCE_FILESYSTEM'))
-    or ('CELERY_BROKER_URL' not in os.environ and not _redis_reachable())
+    or (not _CONFIGURED_BROKER and not _redis_reachable())
 )
 
 if USE_FILESYSTEM_BROKER:

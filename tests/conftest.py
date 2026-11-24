@@ -15,6 +15,15 @@ _APP_SETTINGS_DIR = Path(tempfile.mkdtemp(prefix='cognitrix-app-settings-'))
 _app_settings.settings_file = lambda: _APP_SETTINGS_DIR / 'app_settings.json'
 _app_settings._env_fallback = True
 
+# Keys (sign-ins, saved secrets) live in a throwaway folder too, never the
+# real home folder, and the one-time copy from environment variables is
+# already done there.
+from cognitrix.common import secret_box as _secret_box  # noqa: E402
+
+_KEYS_DIR = Path(tempfile.mkdtemp(prefix='cognitrix-keys-'))
+_secret_box._key_file = lambda: _KEYS_DIR / 'secrets.key'
+(_KEYS_DIR / '.keys-adopted').write_text('test')
+
 
 @pytest.fixture
 def mock_llm_response():
@@ -47,8 +56,8 @@ def _secrets_key(monkeypatch):
     """Encrypt saved secrets with a test key, not a file in the real home folder."""
     from cognitrix.common import secret_box
 
-    monkeypatch.setenv('COGNITRIX_SECRETS_KEY', 'test-secrets-key')
-    monkeypatch.delenv('COGNITRIX_SECRETS_OLD_KEYS', raising=False)
+    secret_box._key_file().write_text('test-secrets-key')
+    secret_box._old_keys_file().unlink(missing_ok=True)
     secret_box.reset_key_cache()
     yield
     secret_box.reset_key_cache()

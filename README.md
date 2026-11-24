@@ -174,15 +174,17 @@ The chat works in the editor's project folder, tool calls show up in the editor,
 
 Everything is set in the app under **Settings**: model providers and API keys, web search keys, email sending, sign-in with Google or GitHub, the GitHub App, chat apps, the agents' computers (Docker or Fly.io), push alerts, safety, sharing, and limits and timeouts (**Settings > Advanced**). Only an admin can change the app-wide ones. Cognitrix does not read these from environment variables or `.env`, so whoever downloads it can set it up without touching a config file.
 
-A few deployment values stay environment variables because they are needed before the app can start or they are plumbing between processes ([.env.example](.env.example) lists them):
+The server's own setup is in the app too. On a new server, the first page asks where to keep data (the built-in SQLite, or PostgreSQL, MySQL or MongoDB) and how to queue task runs (the built-in queue, or Redis). Most people keep the built-in choices and continue. Both can be changed later in **Settings > Advanced > Database and job queue**, along with the addresses allowed to call the API and the content security policy. The keys that sign sign-ins and encrypt saved secrets are made by the server on first start and kept in the data folder (`~/.cognitrix`), so there is nothing to generate or set.
 
-| Variable | Purpose |
-| --- | --- |
-| `JWT_SECRET_KEY` | Required when `COGNITRIX_ENV=production` |
-| `COGNITRIX_SECRETS_KEY` | Encrypts saved keys, sign-ins and tokens |
-| `CELERY_BROKER_URL`, `TASK_LIMIT_REDIS_URL` | Redis for task runs; leave blank for the built-in local fallback |
-| `DB_TYPE`, `DB_HOST`, … | Use PostgreSQL or MySQL instead of the default SQLite at `~/.cognitrix/cognitrix.db` |
-| `COGNITRIX_CORS_ORIGINS`, `COGNITRIX_CSP`, `COGNITRIX_FRONTEND_DIR` | Web server plumbing |
+On a machine without a browser at hand, the same settings work from the command line:
+
+```bash
+cognitrix settings list --page advanced
+cognitrix settings set CELERY_BROKER_URL=redis://localhost:6379/0
+cognitrix settings set DB_TYPE=sqlite    # back to the built-in database if a change keeps the server from starting
+```
+
+Upgrading a server that used to set `JWT_SECRET_KEY` or `COGNITRIX_SECRETS_KEY` as environment variables: on its first start the server copies them into the data folder, so sign-ins and saved secrets keep working. After that the variables are not read and can be removed.
 
 ### Second-model review of risky actions
 
@@ -204,22 +206,19 @@ Both are on by default for every agent, and can be turned off on an agent's **To
 `docker-compose.yml` runs three services: the **web** app (FastAPI plus the in-process scheduler), a **worker** (Celery, which runs tasks and team runs), and **Redis** as the broker. Web and worker share the SQLite database over a named volume.
 
 ```bash
-cp .env.example .env          # set a JWT_SECRET_KEY; provider keys go in Settings
 docker compose up --build
 ```
 
-The app is then at `http://localhost:8000`.
+The app is then at `http://localhost:8000`. Nothing needs to be set beforehand: compose points the app at its Redis container, and everything else is set in the app.
 
-- `COGNITRIX_ENV=production` is set in compose, so `JWT_SECRET_KEY` is required. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 - Scale execution with `docker compose up --scale worker=3`. Keep **web at one replica**: the schedule loop runs per process, so several web containers would fire the same schedules more than once.
-- State lives in the `cognitrix-data` volume (database, secrets, MCP config) and `redis-data`. For heavier task concurrency, point `DB_*` at PostgreSQL or MySQL. MongoDB is not supported by the task runner.
-- Without `CELERY_BROKER_URL`, a single container falls back to an in-process filesystem broker and an auto-started worker.
+- State lives in the `cognitrix-data` volume (settings, database, keys, MCP config) and `redis-data`. For heavier task concurrency, pick PostgreSQL or MySQL on the first-start page or in **Settings > Advanced**. MongoDB is not supported by the task runner.
 
-For a single image without compose: `docker build -t cognitrix .` then `docker run -p 8000:8000 --env-file .env cognitrix`.
+For a single image without compose: `docker build -t cognitrix .` then `docker run -p 8000:8000 -v cognitrix-data:/home/cognitrix/.cognitrix cognitrix`. Without Redis, it uses the built-in queue and starts its own worker.
 
 ### Fly.io
 
-`fly.toml` deploys the single-container shape to [Fly.io](https://fly.io): one always-on machine running the web process and a Celery worker under Supervisor. Set the external Redis connection with the `CELERY_BROKER_URL` and `TASK_LIMIT_REDIS_URL` secrets. SQLite lives on the mounted volume, so keep the web process to one machine. To run the agents' sandboxed computers as Fly Machines too, see [docs/sandbox-on-fly.md](docs/sandbox-on-fly.md).
+`fly.toml` deploys the single-container shape to [Fly.io](https://fly.io): one always-on machine running the web process and a Celery worker under Supervisor. Pick Redis on the first-start page (or in **Settings > Advanced**) to use an external Redis. SQLite lives on the mounted volume, so keep the web process to one machine. To run the agents' sandboxed computers as Fly Machines too, see [docs/sandbox-on-fly.md](docs/sandbox-on-fly.md).
 
 ## API access
 

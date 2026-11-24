@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import os
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -382,12 +381,12 @@ _DEFAULT_LIMITER: ConcurrencyLimiter | None = None
 def _default_limiter() -> ConcurrencyLimiter:
     global _DEFAULT_LIMITER
     if _DEFAULT_LIMITER is None:
-        from cognitrix.config import settings
-
-        configured_url = os.getenv("TASK_LIMIT_REDIS_URL") or os.getenv("CELERY_BROKER_URL")
+        configured_url = app_setting("TASK_LIMIT_REDIS_URL") or app_setting("CELERY_BROKER_URL")
         redis_url = configured_url if configured_url and configured_url.startswith(("redis://", "rediss://")) else None
+        # With a shared Redis the limits hold across every worker, so they fail
+        # closed when it is down; on one machine they are kept in this process.
         _DEFAULT_LIMITER = build_concurrency_limiter(
-            environment=settings.env,
+            environment="production" if redis_url else "development",
             redis_url=redis_url,
             provider_limit=max(1, int(app_setting("TASK_PROVIDER_CONCURRENCY", "4"))),
             actor_limit=max(1, int(app_setting("TASK_ACTOR_CONCURRENCY", "4"))),

@@ -9,6 +9,7 @@ import { isDesktop } from '@/lib/desktop';
 import { rememberAfterSignIn } from '@/lib/afterSignIn';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
+import ServerSetup from '@/pages/ServerSetup';
 import OAuthComplete from '@/pages/OAuthComplete';
 import ResetPassword from '@/pages/ResetPassword';
 import '@/app.css';
@@ -91,6 +92,7 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
+        <Route path="/setup" element={<PublicRoute><ServerSetup /></PublicRoute>} />
         <Route path="/oauth/complete" element={<OAuthComplete />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         {/* A public artifact link: readable signed out. */}

@@ -56,6 +56,11 @@ def get_arguments():
                               help='The new password. Leave out to be asked for it.')
     reset_parser.set_defaults(func=reset_password)
 
+    # App settings from the command line (servers, Docker Compose, recovery).
+    from .handlers_settings import add_parser as add_settings_parser
+
+    add_settings_parser(subparsers)
+
     # Editors that speak the Agent Client Protocol (Zed, JetBrains, ...) start
     # this and talk to it over stdin/stdout (cognitrix/acp/server.py).
     from cognitrix.acp import command as acp_command
@@ -89,7 +94,7 @@ def get_arguments():
 
     # Main arguments
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
-    parser.add_argument('--provider', default='google', help='LLM provider. Config from env: AI_PROVIDER, *_BASE_URL, *_API_KEY, *_MODEL')
+    parser.add_argument('--provider', default='google', help='LLM provider. Keys and addresses are set in Settings > Models and keys')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--tasks', action='store_true', help='List all saved tasks')
     parser.add_argument('--teams', action='store_true', help='List all saved teams')

@@ -23,8 +23,9 @@ poetry install --with dev
 cd frontend && pnpm install && pnpm run build && cd ..
 ```
 
-Copy `.env.example` to `.env` and fill in at least one LLM provider key (see the README
-for the full list). For the web UI set `JWT_SECRET_KEY` to a stable value.
+Start the app and add at least one model provider key in Settings > Models and keys.
+Nothing is read from `.env`: settings live in `~/.cognitrix/app_settings.json`, and
+`cognitrix settings set NAME=VALUE` changes them from the command line.
 
 ## Development workflow
 

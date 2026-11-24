@@ -15,7 +15,6 @@ def workdir(tmp_path, monkeypatch):
     from cognitrix.config import settings
 
     monkeypatch.setattr(settings, 'workdir', tmp_path)
-    monkeypatch.setenv('COGNITRIX_SECRETS_KEY', 'test-secrets-key')
     secret_box.reset_key_cache()
     cp._flows.clear()
     yield tmp_path
