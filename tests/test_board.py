@@ -428,3 +428,21 @@ async def test_unanswered_questions_are_brought_up_once(db, agents, started):
     assert await service.nudge_stale(force=True) == 0  # once only
     await service.save_settings('u1', {'nudge_hours': 0})
     assert service.public_settings(await service.get_settings('u1'))['nudge_hours'] == 0
+
+
+async def test_tags_reach_an_addressed_finding_and_edits_show_in_the_note(db, agents, started):
+    from cognitrix.board import service
+
+    await _chat(RESEARCHER)
+    await _board(RESEARCHER, action='post', kind='finding', to='Writer', text='@Writer prices changed.')
+    await service.settle()
+    assert len(started) == 1 and started[0].agent is WRITER
+
+    await service.save_follow('u1', WRITER.id, wake=False)
+    await _board(RESEARCHER, action='post', kind='finding', text='Acme is down.')
+    post = (await service.posts_on('u1', 'agents'))[0]
+    await service.digest('u1', WRITER.id, 'Writer')
+    await _board(RESEARCHER, action='edit', post_id=str(post.id), text='Acme is down, @Writer.')
+    await service.settle()
+    note = await service.digest('u1', WRITER.id, 'Writer')
+    assert 'Tagged you (@):' in note and 'Acme is down' in note

@@ -623,10 +623,11 @@ async def create_post(user_key: str, *, board: str, kind: str, text: str, tags: 
 
 
 def _is_to(post: BoardPost, mention: dict[str, str]) -> bool:
-    """The post is addressed to this agent already (it is told that way)."""
+    """The post is addressed to this agent and that already tells it: on a
+    swarm board any post for a worker, elsewhere a question or request."""
     if swarm_of(post.board):
         return mention['name'] == post.to_name
-    return bool(post.to_id) and mention.get('id') == post.to_id
+    return post.kind in ASKS and bool(post.to_id) and mention.get('id') == post.to_id
 
 
 def _link(post: BoardPost) -> str:
@@ -1110,7 +1111,7 @@ async def digest(user_key: str, agent_id: str, agent_name: str, *, board: str = 
         return m.get('name') == me if worker else m.get('id') == agent_id
 
     def tagged_me(p: BoardPost) -> bool:
-        if p.posted_at > seen and any(is_me(m) for m in p.mentions):
+        if max(p.posted_at, p.edited_at) > seen and any(is_me(m) for m in p.mentions):
             return True
         return p.changed_at > seen and any(is_me(m) for r in p.replies for m in r.get('mentions') or [])
 
