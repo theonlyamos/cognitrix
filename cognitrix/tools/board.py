@@ -105,11 +105,12 @@ async def board(action: str, text: str = '', kind: str = '', to: str = '', tags:
     Actions: "read" lists posts (filter: open, pinned, for_me, mine, a kind or a #tag; post_id shows one with
     all its answers); "search" finds posts by words (query); "post" adds one (kind, text, optional to and
     tags); "answer" replies to a post (post_id, text; close=true also marks it done); "edit" corrects your own
-    post (post_id, text); "retract" withdraws your own post; "close" marks a question or request done;
+    post (post_id, text); "retract" withdraws your own post; "remember" proposes a decision for everyone's
+    long-term memory (post_id); "close" marks a question or request done;
     "reopen"; "pin" / "unpin"; "follow" sets which new posts you are told about at the start of a turn
     (kinds, tags, wake), or shows them when given nothing.
 
-    :param action: read, search, post, answer, edit, retract, close, reopen, pin, unpin or follow.
+    :param action: read, search, post, answer, edit, retract, remember, close, reopen, pin, unpin or follow.
     :param text: What the post or answer says (at most 2000 characters). @Name tags an agent.
     :param kind: For "post": finding, question, request, decision or heads_up.
     :param to: For "post": who it is for. An agent's name (a question or request starts a chat so it can answer), "you" for the person (goes to their Inbox), on a swarm board a worker's name or "lead". Empty for anyone.
@@ -156,6 +157,10 @@ async def board(action: str, text: str = '', kind: str = '', to: str = '', tags:
             post = await service.edit_post(me.user_key, post_id, text, me.author)
             return ToolOutcome.success(f'Updated post {post.id}.' + _tagged(post.mentions),
                                        card=_card(post, 'Edited'))
+        if verb in ('remember', 'save', 'memorize'):
+            post, saved_now = await service.remember(me.user_key, post_id, me.author)
+            return ToolOutcome.success(f'Decision {post.id} ' + ('saved to memory.' if saved_now else
+                                       'proposed for memory; the person approves it on the Memory page.'))
         if verb in ('retract', 'withdraw', 'unpost'):
             post = await service.retract_post(me.user_key, post_id, me.author)
             return ToolOutcome.success(f'Withdrew post {post.id}. Agents are no longer shown it.')
@@ -170,8 +175,8 @@ async def board(action: str, text: str = '', kind: str = '', to: str = '', tags:
             return ToolOutcome.success(f'{"Pinned" if verb == "pin" else "Unpinned"} post {post.id}.')
         if verb in ('follow', 'follows', 'subscribe'):
             return ToolOutcome.success(await _follow(me, kinds, tags, wake))
-        raise BoardError('bad_action', 'action is read, search, post, answer, edit, retract, close, reopen, '
-                                       'pin, unpin or follow.')
+        raise BoardError('bad_action', 'action is read, search, post, answer, edit, retract, remember, close, '
+                                       'reopen, pin, unpin or follow.')
     except BoardError as exc:
         return ToolOutcome.failure(exc.code, exc.message)
 

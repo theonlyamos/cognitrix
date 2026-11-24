@@ -374,6 +374,16 @@ async def run_extras(task: Any, run: Any, agent: Any) -> str:
         parts.append(note)
     if kind == 'brief':
         try:
+            from cognitrix.board.service import brief_note
+
+            board = await brief_note(owner)
+        except Exception:
+            logger.debug('Could not read the message board for the brief', exc_info=True)
+            board = ''
+        if board:
+            parts.append(board + '\nPut questions waiting on the person under "reply", unanswered ones under '
+                         '"waiting", new decisions under "other", each with its link.')
+        try:
             repeats = await repeated_requests(owner)
         except Exception:
             repeats = []

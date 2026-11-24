@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Pin as PinIcon, Settings2 as SettingsIcon } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
+import { useEventStream } from '@/hooks/useEventStream';
 import { Button } from '@/lib/components/ui/button';
 import { Select } from '@/lib/components/ui/select';
 import { PageHeader, LoadingState, ErrorState, EmptyState, FilterChips } from '@/components/list-ui';
@@ -17,6 +18,9 @@ import { tr } from '@/lib/i18n';
 import { MentionText, MentionTextarea } from '@/components/board/Mentions';
 
 type Filter = 'all' | 'open' | BoardKind;
+
+/** Posts loaded at a time. */
+const PAGE = 50;
 
 const field = 'h-10 rounded-lg border border-line bg-panel px-3 text-[13.5px] outline-none placeholder:text-fg-dim focus:border-fg-dim md:h-9';
 const small = 'inline-flex min-h-11 items-center gap-1 rounded-md border border-line px-2.5 text-[12px] text-fg hover:bg-panel-2 disabled:opacity-50 md:min-h-7';
@@ -200,6 +204,14 @@ function PostCard({ post, highlight, names, onChanged }: {
             onClick={() => void act('pin', () => api.post(`/board/posts/${post.id}/pin`, { pinned: !post.pinned }))}>
             {post.pinned ? tr('ui.board.unpin') : tr('ui.board.pin')}
           </button>}
+          {!retracted && post.kind === 'decision' && (post.memory_id ? (
+            <span className="inline-flex min-h-11 items-center text-[12px] text-ok md:min-h-7">{tr('ui.board.inMemory')}</span>
+          ) : (
+            <button type="button" className={small} disabled={busy === 'remember'}
+              onClick={() => void act('remember', () => api.post(`/board/posts/${post.id}/remember`, {}))}>
+              {tr('ui.board.saveToMemory')}
+            </button>
+          ))}
           <button type="button" className={cn(small, 'text-danger-ink')} disabled={busy === 'delete'}
             onClick={() => void act('delete', () => api.delete(`/board/posts/${post.id}`))}>
             {tr('ui.board.delete')}
@@ -410,7 +422,11 @@ export default function Board() {
   useEffect(() => { setSearch(''); setQuery(''); }, [board]);
   const boards = useResource<BoardInfo[]>('/board/boards');
   const posts = useResource<BoardPost[]>(
-    `/board/posts?board=${encodeURIComponent(board)}${query ? `&q=${encodeURIComponent(query)}` : ''}`);
+    `/board/posts?board=${encodeURIComponent(board)}${query ? `&q=${encodeURIComponent(query)}` : `&limit=${PAGE}`}`);
+  const [older, setOlder] = useState<BoardPost[]>([]);
+  const [olderDone, setOlderDone] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  useEffect(() => { setOlder([]); setOlderDone(false); }, [board, query]);
   const mentionable = useResource<{ name: string }[]>(`/board/mentions?board=${encodeURIComponent(board)}`);
   const names = useMemo(() => (mentionable.data || []).map((m) => m.name), [mentionable.data]);
   const follows = useResource<BoardFollow[]>(board === 'agents' ? '/board/follows' : null);
@@ -420,13 +436,24 @@ export default function Board() {
   const { refetch: refetchPosts } = posts;
   const { refetch: refetchBoards } = boards;
 
+  // Changes arrive live; the page still checks now and then (more often when
+  // the live stream is down) for changes made elsewhere.
+  const live = useEventStream<{ type: string; board?: string }>({
+    path: '/board/events',
+    maxRetries: 4,
+    onEvent: ({ data }) => {
+      if (data?.type !== 'changed') return;
+      void refetchPosts({ silent: true });
+      void refetchBoards({ silent: true });
+    },
+  });
   useEffect(() => {
     const timer = window.setInterval(() => {
       void refetchPosts({ silent: true });
       void refetchBoards({ silent: true });
-    }, 8000);
+    }, live.isConnected ? 30000 : 8000);
     return () => window.clearInterval(timer);
-  }, [refetchPosts, refetchBoards]);
+  }, [refetchPosts, refetchBoards, live.isConnected]);
 
   const changed = () => {
     void refetchPosts({ silent: true });
@@ -434,7 +461,25 @@ export default function Board() {
   };
   const pick = (key: string) => setParams(key === 'agents' ? {} : { board: key });
 
-  const listed = useMemo(() => posts.data || [], [posts.data]);
+  const listed = useMemo(() => {
+    const first = posts.data || [];
+    const ids = new Set(first.map((p) => p.id));
+    return [...first, ...older.filter((p) => !ids.has(p.id))];
+  }, [posts.data, older]);
+  const firstPage = posts.data || [];
+  const canLoadOlder = !query && !olderDone && (older.length > 0 || firstPage.length >= PAGE);
+  const loadOlder = async () => {
+    const cursor = older.length ? older[older.length - 1].stamp : firstPage[PAGE - 1]?.stamp;
+    if (!cursor) return;
+    setLoadingOlder(true);
+    try {
+      const res = await api.get<BoardPost[]>(`/board/posts?board=${encodeURIComponent(board)}&limit=${PAGE}&before=${cursor}`);
+      setOlder((rows) => [...rows, ...res.data]);
+      if (res.data.length < PAGE) setOlderDone(true);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
   const missing = !query && !!highlight && !!posts.data && !listed.some((p) => p.id === highlight);
   const linked = useResource<BoardPost>(missing ? `/board/posts/${encodeURIComponent(highlight)}` : null);
   const all = useMemo(
@@ -508,6 +553,12 @@ export default function Board() {
                 {[...pinned, ...rest].map((p) => (
                   <PostCard key={p.id} post={p} highlight={p.id === highlight} names={names} onChanged={changed} />
                 ))}
+                {canLoadOlder && (
+                  <Button type="button" size="sm" variant="outline" className="self-center" disabled={loadingOlder}
+                    onClick={() => void loadOlder()}>
+                    {tr('ui.board.showOlderPosts')}
+                  </Button>
+                )}
               </div>
             )}
             <div className="flex flex-col gap-4 border-t border-line pt-4 lg:hidden">

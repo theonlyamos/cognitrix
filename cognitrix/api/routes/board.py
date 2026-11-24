@@ -1,7 +1,9 @@
 """The message board agents share, as the Board page shows it.
 
 GET    /api/board/boards                 the boards I can open, with counts
-GET    /api/board/posts?board=…          posts on one board (kind, status, tag filters; q searches)
+GET    /api/board/posts?board=…          posts on one board (kind, status, tag filters; q searches;
+                                         limit and before page through older posts)
+GET    /api/board/events                 live: "changed" whenever a post on my boards changes
 POST   /api/board/posts                  post as the person
 GET    /api/board/posts/{id}             one post
 POST   /api/board/posts/{id}/reply       answer as the person (close: also mark done)
@@ -9,6 +11,7 @@ POST   /api/board/posts/{id}/status      open or done
 POST   /api/board/posts/{id}/pin         pin or unpin
 PATCH  /api/board/posts/{id}             edit my own post
 POST   /api/board/posts/{id}/retract     withdraw my own post
+POST   /api/board/posts/{id}/remember    save a decision to the agents' memory
 DELETE /api/board/posts/{id}             delete a post
 GET    /api/board/mentions?board=…       who can be tagged with @name there
 GET    /api/board/settings               on/off, wakes a day, how long posts are kept
@@ -20,8 +23,12 @@ See ``cognitrix/board/service.py``. Agents use the Board tool.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 from cognitrix.agents import access as agent_access
 from cognitrix.board import service
@@ -84,14 +91,14 @@ async def list_boards(ctx: AuthContext = Depends(jwt_only)):
 
 @board_api.get('/posts')
 async def list_posts(board: str = 'agents', kind: str = '', status: str = '', tag: str = '', q: str = '',
-                     ctx: AuthContext = Depends(jwt_only)):
+                     limit: int = service.LIST_MAX, before: int = 0, ctx: AuthContext = Depends(jwt_only)):
     try:
         key = '*' if board == '*' and q.strip() else service.clean_board(board)
         if q.strip():
             rows = await service.search(_owner(ctx), key, q, limit=service.LIST_MAX)
         else:
             rows = await service.list_posts(_owner(ctx), key, kind=kind, status=status, tag=tag,
-                                            limit=service.LIST_MAX)
+                                            limit=limit, before=before)
     except service.BoardError as exc:
         raise _fail(exc) from None
     return [service.public_post(row) for row in rows]
@@ -154,6 +161,42 @@ async def retract_post(post_id: str, ctx: AuthContext = Depends(jwt_only)):
         return service.public_post(await service.retract_post(_owner(ctx), post_id, service.PERSON))
     except service.BoardError as exc:
         raise _fail(exc) from None
+
+
+@board_api.post('/posts/{post_id}/remember')
+async def remember(post_id: str, ctx: AuthContext = Depends(jwt_only)):
+    try:
+        post, _ = await service.remember(_owner(ctx), post_id, service.PERSON)
+    except service.BoardError as exc:
+        raise _fail(exc) from None
+    return service.public_post(post)
+
+
+PING_SECONDS = 20
+
+
+@board_api.get('/events')
+async def events(request: Request, ctx: AuthContext = Depends(jwt_only)):
+    """Live changes on my boards, for an open Board page. Changes made in
+    another process (a task worker) aren't seen here; the page still checks
+    now and then."""
+    me = _owner(ctx)
+    queue = service.listen(me)
+
+    async def stream():
+        try:
+            yield {'event': 'message', 'data': json.dumps({'type': 'ready'})}
+            while not await request.is_disconnected():
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=PING_SECONDS)
+                except TimeoutError:
+                    yield {'event': 'ping', 'data': ''}
+                    continue
+                yield {'event': 'message', 'data': json.dumps(item)}
+        finally:
+            service.unlisten(me, queue)
+
+    return EventSourceResponse(stream())
 
 
 @board_api.get('/mentions')

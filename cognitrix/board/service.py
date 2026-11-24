@@ -25,6 +25,10 @@ How posts reach agents:
 * A question or request nobody has answered for ``nudge_hours`` is brought up
   again once (``nudge_stale``, from the scheduler): the agent it was for is
   woken if it never was, otherwise the person hears about it in their Inbox.
+* A decision can be saved to the agents' memory (``remember``): straight away
+  by the person, as a proposal the person approves when an agent asks.
+* The Board page follows changes live (``listen``); the morning brief lists
+  what on the board waits on the person (``brief_note``).
 """
 from __future__ import annotations
 
@@ -162,6 +166,32 @@ async def settle() -> None:
         await asyncio.gather(*list(_TASKS), return_exceptions=True)
 
 
+# Open Board pages of each person, told when something on their boards changes.
+_LISTENERS: dict[str, set[asyncio.Queue]] = {}
+
+
+def listen(user_key: str) -> asyncio.Queue:
+    queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    _LISTENERS.setdefault(str(user_key), set()).add(queue)
+    return queue
+
+
+def unlisten(user_key: str, queue: asyncio.Queue) -> None:
+    rows = _LISTENERS.get(str(user_key))
+    if rows is not None:
+        rows.discard(queue)
+        if not rows:
+            _LISTENERS.pop(str(user_key), None)
+
+
+def _announce(user_key: str, board: str, post_id: str = '') -> None:
+    for queue in list(_LISTENERS.get(str(user_key), ())):
+        try:
+            queue.put_nowait({'type': 'changed', 'board': board, 'post_id': str(post_id or '')})
+        except asyncio.QueueFull:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Boards, kinds and tags
 # ---------------------------------------------------------------------------
@@ -290,9 +320,10 @@ async def save_follow(user_key: str, agent_id: str, *, kinds: Any = None, tags: 
 # Reading
 # ---------------------------------------------------------------------------
 
-async def posts_on(user_key: str, board: str) -> list[BoardPost]:
-    """Every post on a board, newest first."""
-    rows = await BoardPost.find({'user_id': str(user_key), 'board': board}) or []
+async def posts_on(user_key: str, board: str, **where: Any) -> list[BoardPost]:
+    """Posts on a board, newest first (``where``: more equality filters the
+    database applies, such as status='open')."""
+    rows = await BoardPost.find({'user_id': str(user_key), 'board': board, **where}) or []
     return sorted(rows, key=lambda row: row.posted_at, reverse=True)
 
 
@@ -316,11 +347,20 @@ def matches(post: BoardPost, *, kind: str = '', status: str = '', tag: str = '')
 
 
 async def list_posts(user_key: str, board: str, *, kind: str = '', status: str = '', tag: str = '',
-                     limit: int = 50) -> list[BoardPost]:
+                     limit: int = 50, before: int = 0) -> list[BoardPost]:
+    """Newest first, ``limit`` at a time. The first page also carries older
+    open questions and pinned posts; ``before`` (a post's ``stamp``) pages on."""
     kind = clean_kind(kind) if kind else ''
     tag = (clean_tags([tag]) or [''])[0] if tag else ''
-    rows = [p for p in await posts_on(user_key, board) if matches(p, kind=kind, status=status, tag=tag)]
+    where: dict[str, Any] = {}
+    if kind:
+        where['kind'] = kind
+    if status in ('open', 'answered', 'done'):
+        where['status'] = status
+    rows = [p for p in await posts_on(user_key, board, **where) if matches(p, kind=kind, status=status, tag=tag)]
     cut = max(1, min(int(limit or 50), LIST_MAX))
+    if before:
+        return [p for p in rows if p.posted_at < int(before)][:cut]
     # Older open questions and pinned decisions still count, past the limit.
     return rows[:cut] + [p for p in rows[cut:] if p.pinned or p.status == 'open']
 
@@ -336,7 +376,7 @@ def public_post(post: BoardPost) -> dict[str, Any]:
         'mention_wakes': [{k: v for k, v in w.items() if k in ('name', 'state', 'chat_id', 'reason')}
                           for w in post.mention_wakes if isinstance(w, dict)],
         'posted_at': iso(post.posted_at), 'changed_at': iso(post.changed_at),
-        'edited_at': iso(post.edited_at),
+        'edited_at': iso(post.edited_at), 'stamp': post.posted_at, 'memory_id': post.memory_id,
     }
 
 
@@ -607,6 +647,7 @@ async def create_post(user_key: str, *, board: str, kind: str, text: str, tags: 
         posted_at=stamp, changed_at=stamp,
     )
     await post.save()
+    _announce(user_key, board, str(post.id))
     try:
         await _prune(user_key, settings.keep_days)
     except Exception:
@@ -684,6 +725,7 @@ async def reply(user_key: str, post_id: str, text: str, author: Author = PERSON,
     lock = _lock(f'post:{post_id}')
     async with lock:
         post, entry = await _add_reply(user_key, post_id, text, author, close=close, mentions=mentions)
+    _announce(user_key, post.board, str(post.id))
     asker_spoke = _wrote(post, author)
     told_asker = False
     if not asker_spoke:
@@ -786,6 +828,7 @@ async def set_status(user_key: str, post_id: str, status: str) -> BoardPost:
         raise BoardError('bad_status', 'status is "open" or "done".')
     await BoardPost.update_one({'id': post.id}, {'status': status, 'changed_at': now_ms()})
     post.status = status
+    _announce(user_key, post.board, str(post.id))
     return post
 
 
@@ -793,12 +836,14 @@ async def set_pinned(user_key: str, post_id: str, pinned: bool) -> BoardPost:
     post = await get_post(user_key, post_id)
     await BoardPost.update_one({'id': post.id}, {'pinned': bool(pinned), 'changed_at': now_ms()})
     post.pinned = bool(pinned)
+    _announce(user_key, post.board, str(post.id))
     return post
 
 
 async def delete_post(user_key: str, post_id: str) -> None:
     post = await get_post(user_key, post_id)
     await BoardPost.delete_many({'id': post.id})
+    _announce(user_key, post.board, str(post.id))
 
 
 def _own(post: BoardPost, editor: Author) -> None:
@@ -825,6 +870,7 @@ async def edit_post(user_key: str, post_id: str, text: str, editor: Author = PER
         await BoardPost.update_one({'id': post.id}, changes)
         for key, value in changes.items():
             setattr(post, key, value)
+    _announce(user_key, post.board, str(post.id))
     added = [m for m in mentions if m['name'] not in before and not _is_to(post, m)]
     try:
         await _after_mentions(user_key, post, added, editor, post.text)
@@ -845,7 +891,38 @@ async def retract_post(user_key: str, post_id: str, editor: Author = PERSON) -> 
         await BoardPost.update_one({'id': post.id}, changes)
         for key, value in changes.items():
             setattr(post, key, value)
+    _announce(user_key, post.board, str(post.id))
     return post
+
+
+MEMORY_PREFIX = 'Decision on the message board: '
+
+
+async def remember(user_key: str, post_id: str, by: Author = PERSON) -> tuple[BoardPost, bool]:
+    """Save a decision to the agents' memory so it outlives the board. The
+    person saves it straight away; an agent's save is a proposal the person
+    approves on the Memory page. Returns (post, saved now)."""
+    from cognitrix.memory import saved
+
+    async with _lock(f'post:{post_id}'):
+        post = await get_post(user_key, post_id)
+        if post.kind != 'decision' or post.retracted:
+            raise BoardError('not_a_decision', 'Only a decision can be saved to memory.')
+        if post.memory_id:
+            if await saved.Memory.get(post.memory_id) is not None:
+                raise BoardError('already_saved', 'This decision is already in memory.')
+        proposal = by.kind != 'person'
+        try:
+            row, _created = await saved.add(
+                user_key, _clip(MEMORY_PREFIX + post.text, saved.MAX_CHARS),
+                scope='global', source='user' if not proposal else 'agent', pending=proposal,
+                session_id=by.chat_id, by='person' if not proposal else 'agent')
+        except saved.MemoryError_ as exc:
+            raise BoardError('memory', str(getattr(exc, 'message', '') or exc)) from None
+        await BoardPost.update_one({'id': post.id}, {'memory_id': str(row.id)})
+        post.memory_id = str(row.id)
+    _announce(user_key, post.board, str(post.id))
+    return post, not proposal
 
 
 # ---------------------------------------------------------------------------
@@ -877,6 +954,7 @@ async def _mark_wake(post: BoardPost, state: str, **more: Any) -> None:
     wake_info = {'state': state, **more}
     await BoardPost.update_one({'id': post.id}, {'wake': wake_info})
     post.wake = wake_info
+    _announce(post.user_id, post.board, str(post.id))
 
 
 async def _why_not_wake(user_key: str, agent_id: str, agent: Any, depth: int) -> str:
@@ -966,6 +1044,7 @@ async def _note_mention_wake(post: BoardPost, entry: dict[str, Any]) -> None:
         rows = [*(fresh.mention_wakes if fresh else []), entry][-20:]
         await BoardPost.update_one({'id': post.id}, {'mention_wakes': rows})
         post.mention_wakes = rows
+    _announce(post.user_id, post.board, str(post.id))
 
 
 async def wake_mention(user_key: str, post_id: str, agent_id: str, *, by: str, text: str,
@@ -1161,8 +1240,39 @@ async def swarm_decisions(user_key: str, swarm_id: str, limit: int = 6) -> list[
 
 
 async def swarm_open_items(user_key: str, swarm_id: str, limit: int = 5) -> list[BoardPost]:
-    return [p for p in await posts_on(user_key, swarm_board(swarm_id))
-            if p.status == 'open' and not p.retracted][:limit]
+    return [p for p in await posts_on(user_key, swarm_board(swarm_id), status='open') if not p.retracted][:limit]
+
+
+BRIEF_ITEMS = 4
+
+
+async def brief_note(user_key: str, now: datetime | None = None) -> str:
+    """What on the boards the morning brief should mention: questions waiting
+    on the person, questions nobody answered for a day, new decisions."""
+    settings = await get_settings(user_key)
+    if not settings.enabled:
+        return ''
+    day_ago = _ms((now or datetime.now(UTC)) - timedelta(days=1))
+    rows = sorted((p for p in await BoardPost.find({'user_id': str(user_key)}) or [] if not p.retracted),
+                  key=lambda p: p.posted_at, reverse=True)
+    waiting = [p for p in rows if p.status == 'open' and p.to_name == 'you'][:BRIEF_ITEMS]
+    stuck = [p for p in rows if p.status == 'open' and p.to_name != 'you' and not p.replies
+             and p.posted_at < day_ago][:BRIEF_ITEMS]
+    decided = [p for p in rows if p.kind == 'decision' and p.posted_at >= day_ago][:BRIEF_ITEMS]
+    if not (waiting or stuck or decided):
+        return ''
+
+    def line(p: BoardPost) -> str:
+        to = '' if not p.to_name or p.to_name == 'you' else f' (for {p.to_name})'
+        return f'- {p.author_name}{to}: {_clip(p.text, 200)} [link: {_link(p)}]'
+
+    parts = ['On the message board (give each item its link):']
+    for title, group in (('Questions and requests waiting on the person', waiting),
+                         ('Open over a day with no answer', stuck), ('New decisions since yesterday', decided)):
+        if group:
+            parts.append(f'{title}:')
+            parts += [line(p) for p in group]
+    return '\n'.join(parts)
 
 
 async def boards(user_key: str) -> list[dict[str, Any]]:
@@ -1192,7 +1302,7 @@ async def boards(user_key: str) -> list[dict[str, Any]]:
 
 __all__ = [
     'ASKS', 'DEFAULT_FOLLOW_KINDS', 'board_note_ctx', 'KINDS', 'Author', 'BoardError', 'PERSON', 'boards', 'clean_board',
-    'clean_kind', 'clean_tags', 'create_post', 'delete_post', 'digest', 'edit_post', 'find_mentions',
+    'brief_note', 'clean_kind', 'clean_tags', 'create_post', 'listen', 'remember', 'unlisten', 'delete_post', 'digest', 'edit_post', 'find_mentions',
     'get_follow', 'get_post', 'get_settings', 'list_posts', 'mention_names', 'nudge_stale', 'post_line',
     'public_follow', 'public_post', 'public_settings', 'reply', 'retract_post', 'save_follow', 'save_settings',
     'search', 'set_pinned', 'set_status', 'similar_posts', 'swarm_board', 'swarm_decisions',

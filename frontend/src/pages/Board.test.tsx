@@ -103,4 +103,24 @@ describe('Board', () => {
     fireEvent.change(screen.getByLabelText('Search the board'), { target: { value: 'vat' } });
     await waitFor(() => expect(api.get.mock.calls.map((c) => c[0])).toContain('/board/posts?board=agents&q=vat'));
   });
+
+  it('saves a decision to memory', async () => {
+    render(<MemoryRouter><Board /></MemoryRouter>);
+    const card = (await screen.findByText('Prices are ex-VAT.')).closest('article')!;
+    fireEvent.click(within(card).getByRole('button', { name: 'Save to memory' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/board/posts/p1/remember', {}));
+  });
+
+  it('pages through older posts', async () => {
+    const many = Array.from({ length: 50 }, (_, i) => post({ id: `n${i}`, text: `post ${i}`, stamp: 1000 - i }));
+    api.get.mockImplementation((path: string) => Promise.resolve({
+      data: path.includes('before=951') ? [post({ id: 'old1', text: 'An old post', stamp: 10 })]
+        : path.startsWith('/board/posts') ? many : path === '/board/boards' ? [] : [],
+    }));
+    render(<MemoryRouter><Board /></MemoryRouter>);
+    await screen.findByText('post 0');
+    fireEvent.click(screen.getByRole('button', { name: 'Show older posts' }));
+    expect(await screen.findByText('An old post')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show older posts' })).not.toBeInTheDocument();
+  });
 });

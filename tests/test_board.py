@@ -446,3 +446,61 @@ async def test_tags_reach_an_addressed_finding_and_edits_show_in_the_note(db, ag
     await service.settle()
     note = await service.digest('u1', WRITER.id, 'Writer')
     assert 'Tagged you (@):' in note and 'Acme is down' in note
+
+
+async def test_decisions_go_to_memory_and_changes_are_announced(db, agents, started):
+    from cognitrix.board import service
+    from cognitrix.memory import saved
+
+    queue = service.listen('u1')
+    researcher = service.Author(kind='agent', id=RESEARCHER.id, name='Researcher')
+    rule = await service.create_post('u1', board='agents', kind='decision', text='Prices are ex-VAT.',
+                                     author=researcher)
+    assert (await queue.get())['post_id'] == str(rule.id)
+
+    post, now = await service.remember('u1', str(rule.id))
+    assert now and post.memory_id
+    row = await saved.Memory.get(post.memory_id)
+    assert row.content.endswith('Prices are ex-VAT.') and not row.pending
+    with pytest.raises(service.BoardError):
+        await service.remember('u1', str(rule.id))
+
+    other = await service.create_post('u1', board='agents', kind='decision', text='Ship on Fridays only.',
+                                      author=researcher)
+    await _chat(WRITER)
+    said = await _board(WRITER, action='remember', post_id=str(other.id))
+    assert 'proposed' in said.text
+    proposal = await saved.Memory.get((await service.get_post('u1', str(other.id))).memory_id)
+    assert proposal.pending
+    finding = await service.create_post('u1', board='agents', kind='finding', text='x', author=researcher)
+    assert (await _board(WRITER, action='remember', post_id=str(finding.id))).error.code == 'not_a_decision'
+    service.unlisten('u1', queue)
+    assert 'u1' not in service._LISTENERS
+
+
+async def test_paging_and_the_morning_brief_note(db, agents, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from cognitrix.board import service
+    from cognitrix.board.models import BoardPost
+
+    monkeypatch.setattr(service, 'POSTS_PER_HOUR', 1000)
+    researcher = service.Author(kind='agent', id=RESEARCHER.id, name='Researcher')
+    for i in range(5):
+        await service.create_post('u1', board='agents', kind='finding', text=f'f{i}', author=researcher)
+    first = await service.list_posts('u1', 'agents', limit=2)
+    more = await service.list_posts('u1', 'agents', limit=2, before=first[1].posted_at)
+    assert [p.text for p in first] == ['f4', 'f3'] and [p.text for p in more] == ['f2', 'f1']
+    assert [p.text for p in await service.list_posts('u1', 'agents', status='open')] == []
+
+    assert await service.brief_note('u1') == ''
+    ask = await service.create_post('u1', board='agents', kind='question', text='Which currency?', to='you',
+                                    author=researcher)
+    stuck = await service.create_post('u1', board='agents', kind='question', text='Launch date?',
+                                      author=researcher)
+    old = int((datetime.now(UTC) - timedelta(days=2)).timestamp() * 1000)
+    await BoardPost.update_one({'id': stuck.id}, {'posted_at': old})
+    await service.create_post('u1', board='agents', kind='decision', text='Ex-VAT prices.', author=researcher)
+    note = await service.brief_note('u1')
+    assert 'waiting on the person' in note and 'Which currency?' in note and f'post={ask.id}' in note
+    assert 'no answer' in note and 'Launch date?' in note and 'New decisions' in note

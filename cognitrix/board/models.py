@@ -69,6 +69,8 @@ class BoardPost(Model):
     edited_at: int = 0
     nudged_at: int = 0
     """When an unanswered question or request was last brought up again."""
+    memory_id: str = ''
+    """A decision saved to (or proposed for) the agents' memory."""
 
     @field_validator('pinned', 'retracted', mode='before')
     @classmethod
@@ -91,7 +93,7 @@ class BoardPost(Model):
         return value if isinstance(value, dict) else {}
 
     @field_validator('board', 'kind', 'text', 'author_kind', 'author_id', 'author_name', 'chat_id',
-                     'to_name', 'to_id', 'status', mode='before')
+                     'to_name', 'to_id', 'status', 'memory_id', mode='before')
     @classmethod
     def _texts(cls, value):
         return _text(value)

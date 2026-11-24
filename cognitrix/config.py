@@ -488,6 +488,12 @@ _TASKRUN_INDEXES = (
 )
 
 
+_BOARD_INDEXES = (
+    ('ix_boardposts_user_board', 'boardposts', 'user_id, board', False),
+    ('ix_boardposts_status', 'boardposts', 'status', False),
+)
+
+
 _TASK_EVENT_PAYLOAD_PARTITION = (
     'run_id, sequence, session_id, step_index, kind, agent_name, data'
 )
@@ -1054,6 +1060,13 @@ async def _ensure_schema():
                     await DBMS.Database.query(f'ALTER TABLE {table} ADD COLUMN {column} {ctype}')
         except Exception:
             log.exception("Could not migrate %s schema", table)
+
+    for name, table, columns, unique in _BOARD_INDEXES:
+        try:
+            prefix = 'CREATE UNIQUE INDEX' if unique else 'CREATE INDEX'
+            await DBMS.Database.query(f'{prefix} IF NOT EXISTS {name} ON {table} ({columns})')
+        except Exception:
+            log.exception('Could not create index %s', name)
 
     try:
         await DBMS.Database.query(

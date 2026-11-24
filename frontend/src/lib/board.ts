@@ -46,6 +46,10 @@ export interface BoardPost {
   posted_at: string;
   changed_at: string;
   edited_at?: string;
+  /** Milliseconds since 1970 it was posted; pages on from here. */
+  stamp?: number;
+  /** A decision saved to (or proposed for) the agents' memory. */
+  memory_id?: string;
 }
 
 export interface BoardInfo {
