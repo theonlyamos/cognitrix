@@ -41,7 +41,7 @@ describe('Server setup on a new server', () => {
     post.mockResolvedValue({ data: { restart_needed: false } });
     show('/');
     expect(await screen.findByText('Set up this server')).toBeInTheDocument();
-    expect(screen.getByText(/cognitrix\.db/)).toBeInTheDocument();
+    expect(await screen.findByText(/cognitrix\.db/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/setup/server', expect.objectContaining({ db_type: 'sqlite', queue: 'builtin' })));
     expect(await screen.findByText('sign up page')).toBeInTheDocument();
