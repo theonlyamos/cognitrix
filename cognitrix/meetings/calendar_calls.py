@@ -25,7 +25,6 @@ from __future__ import annotations
 import html
 import json
 import logging
-import os
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -34,6 +33,7 @@ import httpx
 from odbms import Model
 from pydantic import validator
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.meetings.live import platform_of
 
 logger = logging.getLogger('cognitrix.log')
@@ -153,7 +153,7 @@ def utcnow() -> datetime:
 
 def check_seconds() -> int:
     try:
-        return max(MIN_CHECK_SECONDS, int(os.getenv('COGNITRIX_CALENDAR_CHECK_SECONDS', '')
+        return max(MIN_CHECK_SECONDS, int(app_setting('COGNITRIX_CALENDAR_CHECK_SECONDS', '')
                                           or DEFAULT_CHECK_SECONDS))
     except ValueError:
         return DEFAULT_CHECK_SECONDS

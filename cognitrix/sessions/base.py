@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -10,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, Self
 from odbms import Model
 from pydantic import Field
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.encoding import status_print
 from cognitrix.errors import ExecutionControlError
 from cognitrix.providers.base import LLMResponse
@@ -44,7 +44,7 @@ MAX_CHAT_HISTORY = 1000
 # model that never stops calling tools). 10 was too low for build-style steps
 # (creating several files is >10 tool calls), which cut steps off mid-work;
 # 100 fits long multi-file/agentic turns while still bounding runaway loops. Configurable.
-MAX_TOOL_ROUNDS = int(os.getenv('COGNITRIX_MAX_TOOL_ROUNDS', '100'))
+MAX_TOOL_ROUNDS = int(app_setting('COGNITRIX_MAX_TOOL_ROUNDS', '100'))
 
 # Compaction: when the stored history estimate crosses this fraction of the
 # model's usable window, fold the oldest turns into a summary message.

@@ -28,6 +28,8 @@ import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
 
+from cognitrix.computer._app_setting import app_setting
+
 DESKTOP = (1280, 800)
 PHONE = (390, 844)
 MAX_ITEMS = 20
@@ -57,7 +59,7 @@ def _candidates() -> list[str]:
 def find_browser() -> str | None:
     """A Chromium-family browser to drive: ``COGNITRIX_CHECK_BROWSER`` if set, else
     Edge, Chrome or Chromium where they are usually installed."""
-    configured = os.environ.get('COGNITRIX_CHECK_BROWSER', '').strip()
+    configured = app_setting('COGNITRIX_CHECK_BROWSER', '').strip()
     if configured.lower() in ('off', 'none', '0'):
         return None
     for path in ([configured] if configured else []) + _candidates():

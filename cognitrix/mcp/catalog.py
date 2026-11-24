@@ -30,7 +30,6 @@ that work next to the server's own.
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -176,13 +175,6 @@ def _saved_name(provider: str, part: str) -> str:
     return f'oauth_{provider}_{part}'
 
 
-def _env_credentials(provider: str) -> tuple[str, str] | None:
-    prefix = provider.upper()
-    client_id = os.getenv(f'{prefix}_CLIENT_ID', '').strip()
-    secret = os.getenv(f'{prefix}_CLIENT_SECRET', '').strip()
-    return (client_id, secret) if client_id and secret else None
-
-
 def _saved_credentials(provider: str) -> tuple[str, str] | None:
     from cognitrix.providers.saved_keys import get_saved_key
 
@@ -192,11 +184,9 @@ def _saved_credentials(provider: str) -> tuple[str, str] | None:
 
 
 def credentials_source(provider: str | None) -> str:
-    """Where a provider's OAuth client comes from: 'env', 'saved' or 'none'."""
+    """Whether a provider's OAuth client is saved in Settings: 'saved' or 'none'."""
     if not provider or provider not in PROVIDER_LABEL:
         return 'none'
-    if _env_credentials(provider):
-        return 'env'
     return 'saved' if _saved_credentials(provider) else 'none'
 
 
@@ -204,7 +194,7 @@ def provider_credentials(provider: str | None) -> tuple[str, str] | None:
     """The OAuth client this server has for ``provider``, if any."""
     if not provider or provider not in PROVIDER_LABEL:
         return None
-    return _env_credentials(provider) or _saved_credentials(provider)
+    return _saved_credentials(provider)
 
 
 def save_provider_credentials(provider: str, client_id: str, client_secret: str) -> None:

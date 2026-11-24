@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import base64
-import os
 from typing import Any
 
 import httpx
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.media.types import ResolvedImage
 from cognitrix.providers.gemini_image import (
     MAX_PROVIDER_RESPONSE_BYTES,
@@ -22,16 +22,13 @@ _EXTENSIONS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp'}
 
 
 def model_name() -> str:
-    return os.getenv('COGNITRIX_OPENAI_IMAGE_MODEL', '').strip() or DEFAULT_MODEL
+    return app_setting('COGNITRIX_OPENAI_IMAGE_MODEL', '').strip() or DEFAULT_MODEL
 
 
 def api_key() -> str:
-    key = os.getenv('OPENAI_API_KEY', '')
-    if not key:
-        from cognitrix.providers.saved_keys import get_saved_key
+    from cognitrix.providers.saved_keys import get_saved_key
 
-        key = get_saved_key('openai') or ''
-    return key
+    return get_saved_key('openai') or ''
 
 
 def size_for(aspect_ratio: str) -> str:
@@ -66,7 +63,7 @@ class OpenAIImageProvider:
     async def generate(self, prompt: str, *, source: ResolvedImage | None, aspect_ratio: str) -> ProviderImage:
         key = api_key()
         if not key:
-            raise GeminiImageError('missing_openai_api_key', 'OPENAI_API_KEY is required for image generation')
+            raise GeminiImageError('missing_openai_api_key', 'Image generation with OpenAI needs an OpenAI key (Settings, Models and keys).')
         headers = {'Authorization': f'Bearer {key}'}
         fields = {'model': model_name(), 'prompt': prompt, 'size': size_for(aspect_ratio), 'n': 1}
         try:

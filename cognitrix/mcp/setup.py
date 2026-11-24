@@ -145,9 +145,9 @@ def _redirect_problem(provider: str, redirect_uri: str) -> str | None:
     if parsed.scheme == 'https':
         return None
     if provider == 'slack':
-        return 'Slack only accepts https redirect addresses. Put this server behind https and set COGNITRIX_PUBLIC_URL.'
+        return 'Slack only accepts https redirect addresses. Put this server behind https and set its public address in Settings, Advanced.'
     if provider == 'google' and not local:
-        return 'Google only accepts http for localhost. Put this server behind https and set COGNITRIX_PUBLIC_URL.'
+        return 'Google only accepts http for localhost. Put this server behind https and set its public address in Settings, Advanced.'
     return None
 
 
@@ -161,7 +161,7 @@ def describe(provider: str, base: str) -> dict[str, Any]:
         'id': provider,
         'label': catalog.PROVIDER_LABEL[provider],
         'source': source,
-        'can_edit': source != 'env',
+        'can_edit': True,
         'client_id': creds[0] if creds else '',
         'env_vars': [f'{prefix}_CLIENT_ID', f'{prefix}_CLIENT_SECRET'],
         'redirect_uri': redirect_uri,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -131,11 +130,9 @@ class GeminiImageProvider:
         source: ResolvedImage | None,
         aspect_ratio: str,
     ) -> ProviderImage:
-        api_key = os.getenv('GOOGLE_API_KEY', '')
-        if not api_key:
-            from cognitrix.providers.saved_keys import get_saved_key
+        from cognitrix.providers.saved_keys import get_saved_key
 
-            api_key = get_saved_key('google')
+        api_key = get_saved_key('google')
         if not api_key:
             raise GeminiImageError(
                 'missing_google_api_key',

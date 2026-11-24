@@ -29,10 +29,12 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
+
 logger = logging.getLogger('cognitrix.sandbox')
 
 MAX_COPY_FILES = 50_000
-MAX_COPY_BYTES = int(os.environ.get('COGNITRIX_SANDBOX_MAX_COPY_MB', '400')) * 1024 * 1024
+MAX_COPY_BYTES = int(app_setting('COGNITRIX_SANDBOX_MAX_COPY_MB', '400')) * 1024 * 1024
 MAX_GIT_DIR_BYTES = 150 * 1024 * 1024
 # Left out when a folder without git is copied in (installed or built things
 # the sandbox makes again itself).
@@ -511,7 +513,7 @@ class SandboxWork:
             logger.warning("The sandbox key proxy didn't start", exc_info=True)
             raise SandboxWorkError('key_proxy', "This command needs keys the sandbox only gets through Cognitrix's key "
                                    f"proxy, and the proxy didn't start ({exc}). Ask the person to check Docker, or "
-                                   'to set COGNITRIX_SANDBOX_HIDE_KEYS=0 to pass keys in directly.') from None
+                                   'to turn off "Hide keys from the computer" in Settings, Computers.') from None
         proxy, person = get_proxy(), user_key(self.user_id)
         out = {k: (proxy.placeholder(person, k, v) if isinstance(v, HiddenValue) else v) for k, v in env.items()}
         out.update(extra)
@@ -959,6 +961,9 @@ def cognitrix_cli_env() -> dict[str, str]:
             value = ''
         if value:
             env[var] = HiddenValue(value, PROVIDER_HOSTS[provider], var)
+    if env:
+        from cognitrix.providers.saved_keys import SANDBOX_CLI_MARKER
+        env[SANDBOX_CLI_MARKER] = '1'  # tells that CLI to take its keys from these
     return env
 
 

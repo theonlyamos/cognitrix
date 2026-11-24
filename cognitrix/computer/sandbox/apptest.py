@@ -586,7 +586,7 @@ def test_app_port(port: int, steps, path: str = '', *, phone: bool = False,
     if browser is None:
         return {'ok': False, 'no_browser': True,
                 'error': 'No Edge, Chrome or Chromium was found where the app runs, so it cannot be clicked '
-                         'through. Use Check App for a text check, or set COGNITRIX_CHECK_BROWSER.'}
+                         'through. Use Check App for a text check, or set a browser in Settings, Computers.'}
     hosting = _Hosting(int(port))
     try:
         out = run_steps(hosting.url + str(path or '').lstrip('/'), steps, browser=browser, phone=phone,

@@ -15,18 +15,19 @@ import hmac
 import ipaddress
 import json
 import logging
-import os
 import socket
 import time
 from urllib.parse import urlparse
 
 import httpx
 
+from cognitrix.app_settings import get as app_setting
+
 logger = logging.getLogger('cognitrix.log')
 
 ATTEMPTS = 3
 ATTEMPT_TIMEOUT = 10.0
-TOTAL_BUDGET = float(os.getenv('COGNITRIX_WEBHOOK_BUDGET', '15'))
+TOTAL_BUDGET = float(app_setting('COGNITRIX_WEBHOOK_BUDGET', '15'))
 BACKOFFS = (1.0, 2.0, 4.0)
 
 # Carrier-grade NAT (RFC 6598) — not covered by ipaddress.is_private.
@@ -34,7 +35,7 @@ _CGNAT = ipaddress.ip_network('100.64.0.0/10')
 
 
 def _allow_private() -> bool:
-    return os.getenv('COGNITRIX_WEBHOOK_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
+    return app_setting('COGNITRIX_WEBHOOK_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
 
 
 def check_public_url(url: str, *, label: str = 'url', allow_private: bool = False,

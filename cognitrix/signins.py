@@ -24,6 +24,8 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
+
 FMT = '%Y-%m-%d %H:%M:%S'
 CODE_TTL_S = 300
 MAX_OPEN_CODES = 3
@@ -58,7 +60,7 @@ def _parse(stamp: Any) -> datetime | None:
 
 
 def code_signin_on() -> bool:
-    return os.environ.get('COGNITRIX_CODE_SIGNIN', '').strip().lower() not in ('0', 'false', 'no', 'off')
+    return app_setting('COGNITRIX_CODE_SIGNIN', '').strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 # ---------------------------------------------------------------------------

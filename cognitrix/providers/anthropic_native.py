@@ -16,11 +16,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.errors import ExecutionControlError
 from cognitrix.utils.llm_response import LLMResponse
 
@@ -41,7 +41,7 @@ _clients: dict[tuple[str, str, tuple[tuple[str, str], ...]], tuple[Any, Any]] = 
 
 
 def enabled() -> bool:
-    return os.getenv('COGNITRIX_ANTHROPIC_NATIVE', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+    return app_setting('COGNITRIX_ANTHROPIC_NATIVE', '1').strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 def can_handle(llm: Any, response_format: Any = None) -> bool:

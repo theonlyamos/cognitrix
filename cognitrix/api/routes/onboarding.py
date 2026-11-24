@@ -13,7 +13,6 @@ re-pointed at another model or deleted from the Agents page later.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from typing import Any
 
@@ -23,6 +22,7 @@ from pydantic import BaseModel
 from cognitrix.agents import Agent, starter_team
 from cognitrix.agents import access as agent_access
 from cognitrix.agents.templates import DEFAULT_ASSISTANT_DESCRIPTION, default_assistant_prompt
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.security import AuthContext, get_auth_context, jwt_only, redact_secrets
 from cognitrix.models import User
 
@@ -76,7 +76,7 @@ def _has_server_key(provider: str) -> bool:
 
     from cognitrix.providers.saved_keys import get_saved_key
 
-    if os.getenv(f'{provider.upper()}_API_KEY') or get_saved_key(provider):
+    if get_saved_key(provider):
         return True
     try:
         return bool(settings.get_api_key(provider))
@@ -87,7 +87,7 @@ def _has_server_key(provider: str) -> bool:
 def _default_model(provider: str) -> str:
     from cognitrix.config import settings
 
-    return os.getenv(f'{provider.upper()}_MODEL') or settings.get_default_model(provider)
+    return settings.get_default_model(provider)
 
 
 def _provider_options() -> list[dict[str, Any]]:
@@ -200,7 +200,7 @@ def _build_llm(setup: AssistantSetup) -> LLM:
     llm_data: dict[str, Any] = {
         'provider': provider,
         'model': model,
-        'base_url': os.getenv(f'{provider.upper()}_BASE_URL') or _DEFAULT_BASE_URLS.get(provider, ''),
+        'base_url': app_setting(f'{provider.upper()}_BASE_URL') or _DEFAULT_BASE_URLS.get(provider, ''),
     }
     api_key = (setup.api_key or '').strip()
     if provider in PLAN_PROVIDERS:

@@ -16,6 +16,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.computer.sandbox.apps import INSTALL_TIMEOUT, START_TIMEOUT, AppHost, AppHostError, b64
 
 DEPLOY_TIMEOUT = INSTALL_TIMEOUT + START_TIMEOUT + 120
@@ -29,13 +30,13 @@ class RunnerError(Exception):
 
 
 def apps_enabled() -> bool:
-    return os.getenv('COGNITRIX_APPS', '').strip().lower() not in ('off', '0', 'false', 'no')
+    return app_setting('COGNITRIX_APPS', '').strip().lower() not in ('off', '0', 'false', 'no')
 
 
 def local_allowed() -> bool:
     """Apps may run on this machine when the sandbox is off, unless turned off
     (servers people share usually want ``COGNITRIX_APPS_LOCAL=off``)."""
-    return os.getenv('COGNITRIX_APPS_LOCAL', '').strip().lower() not in ('off', '0', 'false', 'no')
+    return app_setting('COGNITRIX_APPS_LOCAL', '').strip().lower() not in ('off', '0', 'false', 'no')
 
 
 def default_runtime() -> str | None:
@@ -195,6 +196,6 @@ def _running_as_root() -> bool:
 def runner_for(runtime: str, owner_id: Any):
     if runtime == 'local':
         if not local_allowed():
-            raise RunnerError('local_off', 'Apps on this machine are turned off (COGNITRIX_APPS_LOCAL=off).')
+            raise RunnerError('local_off', 'Apps on this machine are turned off (Settings, Advanced).')
         return LocalRunner()
     return SandboxRunner(owner_id)

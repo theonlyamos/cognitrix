@@ -15,13 +15,14 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
 from odbms import Model
 from pydantic import Field
+
+from cognitrix.app_settings import get as app_setting
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -36,14 +37,14 @@ task_turn_ctx: ContextVar[dict | None] = ContextVar('task_turn_ctx', default=Non
 
 def approval_timeout_seconds() -> float:
     try:
-        return max(5.0, float(os.getenv('COGNITRIX_TASK_APPROVAL_TIMEOUT', '1800')))
+        return max(5.0, float(app_setting('COGNITRIX_TASK_APPROVAL_TIMEOUT', '1800')))
     except ValueError:
         return 1800.0
 
 
 def _poll_interval() -> float:
     try:
-        return max(0.05, float(os.getenv('COGNITRIX_TASK_APPROVAL_POLL', '1.0')))
+        return max(0.05, float(app_setting('COGNITRIX_TASK_APPROVAL_POLL', '1.0')))
     except ValueError:
         return 1.0
 
@@ -132,7 +133,6 @@ async def request_task_approval(ctx: dict, tool_name: str, params: dict[str, Any
     )
     await row.save()
     from cognitrix.common import webpush
-
     from cognitrix.safety import approval_alerts
 
     webpush.send_soon(

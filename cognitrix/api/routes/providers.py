@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from cognitrix.agents.access import is_admin
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.security import AuthContext, crud_scope, jwt_only, redact_secrets
 
 from ...providers import LLM
@@ -45,14 +45,11 @@ def _forget_cached_llms() -> None:
 
 def _key_row(provider: str) -> dict[str, Any]:
     from cognitrix.providers.base import _DEFAULT_BASE_URLS, _env_key
-    from cognitrix.providers.saved_keys import env_key, get_saved_key
+    from cognitrix.providers.saved_keys import get_saved_key
 
-    env_value = env_key(provider)
     saved = get_saved_key(provider)
     if provider in KEYLESS:
         source = 'local'
-    elif env_value:
-        source = 'env'
     elif saved:
         source = 'saved'
     else:
@@ -62,7 +59,7 @@ def _key_row(provider: str) -> dict[str, Any]:
         'source': source,
         'env_var': _env_key(provider, 'API_KEY'),
         'hint': f'…{saved[-4:]}' if source == 'saved' else None,
-        'base_url': os.getenv(_env_key(provider, 'BASE_URL')) or _DEFAULT_BASE_URLS.get(provider, ''),
+        'base_url': app_setting(_env_key(provider, 'BASE_URL')) or _DEFAULT_BASE_URLS.get(provider, ''),
     }
 
 
@@ -86,7 +83,7 @@ async def chat_model_options(ctx: AuthContext = Depends(jwt_only)) -> dict[str, 
     usable = [
         {'id': o['id'], 'default_model': o['default_model']}
         for o in options
-        if o['has_key'] or o.get('installed') or (o['id'] == 'ollama' and os.getenv('OLLAMA_BASE_URL'))
+        if o['has_key'] or o.get('installed') or (o['id'] == 'ollama' and app_setting('OLLAMA_BASE_URL'))
     ]
     return {'providers': usable}
 
@@ -97,15 +94,13 @@ class KeyBody(BaseModel):
 
 @providers_api.put('/keys/{provider}')
 async def save_provider_key(provider: str, body: KeyBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
-    from cognitrix.providers.saved_keys import env_key, set_saved_key
+    from cognitrix.providers.saved_keys import set_saved_key
 
     provider = _known(provider)
     if not await is_admin(ctx.user):
         raise HTTPException(status_code=403, detail='Only an admin can change the engine\'s provider keys.')
     if provider in KEYLESS:
         raise HTTPException(status_code=400, detail=f'{provider} runs locally and needs no key.')
-    if env_key(provider):
-        raise HTTPException(status_code=409, detail='This key comes from the engine\'s environment. Change it in .env instead.')
     if not body.api_key.strip():
         raise HTTPException(status_code=400, detail='Paste a key first.')
     try:

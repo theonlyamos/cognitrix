@@ -6,9 +6,7 @@ because the key is needed in sync code (``_resolve_runtime_config``) and in
 every process: the web server, the Celery worker and the desktop engine all
 share the data folder.
 
-An environment variable (``<PROVIDER>_API_KEY`` or a key the settings load
-from ``.env``) always wins over a saved key, so an operator's config is never
-silently replaced from the UI.
+Environment variables are not read: keys are set in Settings only.
 
 Agents keep the key they were resolved with, and ``LLMManager`` caches
 resolved LLMs. So when a saved key is replaced or removed, the old one is
@@ -79,7 +77,40 @@ def _load() -> tuple[dict[str, str], dict[str, set[str]]]:
 
 
 def get_saved_key(provider: str) -> str:
-    return _load()[0].get(provider.strip().lower(), '')
+    name = provider.strip().lower()
+    return _load()[0].get(name, '') or _sandbox_cli_key(name) or _test_env_key(name)
+
+
+# The engine hands the app's CLI in a sandbox computer its model keys as
+# variables (proxy placeholders, see sandbox_work.cognitrix_cli_env) and sets
+# this marker; that CLI has no key store of its own. Nothing else reads keys
+# from the environment.
+SANDBOX_CLI_MARKER = 'COGNITRIX_SANDBOX_CLI'
+_SANDBOX_CLI_VARS = {'anthropic': ('ANTHROPIC_API_KEY',), 'openai': ('OPENAI_API_KEY',),
+                     'google': ('GOOGLE_API_KEY', 'GEMINI_API_KEY')}
+
+
+def _sandbox_cli_key(name: str) -> str:
+    if os.environ.get(SANDBOX_CLI_MARKER) != '1':
+        return ''
+    return next((os.environ[v] for v in _SANDBOX_CLI_VARS.get(name, ()) if os.environ.get(v)), '')
+
+
+_OLD_ENV_NAMES = {'cohere': 'CO_API_KEY', 'huggingface': 'HUGGINGFACE_ACCESS_TOKEN',
+                  'clarifai': 'CLARIFAI_ACCESS_TOKEN'}
+
+
+def _test_env_key(name: str) -> str:
+    """Tests only (see app_settings._env_fallback): a key a test set with
+    monkeypatch.setenv. The app never reads keys from the environment."""
+    from cognitrix import app_settings
+
+    if not app_settings._env_fallback:
+        return ''
+    if name.startswith('oauth_'):
+        _, provider, part = name.split('_', 2)
+        return os.environ.get(f'{provider.upper()}_{part.upper()}', '')
+    return os.environ.get(_OLD_ENV_NAMES.get(name, f'{name.upper()}_API_KEY'), '')
 
 
 def saved_providers() -> dict[str, str]:
@@ -149,13 +180,6 @@ def set_saved_key(provider: str, key: str) -> None:
 
 
 def env_key(provider: str) -> str:
-    """The key the engine's environment or .env gives ``provider``, if any."""
-    from cognitrix.config import settings
-
-    value = os.getenv(f'{provider.upper()}_API_KEY', '')
-    if value:
-        return value
-    try:
-        return settings.get_api_key(provider) or ''
-    except Exception:
-        return ''
+    """Kept for callers written when keys could come from the environment.
+    Keys are only ever set in Settings now, so this is always ''."""
+    return ''

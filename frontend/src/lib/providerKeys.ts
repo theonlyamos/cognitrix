@@ -2,9 +2,8 @@ import { api } from '@/lib/api';
 
 export interface ProviderKey {
   id: string;
-  /** env: from the engine's environment or .env (can't be edited here);
-   *  saved: saved from Settings; local: needs no key; none: missing. */
-  source: 'env' | 'saved' | 'local' | 'none';
+  /** saved: saved from Settings; local: needs no key; none: missing. */
+  source: 'saved' | 'local' | 'none';
   env_var: string;
   /** Last four characters of a saved key, e.g. "…3f2a". */
   hint: string | null;

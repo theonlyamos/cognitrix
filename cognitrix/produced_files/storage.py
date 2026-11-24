@@ -6,12 +6,13 @@ import os
 import re
 from pathlib import Path
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.config import settings
 
 
 def _mb(name: str, default: int) -> int:
     try:
-        return max(1, int(os.getenv(name, '') or default)) * 1024 * 1024
+        return max(1, int(app_setting(name, '') or default)) * 1024 * 1024
     except ValueError:
         return default * 1024 * 1024
 

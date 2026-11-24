@@ -19,6 +19,7 @@ from odbms import Model
 from openai import AsyncOpenAI, OpenAI
 from pydantic import Field
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.errors import ExecutionControlError
 from cognitrix.utils import file_to_image_data_uri, image_to_base64
 from cognitrix.utils.llm_response import LLMResponse
@@ -129,14 +130,6 @@ def _server_held_keys() -> dict[str, set[str]]:
     from cognitrix.providers.saved_keys import saved_providers
 
     held: dict[str, set[str]] = {}
-    for name, value in os.environ.items():
-        if not value or len(value) < 8:
-            continue
-        for suffix in _KEY_ENV_SUFFIXES:
-            if name.endswith(suffix):
-                provider = name[: -len(suffix)].lower()
-                held.setdefault(value, set()).add(provider)
-                break
     for provider in set(_DEFAULT_BASE_URLS) | {'together', 'cohere', 'groq', 'cerebras'}:
         try:
             value = settings.get_api_key(provider)
@@ -159,12 +152,12 @@ def _trusted_base_urls(providers: set[str]) -> set[str]:
     trusted: set[str] = set()
     for provider in providers:
         for candidate in (
-            os.getenv(_env_key(provider, 'BASE_URL')),
+            app_setting(_env_key(provider, 'BASE_URL')),
             _DEFAULT_BASE_URLS.get(provider),
         ):
             if candidate:
                 trusted.add(_normalize_base_url(candidate))
-    extra = os.getenv('COGNITRIX_TRUSTED_BASE_URLS', '')
+    extra = app_setting('COGNITRIX_TRUSTED_BASE_URLS', '').replace('\n', ',')
     trusted.update(_normalize_base_url(u) for u in extra.split(',') if u.strip())
     return trusted
 
@@ -186,7 +179,7 @@ def assert_key_destination_allowed(base_url: str, api_key: str) -> None:
     raise ProviderKeyDestinationError(
         f"base_url '{base_url}' is not a trusted endpoint for the server's "
         f"{'/'.join(sorted(owners))} key. Supply your own api_key for a custom "
-        "base_url, or ask the operator to add it to COGNITRIX_TRUSTED_BASE_URLS."
+        "base_url, or ask an admin to add it under Settings, Models and keys, Other trusted addresses."
     )
 
 
@@ -203,7 +196,7 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
     overrides = overrides or {}
 
     # Resolve provider: explicit or AI_PROVIDER
-    effective_provider = provider or os.getenv('AI_PROVIDER', 'openrouter').lower()
+    effective_provider = provider or app_setting('AI_PROVIDER', 'openrouter').lower()
 
     if effective_provider == 'chatgpt':
         return _chatgpt_plan_config(overrides)
@@ -223,12 +216,11 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
 
     base_url = (
         overrides.get('base_url')
-        or os.getenv(_env_key(effective_provider, 'BASE_URL'))
+        or app_setting(_env_key(effective_provider, 'BASE_URL'))
         or _DEFAULT_BASE_URLS.get(effective_provider, '')
     )
     api_key = (
         overrides.get('api_key')
-        or os.getenv(_env_key(effective_provider, 'API_KEY'))
         or settings.get_api_key(effective_provider)
         or get_saved_key(effective_provider)
         # A local Ollama ignores the key, but the OpenAI client needs one.
@@ -236,33 +228,30 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
     )
     model = (
         overrides.get('model')
-        or os.getenv(_env_key(effective_provider, 'MODEL'))
         or settings.get_default_model(effective_provider)
     )
     temperature = overrides.get('temperature')
     if temperature is None:
-        temp_env = os.getenv(_env_key(effective_provider, 'TEMPERATURE'))
-        temperature = float(temp_env) if temp_env else DEFAULT_TEMPERATURE
+        temperature = DEFAULT_TEMPERATURE
     max_tokens = overrides.get('max_tokens')
     if max_tokens is None:
-        tok_env = os.getenv(_env_key(effective_provider, 'MAX_TOKENS'))
-        max_tokens = int(tok_env) if tok_env else DEFAULT_MAX_TOKENS
+        max_tokens = DEFAULT_MAX_TOKENS
 
     # Validate required fields with clear errors
     if not base_url:
         raise ValueError(
             f"Missing base_url for provider '{effective_provider}'. "
-            f"Set {_env_key(effective_provider, 'BASE_URL')} or pass base_url."
+            "Set its address in Settings, Models and keys, or pass base_url."
         )
     if not api_key:
         raise ValueError(
             f"Missing api_key for provider '{effective_provider}'. "
-            f"Set {_env_key(effective_provider, 'API_KEY')} or pass api_key."
+            "Add a key in Settings, Models and keys, or pass api_key."
         )
     if not model:
         raise ValueError(
             f"Missing model for provider '{effective_provider}'. "
-            f"Set {_env_key(effective_provider, 'MODEL')} or pass model."
+            "Pick a model for the agent, or pass model."
         )
 
     assert_key_destination_allowed(base_url, api_key)
@@ -295,7 +284,7 @@ def _chatgpt_plan_config(overrides: dict[str, Any]) -> dict[str, Any]:
         'provider': 'chatgpt',
         'base_url': chatgpt_plan.API_BASE,
         'api_key': chatgpt_plan.TOKEN_PLACEHOLDER,
-        'model': overrides.get('model') or os.getenv('CHATGPT_MODEL') or settings.get_default_model('chatgpt'),
+        'model': overrides.get('model') or settings.get_default_model('chatgpt'),
         'temperature': DEFAULT_TEMPERATURE,
         'max_tokens': overrides.get('max_tokens') or DEFAULT_MAX_TOKENS,
     }

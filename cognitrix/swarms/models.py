@@ -5,11 +5,12 @@ Persistence rule (as elsewhere): instance ``save()`` once at creation,
 """
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from odbms import Model
 from pydantic import Field, field_validator
+
+from cognitrix.app_settings import get as app_setting
 
 SWARM_STATUSES = ('running', 'done', 'stopped')
 WORKER_STATUSES = ('queued', 'running', 'reviewing', 'done', 'failed', 'stopped')
@@ -24,7 +25,7 @@ DEFAULT_AUTO_START = 5
 
 def _env_int(name: str, default: int) -> int:
     try:
-        return max(1, int(os.environ.get(name, '') or default))
+        return max(1, int(app_setting(name, '') or default))
     except ValueError:
         return default
 

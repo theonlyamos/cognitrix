@@ -20,7 +20,6 @@ import asyncio
 import dataclasses
 import hashlib
 import logging
-import os
 import re
 import shutil
 import time
@@ -29,6 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.swarms import worktrees
 from cognitrix.swarms.models import (
     ENDED,
@@ -66,7 +66,7 @@ _RATE_LIMIT = re.compile(r'\b(429|rate.?limit|overloaded|too many requests|quota
 def worker_timeout() -> float:
     """How long one worker turn may take."""
     try:
-        return max(60.0, float(os.environ.get('COGNITRIX_SWARM_WORKER_TIMEOUT', '') or 900))
+        return max(60.0, float(app_setting('COGNITRIX_SWARM_WORKER_TIMEOUT', '') or 900))
     except ValueError:
         return 900.0
 
@@ -74,7 +74,7 @@ def worker_timeout() -> float:
 def stall_seconds() -> float:
     """A running worker with no new output for this long is called stalled."""
     try:
-        return max(30.0, float(os.environ.get('COGNITRIX_SWARM_STALL_SECONDS', '') or 300))
+        return max(30.0, float(app_setting('COGNITRIX_SWARM_STALL_SECONDS', '') or 300))
     except ValueError:
         return 300.0
 

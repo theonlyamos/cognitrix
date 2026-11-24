@@ -44,10 +44,30 @@ def test_cli_keys_are_hidden_per_provider_host(monkeypatch):
     monkeypatch.setattr(keys, 'env_key', lambda provider: real.get(provider))
     monkeypatch.setattr(keys, 'get_saved_key', lambda provider: None)
     env = sw.cognitrix_cli_env()
-    assert set(env) == {'ANTHROPIC_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY'}
+    assert set(env) == {'ANTHROPIC_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', keys.SANDBOX_CLI_MARKER}
+    assert env.pop(keys.SANDBOX_CLI_MARKER) == '1'
     assert all(isinstance(v, HiddenValue) for v in env.values())
     assert env['ANTHROPIC_API_KEY'].hosts == ('api.anthropic.com',)
     assert env['GOOGLE_API_KEY'].hosts == ('generativelanguage.googleapis.com',)
+
+
+def test_the_cli_in_the_sandbox_takes_the_keys_it_was_handed(monkeypatch, tmp_path):
+    """Inside the sandbox the app's CLI has no key store; the engine passes
+    its keys (placeholders) as variables with a marker. Without the marker,
+    keys in the environment are ignored."""
+    import cognitrix.providers.saved_keys as keys
+    from cognitrix import app_settings
+
+    monkeypatch.setattr(app_settings, '_env_fallback', False)
+    monkeypatch.setattr(keys, 'keys_file', lambda: tmp_path / 'none.json')
+    monkeypatch.setattr(keys, '_cache', None)
+    monkeypatch.setenv('GEMINI_API_KEY', 'placeholder-g')
+    monkeypatch.delenv('GOOGLE_API_KEY', raising=False)
+    monkeypatch.delenv(keys.SANDBOX_CLI_MARKER, raising=False)
+    assert keys.get_saved_key('google') == ''
+    monkeypatch.setenv(keys.SANDBOX_CLI_MARKER, '1')
+    assert keys.get_saved_key('google') == 'placeholder-g'
+    assert keys.get_saved_key('groq') == ''
 
 
 def test_running_the_cli_sends_placeholders_never_keys(workdir, monkeypatch):

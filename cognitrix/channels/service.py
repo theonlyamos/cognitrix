@@ -29,6 +29,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.models.chat_channel import ChannelDelivery, ChannelThread, ChatChannel
 
 from .base import (
@@ -64,7 +65,7 @@ _COMMAND = re.compile(r'^[/!]([a-z_]+)(?:@\S+)?\s*(.*)$', re.S | re.I)
 
 
 def channels_enabled() -> bool:
-    return os.getenv('COGNITRIX_CHANNELS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+    return app_setting('COGNITRIX_CHANNELS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 def new_link_code() -> tuple[str, str]:

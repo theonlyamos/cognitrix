@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import inspect
 import json
-import time
 import os
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
 from decimal import Decimal
+from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.providers.limits import ConcurrencyLimiter, build_concurrency_limiter
 from cognitrix.tasks.budget import BudgetLedger, TokenReservation
 
@@ -388,8 +389,8 @@ def _default_limiter() -> ConcurrencyLimiter:
         _DEFAULT_LIMITER = build_concurrency_limiter(
             environment=settings.env,
             redis_url=redis_url,
-            provider_limit=max(1, int(os.getenv("TASK_PROVIDER_CONCURRENCY", "4"))),
-            actor_limit=max(1, int(os.getenv("TASK_ACTOR_CONCURRENCY", "4"))),
+            provider_limit=max(1, int(app_setting("TASK_PROVIDER_CONCURRENCY", "4"))),
+            actor_limit=max(1, int(app_setting("TASK_ACTOR_CONCURRENCY", "4"))),
         )
     return _DEFAULT_LIMITER
 

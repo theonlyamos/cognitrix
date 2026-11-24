@@ -3,7 +3,7 @@
 # volume mounted at /home/cognitrix/.cognitrix. The containers run as the
 # unprivileged "cognitrix" user; the entry script hands the volume to it.
 #
-#   cp .env.example .env      # fill in provider keys + JWT_SECRET_KEY
+#   cp .env.example .env      # set JWT_SECRET_KEY; provider keys go in Settings
 #   docker compose up --build
 #
 # Scale execution with `docker compose up --scale worker=3`. Keep web at a

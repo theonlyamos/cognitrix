@@ -4,11 +4,12 @@ ponytail: per-process sliding window — swap for a Redis window if cognitrix
 ever runs multi-worker/multi-instance (limits currently multiply per process).
 """
 
-import os
 import time
 from collections import deque
 
 from fastapi import HTTPException
+
+from cognitrix.app_settings import get as app_setting
 
 WINDOW_SECONDS = 60.0
 
@@ -17,7 +18,7 @@ _windows: dict[str, deque] = {}
 
 def _default_limit() -> int:
     try:
-        return int(os.getenv('COGNITRIX_API_RATE_LIMIT', '60'))
+        return int(app_setting('COGNITRIX_API_RATE_LIMIT', '60'))
     except ValueError:
         return 60
 

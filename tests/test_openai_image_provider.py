@@ -14,7 +14,8 @@ PNG = b'\x89PNG\r\n\x1a\n' + b'0' * 32
 
 def _no_saved_keys(monkeypatch):
     from cognitrix.providers import saved_keys
-    monkeypatch.setattr(saved_keys, 'get_saved_key', lambda provider: '')
+    # Nothing saved; keys a test sets with setenv still count (conftest).
+    monkeypatch.setattr(saved_keys, '_load', lambda: ({}, {}))
 
 
 def test_closest_size_for_each_shape():

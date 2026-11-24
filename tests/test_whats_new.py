@@ -20,9 +20,6 @@ async def db(tmp_path, monkeypatch):
 
     for name in ('ANTHROPIC', 'OPENAI', 'GOOGLE', 'OPENROUTER', 'GROQ', 'CEREBRAS'):
         monkeypatch.delenv(f'{name}_API_KEY', raising=False)
-    from cognitrix.config import settings
-    for attr in ('anthropic_api_key', 'openai_api_key', 'google_api_key', 'groq_api_key'):
-        monkeypatch.setattr(settings, attr, '', raising=False)
     from cognitrix.providers.base import LLMManager
     monkeypatch.setattr(LLMManager, '_llm_cache', {}, raising=False)
     yield

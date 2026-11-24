@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.safe_exec import PathEscapesRoot
 
 READ = 'read'
@@ -212,7 +213,7 @@ def allowed_roots() -> list[Path] | None:
     - A web server: only inside the app's working folder, so one user can't
       point an agent at the server's disk.
     """
-    raw = os.environ.get('COGNITRIX_ALLOWED_FOLDERS', '').strip()
+    raw = app_setting('COGNITRIX_ALLOWED_FOLDERS', '').strip()
     if raw:
         return [Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p.strip()] + _EXTRA_ROOTS
     if os.environ.get('COGNITRIX_DESKTOP') == '1':

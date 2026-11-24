@@ -13,11 +13,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
+
+from cognitrix.app_settings import get as app_setting
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -45,7 +46,7 @@ def set_embedder(fn: Embedder | None) -> None:
 def enabled() -> bool:
     if _embedder is not None:
         return True
-    if os.getenv('COGNITRIX_MEMORY_EMBEDDINGS', '1').strip().lower() in ('0', 'false', 'no', 'off'):
+    if app_setting('COGNITRIX_MEMORY_EMBEDDINGS', '1').strip().lower() in ('0', 'false', 'no', 'off'):
         return False
     return time.monotonic() >= _failed_until
 

@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+from cognitrix.app_settings import get as app_setting
 
 if TYPE_CHECKING:
     from cognitrix.agents.base import Agent
@@ -38,7 +39,7 @@ logger = logging.getLogger('cognitrix.log')
 USER_SPEAKER = 'user'
 EVERYONE_HANDLES = ('all', 'everyone', 'team')
 
-MAX_AGENT_TURNS = max(1, int(os.getenv('COGNITRIX_GROUP_MAX_TURNS', '6')))
+MAX_AGENT_TURNS = max(1, int(app_setting('COGNITRIX_GROUP_MAX_TURNS', '6')))
 MAX_TURNS_PER_AGENT = 2
 # Each agent turn only needs recent context; the window shaper trims further.
 VIEW_ENTRIES = 400

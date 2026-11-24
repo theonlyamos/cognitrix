@@ -3,7 +3,6 @@ Main CLI entry point and orchestration.
 """
 import asyncio
 import logging
-import os
 import sys
 
 from cognitrix.common.encoding import ensure_utf8_stdio
@@ -22,11 +21,13 @@ def main():
 
         # --dangerously-skip-permissions: fully unattended, no safety gate and
         # no command whitelist. Wired through the same env vars the approval
-        # gate and bash tool read, so it takes effect before any tool runs.
+        # gate and bash tool read (for this process only), so it takes effect
+        # before any tool runs.
         # Sandbox/container use only.
         if getattr(args, 'dangerously_skip_permissions', False):
-            os.environ['COGNITRIX_AUTO_APPROVE'] = '1'
-            os.environ['COGNITRIX_SANDBOX_SHELL'] = '1'
+            from cognitrix import app_settings
+            app_settings.override('COGNITRIX_AUTO_APPROVE', '1')
+            app_settings.override('COGNITRIX_SANDBOX_SHELL', '1')
             logging.warning(
                 "--dangerously-skip-permissions: auto-approving all tool calls and "
                 "running the bash tool without the command whitelist."

@@ -2,7 +2,6 @@
 import asyncio
 import json
 import logging
-import os
 from contextlib import asynccontextmanager
 from dataclasses import replace
 
@@ -16,8 +15,7 @@ from starlette.formparsers import MultiPartException, MultiPartParser
 
 from cognitrix.agents import Agent
 from cognitrix.agents import access as agent_access
-from cognitrix.safety.permissions import normalize_agent_level, normalize_tool_permissions
-from cognitrix.tools.base import ToolManager
+from cognitrix.app_settings import get as app_setting
 from cognitrix.common.security import (
     AuthContext,
     crud_scope,
@@ -27,10 +25,9 @@ from cognitrix.common.security import (
     redact_secrets,
     require,
 )
-from cognitrix.sessions import runs as chat_runs
-from cognitrix.sessions.base import Session
 from cognitrix.questions.broker import resolve_question
 from cognitrix.questions.models import QuestionAction
+from cognitrix.safety.permissions import normalize_agent_level, normalize_tool_permissions
 from cognitrix.session_ownership import (
     OwnershipConflict,
     OwnershipNotFound,
@@ -40,27 +37,29 @@ from cognitrix.session_ownership import (
     principal_key,
     require_active_owned,
 )
-from cognitrix.utils.sse import SSEManagerCapacityError, get_sse_manager
+from cognitrix.sessions import runs as chat_runs
+from cognitrix.sessions.base import Session
 from cognitrix.tasks.execution_mode import ExecutionMode, parse_execution_mode
+from cognitrix.tools.base import ToolManager
+from cognitrix.utils.sse import SSEManagerCapacityError, get_sse_manager
 
 from ...media.staging import (
     MAX_UPLOAD_COUNT,
-    MAX_UPLOAD_FILE_BYTES,
     MAX_UPLOAD_TOTAL_BYTES,
     StagedAttachmentSet,
-    _decode_data_url as _staging_decode_data_url,
     cleanup_staged_attachments,
     stage_legacy_data_urls,
     stage_upload_files,
 )
-
+from ...media.staging import (
+    _decode_data_url as _staging_decode_data_url,
+)
 from ...providers import LLM
-from ...providers.base import normalize_reasoning_effort
-from ...providers.base import ProviderKeyDestinationError
+from ...providers.base import ProviderKeyDestinationError, normalize_reasoning_effort
 
 logger = logging.getLogger('cognitrix.log')
 
-CHAT_TIMEOUT = float(os.getenv('COGNITRIX_API_CHAT_TIMEOUT', '300'))
+CHAT_TIMEOUT = float(app_setting('COGNITRIX_API_CHAT_TIMEOUT', '300'))
 
 # Request parsers buffer/spool parts before staging sees them. Bound the ASGI
 # body as well as decoded files: multipart gets 1 MiB of framing allowance;
@@ -1151,12 +1150,13 @@ async def agent_overview(agent_id: str, ctx: AuthContext = Depends(get_auth_cont
     """Activity for the agent page: chats, task runs, approvals, teams."""
     from datetime import UTC, datetime, timedelta
 
-    from cognitrix.agents.access import can_view, is_admin as _is_admin
+    from cognitrix.agents.access import can_view
+    from cognitrix.agents.access import is_admin as _is_admin
     from cognitrix.api.routes.sessions import _session_summary, _visible_remote_sessions
+    from cognitrix.api.routes.tasks import _run_visible
     from cognitrix.session_ownership import principal_key
     from cognitrix.tasks import approvals
     from cognitrix.tasks.base import Task
-    from cognitrix.api.routes.tasks import _run_visible
     from cognitrix.tasks.run import TaskRun, run_acl_allowed
     from cognitrix.teams.base import Team
 

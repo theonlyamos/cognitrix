@@ -20,9 +20,9 @@ Tasks and teams follow the ownership rules through their own owner_id field.
 """
 from __future__ import annotations
 
-import os
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.session_ownership import principal_key
 
 
@@ -76,7 +76,7 @@ async def is_admin(user: Any) -> bool:
     if role in ('admin', 'member'):
         return role == 'admin'
     email = str(getattr(user, 'email', '') or '').strip().lower()
-    configured = os.getenv('COGNITRIX_ADMIN_EMAILS', '')
+    configured = app_setting('COGNITRIX_ADMIN_EMAILS', '')
     admins = {e.strip().lower() for e in configured.split(',') if e.strip()}
     if admins:
         return bool(email) and email in admins

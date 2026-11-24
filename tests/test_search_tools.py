@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 import requests
 
-from cognitrix.config import settings
 from cognitrix.skills.parser import SkillParser
 from cognitrix.tools.base import ToolManager, clear_tool_cache
 
@@ -27,7 +26,7 @@ def test_native_search_tools_are_registered_by_provider_role():
 
 @pytest.mark.asyncio
 async def test_search_uses_brave_search_api_and_preserves_unicode(monkeypatch):
-    monkeypatch.setattr(settings, "brave_search_api_key", "brave-key")
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "brave-key")
     captured = {}
 
     class Response:
@@ -73,19 +72,19 @@ async def test_search_uses_brave_search_api_and_preserves_unicode(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_search_supports_only_brave_search_api_key(monkeypatch):
-    monkeypatch.setattr(settings, "brave_search_api_key", "")
+    monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
     monkeypatch.setenv("BRAVE_API_KEY", "legacy-key")
 
     result = await ToolManager.get_by_name("Search").run(query="agents")
 
     assert result.outcome.status == "error"
     assert result.outcome.error.code == "brave_search_not_configured"
-    assert "BRAVE_SEARCH_API_KEY" in result.outcome.text
+    assert "Settings" in result.outcome.text
 
 
 @pytest.mark.asyncio
 async def test_search_reports_brave_http_errors_as_failures(monkeypatch):
-    monkeypatch.setattr(settings, "brave_search_api_key", "brave-key")
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "brave-key")
     response = requests.Response()
     response.status_code = 401
     response.url = "https://api.search.brave.com/res/v1/web/search"
@@ -102,7 +101,7 @@ async def test_search_reports_brave_http_errors_as_failures(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tavily_search_retains_existing_provider(monkeypatch):
-    monkeypatch.setattr(settings, "tavily_api_key", "tavily-key")
+    monkeypatch.setenv("TAVILY_API_KEY", "tavily-key")
     captured = {}
 
     class Client:
@@ -137,14 +136,14 @@ async def test_tavily_search_retains_existing_provider(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tavily_search_reports_missing_key_as_failure(monkeypatch):
-    monkeypatch.setattr(settings, "tavily_api_key", "")
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
     result = await ToolManager.get_by_name("Tavily Search").run(query="agents")
 
     assert result.outcome.status == "error"
     assert result.outcome.error.code == "tavily_search_not_configured"
-    assert "TAVILY_API_KEY" in result.outcome.text
+    assert "Settings" in result.outcome.text
 
 
 def test_brave_skill_is_retired_and_internet_search_uses_tavily_tool():

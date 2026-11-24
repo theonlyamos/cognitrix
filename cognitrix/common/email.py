@@ -1,6 +1,6 @@
 """Sending email over SMTP, for password-reset links.
 
-Configured with environment variables, so any provider works:
+Configured in Settings, People, Email sending (any SMTP provider works):
 COGNITRIX_SMTP_HOST, COGNITRIX_SMTP_PORT (587), COGNITRIX_SMTP_USER,
 COGNITRIX_SMTP_PASSWORD, COGNITRIX_SMTP_FROM, COGNITRIX_SMTP_SECURITY
 (starttls, ssl or none). COGNITRIX_PUBLIC_URL is the address people open the
@@ -9,10 +9,11 @@ app at, used to build links. Without a host, email is off and the app says so.
 from __future__ import annotations
 
 import asyncio
-import os
 import smtplib
 import ssl
 from email.message import EmailMessage
+
+from cognitrix.app_settings import get as app_setting
 
 
 class EmailError(RuntimeError):
@@ -20,24 +21,24 @@ class EmailError(RuntimeError):
 
 
 def configured() -> bool:
-    return bool(os.getenv('COGNITRIX_SMTP_HOST', '').strip())
+    return bool(app_setting('COGNITRIX_SMTP_HOST', '').strip())
 
 
 def public_url() -> str:
-    return os.getenv('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/')
+    return app_setting('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/')
 
 
 def _send(to: str, subject: str, body: str) -> None:
-    host = os.getenv('COGNITRIX_SMTP_HOST', '').strip()
+    host = app_setting('COGNITRIX_SMTP_HOST', '').strip()
     if not host:
         raise EmailError('Email is not set up on this server')
-    security = os.getenv('COGNITRIX_SMTP_SECURITY', 'starttls').strip().lower()
-    port = int(os.getenv('COGNITRIX_SMTP_PORT', '') or (465 if security == 'ssl' else 587))
-    user = os.getenv('COGNITRIX_SMTP_USER', '').strip()
-    password = os.getenv('COGNITRIX_SMTP_PASSWORD', '')
-    sender = os.getenv('COGNITRIX_SMTP_FROM', '').strip() or user
+    security = app_setting('COGNITRIX_SMTP_SECURITY', 'starttls').strip().lower()
+    port = int(app_setting('COGNITRIX_SMTP_PORT', '') or (465 if security == 'ssl' else 587))
+    user = app_setting('COGNITRIX_SMTP_USER', '').strip()
+    password = app_setting('COGNITRIX_SMTP_PASSWORD', '')
+    sender = app_setting('COGNITRIX_SMTP_FROM', '').strip() or user
     if not sender:
-        raise EmailError('Set COGNITRIX_SMTP_FROM to the address email is sent from')
+        raise EmailError('Set "Send as" under Settings, People, Email sending.')
 
     message = EmailMessage()
     message['From'] = sender

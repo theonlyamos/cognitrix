@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from cognitrix.app_settings import get as app_setting
+
 MODES = ('read_only', 'edit', 'full')
 DEFAULT_MODE = 'edit'
 DEFAULT_TIME_LIMIT = 60 * 60
@@ -350,7 +352,7 @@ def changed_files(cwd: Path, limit: int = 50) -> str:
 
 def time_limit() -> int:
     try:
-        value = int(os.environ.get('COGNITRIX_CODING_AGENT_TIMEOUT', DEFAULT_TIME_LIMIT))
+        value = int(app_setting('COGNITRIX_CODING_AGENT_TIMEOUT', DEFAULT_TIME_LIMIT))
     except ValueError:
         value = DEFAULT_TIME_LIMIT
     return max(60, value)

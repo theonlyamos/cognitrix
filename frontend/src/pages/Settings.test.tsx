@@ -14,6 +14,17 @@ const keys = vi.hoisted(() => ({
 
 vi.mock('@/lib/providerKeys', () => keys);
 
+const appSettings = vi.hoisted(() => ({
+  getAppSettings: vi.fn(),
+  saveAppSettings: vi.fn(),
+}));
+
+vi.mock('@/lib/appSettings', () => appSettings);
+
+const setting = (name: string, label: string, extra = {}) => ({
+  name, label, help: '', kind: 'text', value: '', default: '', placeholder: '', restart: false, multiline: false, options: [], ...extra,
+});
+
 vi.mock('@/context/AppContext', () => ({
   useUser: () => ({ user: { id: 'u1', name: 'Ada', email: 'ada@example.com' }, logout: vi.fn() }),
 }));
@@ -53,9 +64,11 @@ const row = (id: string, source: string, extra = {}) => ({ id, source, env_var: 
 
 beforeEach(() => {
   Object.values(keys).forEach((fn) => fn.mockReset());
+  Object.values(appSettings).forEach((fn) => fn.mockReset());
+  appSettings.getAppSettings.mockResolvedValue({ can_edit: true, groups: [] });
   keys.listProviderKeys.mockResolvedValue({
     can_edit: true,
-    providers: [row('openai', 'env'), row('groq', 'none'), row('openrouter', 'saved', { hint: '…3f2a' })],
+    providers: [row('openai', 'saved', { hint: '…1111' }), row('groq', 'none'), row('openrouter', 'saved', { hint: '…3f2a' })],
   });
   localStorage.clear();
 });
@@ -107,9 +120,9 @@ describe('Settings', () => {
     keys.testProviderKey.mockResolvedValue({ ok: true, message: 'Works. 12 models available.' });
     renderAt('/settings/models');
 
-    expect(await screen.findByText('FROM .ENV')).toBeInTheDocument();
-    expect(screen.getByText('OPENAI_API_KEY')).toBeInTheDocument();
+    expect(await screen.findByText('…1111')).toBeInTheDocument();
     expect(screen.getByText('…3f2a')).toBeInTheDocument();
+    expect(screen.queryByText(/\.env/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add key' }));
     fireEvent.change(screen.getByLabelText('Groq API key'), { target: { value: 'gsk-new-9876' } });
@@ -118,6 +131,44 @@ describe('Settings', () => {
     await waitFor(() => expect(keys.saveProviderKey).toHaveBeenCalledWith('groq', 'gsk-new-9876'));
     expect(await screen.findByText('Works. 12 models available.')).toBeInTheDocument();
     expect(screen.getByText('…9876')).toBeInTheDocument();
+  });
+
+  it('saves app-wide settings that used to be environment variables', async () => {
+    appSettings.getAppSettings.mockResolvedValue({
+      can_edit: true,
+      groups: [{
+        title: 'Web address',
+        settings: [setting('COGNITRIX_PUBLIC_URL', 'Public address', { placeholder: 'https://cognitrix.example.com' })],
+      }, {
+        title: 'Safety',
+        settings: [
+          setting('COGNITRIX_AUTO_APPROVE', 'Approve every tool call', { kind: 'toggle', default: '0' }),
+          setting('COGNITRIX_SMTP_PASSWORD', 'Password', { kind: 'secret', is_set: true, hint: '' }),
+        ],
+      }],
+    });
+    appSettings.saveAppSettings.mockImplementation(async () => ({ can_edit: true, groups: [] }));
+    renderAt('/settings/advanced');
+
+    expect(await screen.findByRole('heading', { name: 'Advanced' })).toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText('Public address'), { target: { value: 'https://ai.example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(appSettings.saveAppSettings).toHaveBeenCalledWith('advanced', { COGNITRIX_PUBLIC_URL: 'https://ai.example.com' }));
+  });
+
+  it('never shows a saved secret, and removes one only on save', async () => {
+    appSettings.getAppSettings.mockResolvedValue({
+      can_edit: true,
+      groups: [{ title: 'Email sending', settings: [setting('COGNITRIX_SMTP_PASSWORD', 'Password', { kind: 'secret', is_set: true, hint: '' })] }],
+    });
+    appSettings.saveAppSettings.mockResolvedValue({ can_edit: true, groups: [] });
+    renderAt('/settings/advanced');
+
+    expect(await screen.findByText('SET')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(screen.getByText('Removed when you save.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(appSettings.saveAppSettings).toHaveBeenCalledWith('advanced', { COGNITRIX_SMTP_PASSWORD: '' }));
   });
 
   it('hides key editing from people who are not the admin', async () => {

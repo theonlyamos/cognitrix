@@ -51,6 +51,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
+
 logger = logging.getLogger('cognitrix.key_proxy')
 
 HIDE_ENV = 'COGNITRIX_SANDBOX_HIDE_KEYS'
@@ -68,7 +70,7 @@ _HOP_HEADERS = {'connection', 'keep-alive', 'proxy-connection', 'proxy-authoriza
 
 def hiding_enabled() -> bool:
     """Off only when COGNITRIX_SANDBOX_HIDE_KEYS is 0/false/off."""
-    return os.environ.get(HIDE_ENV, '1').strip().lower() not in ('0', 'false', 'no', 'off')
+    return app_setting(HIDE_ENV, '1').strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 class HiddenValue(str):

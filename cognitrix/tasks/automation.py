@@ -25,13 +25,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from odbms import Model
 from pydantic import validator
+
+from cognitrix.app_settings import get as app_setting
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -74,7 +75,7 @@ def utcnow_str() -> str:
 
 def default_max_runs_per_day() -> int:
     try:
-        value = int(os.getenv('COGNITRIX_AUTOMATION_MAX_RUNS_PER_DAY', '48'))
+        value = int(app_setting('COGNITRIX_AUTOMATION_MAX_RUNS_PER_DAY', '48'))
     except ValueError:
         return 48
     return max(1, min(value, MAX_RUNS_PER_DAY_LIMIT))

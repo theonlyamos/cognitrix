@@ -24,9 +24,6 @@ async def db(tmp_path, monkeypatch):
     for name in ('OPENAI', 'GOOGLE', 'GROQ', 'DEEPGRAM'):
         monkeypatch.delenv(f'{name}_API_KEY', raising=False)
         monkeypatch.delenv(f'{name}_BASE_URL', raising=False)
-    from cognitrix.config import settings
-    for attr in ('openai_api_key', 'google_api_key', 'groq_api_key', 'deepgram_api_key'):
-        monkeypatch.setattr(settings, attr, '', raising=False)
     from cognitrix.api.routes import audio
     audio._recent.clear()
     yield

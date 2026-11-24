@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cognitrix import artifacts as artifact_context
+from cognitrix.app_settings import get as app_setting
 from cognitrix.artifacts import current_session_id
 from cognitrix.media.context import current_media_turn_context
 from cognitrix.media.service import media_assets
@@ -28,15 +29,14 @@ class ImageProviderChoice:
 
     @staticmethod
     def _pick() -> str:
-        import os
 
         from cognitrix.providers import openai_image
         from cognitrix.providers.saved_keys import get_saved_key
 
-        forced = os.getenv('COGNITRIX_IMAGE_PROVIDER', '').strip().lower()
+        forced = app_setting('COGNITRIX_IMAGE_PROVIDER', '').strip().lower()
         if forced in ('openai', 'google'):
             return forced
-        if os.getenv('GOOGLE_API_KEY') or get_saved_key('google'):
+        if get_saved_key('google'):
             return 'google'
         return 'openai' if openai_image.api_key() else 'none'
 

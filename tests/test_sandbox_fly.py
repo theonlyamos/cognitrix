@@ -212,10 +212,10 @@ def test_without_fly_settings_it_says_what_is_missing(monkeypatch):
                  'COGNITRIX_SANDBOX_FLY_REGION'):
         monkeypatch.delenv(name, raising=False)
     mgr = FlyManager(start_reaper=False)
-    with pytest.raises(Unsupported, match='FLY_API_TOKEN'):
+    with pytest.raises(Unsupported, match='Fly API token'):
         mgr.sandbox('u1')
     settings = fly_settings()
-    assert not settings['configured'] and 'COGNITRIX_SANDBOX_FLY_APP' in settings['missing']
+    assert not settings['configured'] and 'Fly app name' in settings['missing']
 
 
 def test_get_manager_picks_fly(monkeypatch, tmp_path):
@@ -253,7 +253,7 @@ def test_machines_api_paths_and_errors():
     assert api.machine('gone') is None
     assert api.create_volume('home_x', 'lhr', 10)['encrypted'] is True
     api.wait('m1', 'started', 90)
-    with pytest.raises(Unsupported, match='FLY_API_TOKEN'):
+    with pytest.raises(Unsupported, match='Fly API token'):
         api.start('m1')
     assert seen[0][:2] == ('GET', '/v1/apps/cog-sandboxes/machines') and seen[0][3] == 'Bearer t'
     assert seen[3][2] == {'state': 'started', 'timeout': '60'}
@@ -312,7 +312,7 @@ def fly_api(monkeypatch, tmp_path):
     monkeypatch.setattr('cognitrix.computer.sandbox.client.SETTINGS_FILE', tmp_path / 'x.json')
     monkeypatch.setenv('COGNITRIX_COMPUTER_SANDBOX', 'fly')
     monkeypatch.setenv('COGNITRIX_SANDBOX_FLY_APP', 'cog-sandboxes')
-    monkeypatch.setenv('FLY_API_TOKEN', 'secret-token')
+    monkeypatch.setenv('COGNITRIX_FLY_API_TOKEN', 'secret-token')
     monkeypatch.setenv('COGNITRIX_SANDBOX_FLY_REGION', 'lhr')
     made = []
     box = SimpleNamespace(desktops=lambda: [{'name': n} for n in made], desktop=lambda n: made.append(n))

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import os
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,6 +12,7 @@ from typing import TypeVar
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.media.types import MediaValidationError
 
 __all__ = ['run_media_cpu']
@@ -47,7 +47,7 @@ def _parse_media_processing_concurrency(raw: str | None) -> int:
 
 
 MEDIA_PROCESSING_CONCURRENCY = _parse_media_processing_concurrency(
-    os.getenv('COGNITRIX_MEDIA_PROCESSING_CONCURRENCY')
+    app_setting('COGNITRIX_MEDIA_PROCESSING_CONCURRENCY')
 )
 _MEDIA_PROCESSING_LIMITERS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 

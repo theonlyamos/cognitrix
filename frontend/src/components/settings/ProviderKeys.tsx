@@ -17,7 +17,6 @@ type Result = { ok: boolean; message: string };
 
 function Status({ row }: { row: ProviderKey }) {
   switch (row.source) {
-    case 'env': return <StatusPill tone="ok">{tr('ui.settings.providerKeys.fromEnv')}</StatusPill>;
     case 'saved': return <StatusPill tone="ok">{tr('ui.settings.providerKeys.saved')}</StatusPill>;
     case 'local': return <StatusPill tone="off">{tr('ui.settings.providerKeys.noKeyNeeded')}</StatusPill>;
     default: return <StatusPill tone="off">{tr('ui.settings.providerKeys.notSet')}</StatusPill>;
@@ -74,13 +73,12 @@ function ProviderRow({ row, canEdit, onChange }: { row: ProviderKey; canEdit: bo
   const detail = (
     <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
       <Status row={row} />
-      {row.source === 'env' && <span className="font-mono text-[11.5px]">{row.env_var}</span>}
       {row.source === 'saved' && row.hint && <span className="font-mono text-[11.5px]">{row.hint}</span>}
       {row.source === 'local' && <span className="font-mono text-[11.5px]">{row.base_url.replace(/^https?:\/\//, '').replace(/\/v1\/?$/, '')}</span>}
     </span>
   );
 
-  const editable = canEdit && row.source !== 'env' && row.source !== 'local';
+  const editable = canEdit && row.source !== 'local';
 
   return (
     <div>
@@ -168,8 +166,7 @@ export function ProviderKeys() {
       </Group>
       <p className="mt-3 max-w-[70ch] text-[12px] leading-relaxed text-fg-dim">
         {list.can_edit ? tr('ui.settings.providerKeys.savedKeysAreEncryptedOn') : tr('ui.settings.providerKeys.onlyTheAdminCanChange')}
-        {tr('ui.settings.providerKeys.keysFromTheEngineS')}{' '}<span className="font-mono">.env</span>{' '}{tr('ui.settings.providerKeys.takePriorityAndCanT')}{' '}
-        <span className="font-mono">COGNITRIX_TRUSTED_BASE_URLS</span>.
+        {tr('ui.settings.providerKeys.customBaseUrlTrusted')}
       </p>
     </>
   );

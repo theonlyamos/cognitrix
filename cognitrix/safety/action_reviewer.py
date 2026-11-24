@@ -12,7 +12,7 @@ This matters most for unattended task runs, where nobody may be watching.
 Any error, timeout or unreadable answer counts as ``ask``, so the reviewer
 can only make things stricter than "ask a person" when it fails.
 
-Settings (environment variables):
+Settings (Settings, Advanced, Safety; agents can override them):
 
 - ``COGNITRIX_REVIEWER``: ``off`` (default), ``unattended`` (task runs and
   auto mode only) or ``always`` (also chat and CLI turns).
@@ -29,12 +29,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
+from cognitrix.app_settings import get as app_setting
 from cognitrix.errors import ExecutionControlError
 from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 
@@ -122,20 +122,20 @@ def reviewer_mode() -> str:
     override = _agent_setting('mode')
     if override in MODES:
         return override
-    mode = os.getenv('COGNITRIX_REVIEWER', '').strip().lower()
+    mode = app_setting('COGNITRIX_REVIEWER', '').strip().lower()
     if mode in ('1', 'true', 'yes', 'on'):
         return 'unattended'
     return mode if mode in MODES else 'off'
 
 
 def _max_allow() -> RiskLevel:
-    raw = _agent_setting('max_allow') or os.getenv('COGNITRIX_REVIEWER_MAX_ALLOW', 'medium').strip().lower()
+    raw = _agent_setting('max_allow') or app_setting('COGNITRIX_REVIEWER_MAX_ALLOW', 'medium').strip().lower()
     return RiskLevel.HIGH if raw == 'high' else RiskLevel.MEDIUM
 
 
 def _timeout() -> float:
     try:
-        return max(1.0, float(os.getenv('COGNITRIX_REVIEWER_TIMEOUT', '60')))
+        return max(1.0, float(app_setting('COGNITRIX_REVIEWER_TIMEOUT', '60')))
     except ValueError:
         return 60.0
 
@@ -149,8 +149,8 @@ def reviewer_config() -> dict[str, Any]:
         provider = _agent_setting('provider')
         model = _agent_setting('model')
     else:
-        provider = os.getenv('COGNITRIX_REVIEWER_PROVIDER', '').strip() or settings.ai_provider
-        model = os.getenv('COGNITRIX_REVIEWER_MODEL', '').strip()
+        provider = app_setting('COGNITRIX_REVIEWER_PROVIDER', '').strip() or settings.ai_provider
+        model = app_setting('COGNITRIX_REVIEWER_MODEL', '').strip()
     return {
         'mode': reviewer_mode(),
         'provider': provider,
