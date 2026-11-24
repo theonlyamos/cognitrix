@@ -1,13 +1,16 @@
 """The message board agents share, as the Board page shows it.
 
 GET    /api/board/boards                 the boards I can open, with counts
-GET    /api/board/posts?board=…          posts on one board (kind, status, tag filters)
+GET    /api/board/posts?board=…          posts on one board (kind, status, tag filters; q searches)
 POST   /api/board/posts                  post as the person
 GET    /api/board/posts/{id}             one post
 POST   /api/board/posts/{id}/reply       answer as the person (close: also mark done)
 POST   /api/board/posts/{id}/status      open or done
 POST   /api/board/posts/{id}/pin         pin or unpin
+PATCH  /api/board/posts/{id}             edit my own post
+POST   /api/board/posts/{id}/retract     withdraw my own post
 DELETE /api/board/posts/{id}             delete a post
+GET    /api/board/mentions?board=…       who can be tagged with @name there
 GET    /api/board/settings               on/off, wakes a day, how long posts are kept
 PUT    /api/board/settings
 GET    /api/board/follows                what each of my agents hears about
@@ -35,6 +38,10 @@ class NewPost(BaseModel):
     to: str = ''
 
 
+class Edit(BaseModel):
+    text: str = ''
+
+
 class Reply(BaseModel):
     text: str = ''
     close: bool = False
@@ -52,6 +59,7 @@ class Settings(BaseModel):
     enabled: bool | None = None
     wakes_per_day: int | None = None
     keep_days: int | None = None
+    nudge_hours: int | None = None
 
 
 class Follow(BaseModel):
@@ -75,12 +83,15 @@ async def list_boards(ctx: AuthContext = Depends(jwt_only)):
 
 
 @board_api.get('/posts')
-async def list_posts(board: str = 'agents', kind: str = '', status: str = '', tag: str = '',
+async def list_posts(board: str = 'agents', kind: str = '', status: str = '', tag: str = '', q: str = '',
                      ctx: AuthContext = Depends(jwt_only)):
     try:
-        key = service.clean_board(board)
-        rows = await service.list_posts(_owner(ctx), key, kind=kind, status=status, tag=tag,
-                                        limit=service.LIST_MAX)
+        key = '*' if board == '*' and q.strip() else service.clean_board(board)
+        if q.strip():
+            rows = await service.search(_owner(ctx), key, q, limit=service.LIST_MAX)
+        else:
+            rows = await service.list_posts(_owner(ctx), key, kind=kind, status=status, tag=tag,
+                                            limit=service.LIST_MAX)
     except service.BoardError as exc:
         raise _fail(exc) from None
     return [service.public_post(row) for row in rows]
@@ -127,6 +138,31 @@ async def set_pinned(post_id: str, body: Pin, ctx: AuthContext = Depends(jwt_onl
         return service.public_post(await service.set_pinned(_owner(ctx), post_id, body.pinned))
     except service.BoardError as exc:
         raise _fail(exc) from None
+
+
+@board_api.patch('/posts/{post_id}')
+async def edit_post(post_id: str, body: Edit, ctx: AuthContext = Depends(jwt_only)):
+    try:
+        return service.public_post(await service.edit_post(_owner(ctx), post_id, body.text, service.PERSON))
+    except service.BoardError as exc:
+        raise _fail(exc) from None
+
+
+@board_api.post('/posts/{post_id}/retract')
+async def retract_post(post_id: str, ctx: AuthContext = Depends(jwt_only)):
+    try:
+        return service.public_post(await service.retract_post(_owner(ctx), post_id, service.PERSON))
+    except service.BoardError as exc:
+        raise _fail(exc) from None
+
+
+@board_api.get('/mentions')
+async def mentions(board: str = 'agents', ctx: AuthContext = Depends(jwt_only)):
+    try:
+        key = service.clean_board(board)
+    except service.BoardError as exc:
+        raise _fail(exc) from None
+    return [{'name': name} for name, _ in await service.mention_names(_owner(ctx), key)]
 
 
 @board_api.delete('/posts/{post_id}')

@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import Board from './Board';
 import type { BoardPost } from '@/lib/board';
 
-const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() }));
+const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() }));
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   api,
@@ -33,10 +33,12 @@ beforeEach(() => {
         { key: 'swarm:s1', kind: 'swarm', title: 'Pricing scan', status: 'running', open: 0, total: 0, latest: '', swarm_id: 's1' },
       ]
       : path === '/board/follows' ? [{ agent_id: 'a1', agent_name: 'Researcher', kinds: ['decision'], tags: [], wake: true }]
+      : path.startsWith('/board/mentions') ? [{ name: 'Researcher' }, { name: 'Research Lead' }, { name: 'Writer' }]
       : {},
   }));
   api.post.mockResolvedValue({ data: {} });
   api.put.mockResolvedValue({ data: {} });
+  api.patch.mockResolvedValue({ data: {} });
 });
 
 describe('Board', () => {
@@ -68,5 +70,37 @@ describe('Board', () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/board/posts', {
       board: 'agents', kind: 'decision', text: 'Launch moved to March.', to: 'Researcher', tags: '',
     }));
+  });
+
+  it('suggests agents after @, shows tags, and edits or withdraws your own post', async () => {
+    posts.push(post({ id: 'p4', author_kind: 'person', author_name: 'You', author_id: '', text: 'Ask @Writer first.',
+      mentions: [{ name: 'Writer' }] }));
+    render(<MemoryRouter><Board /></MemoryRouter>);
+    const mine = (await screen.findByText(/Ask/)).closest('article')!;
+    expect(within(mine).getByText('@Writer')).toHaveClass('font-medium');
+
+    const box = screen.getByLabelText('New post');
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringContaining('/board/mentions')));
+    fireEvent.change(box, { target: { value: 'Hi @res', selectionStart: 7 } });
+    const list = await screen.findByRole('listbox');
+    expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual(['@Researcher', '@Research Lead']);
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(box).toHaveValue('Hi @Research Lead ');
+
+    fireEvent.click(within(mine).getByRole('button', { name: 'Edit' }));
+    fireEvent.change(within(mine).getByLabelText('Edit post'), { target: { value: 'Ask @Writer.' } });
+    fireEvent.click(within(mine).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/board/posts/p4', { text: 'Ask @Writer.' }));
+    fireEvent.click(within(mine).getByRole('button', { name: 'Withdraw' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/board/posts/p4/retract', {}));
+    posts.pop();
+  });
+
+  it('searches the board', async () => {
+    render(<MemoryRouter><Board /></MemoryRouter>);
+    await screen.findByText('Prices are ex-VAT.');
+    fireEvent.change(screen.getByLabelText('Search the board'), { target: { value: 'vat' } });
+    await waitFor(() => expect(api.get.mock.calls.map((c) => c[0])).toContain('/board/posts?board=agents&q=vat'));
   });
 });

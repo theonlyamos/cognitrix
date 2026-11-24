@@ -14,6 +14,7 @@ import {
 } from '@/lib/board';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
+import { MentionText, MentionTextarea } from '@/components/board/Mentions';
 
 type Filter = 'all' | 'open' | BoardKind;
 
@@ -32,16 +33,26 @@ function statusText(post: BoardPost): string {
   return '';
 }
 
+function tagged(list?: { name: string }[]): string[] {
+  return (list || []).map((m) => m.name).filter(Boolean);
+}
+
 /** One post with its answers and what can be done with it. */
-function PostCard({ post, highlight, onChanged }: { post: BoardPost; highlight: boolean; onChanged: () => void }) {
+function PostCard({ post, highlight, names, onChanged }: {
+  post: BoardPost; highlight: boolean; names: string[]; onChanged: () => void;
+}) {
   const navigate = useNavigate();
   const [answering, setAnswering] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(post.text);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const card = useRef<HTMLElement>(null);
   useEffect(() => { if (highlight) card.current?.scrollIntoView({ block: 'center' }); }, [highlight]);
   const ask = post.kind === 'question' || post.kind === 'request';
+  const mine = post.author_kind === 'person';
+  const retracted = !!post.retracted;
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
@@ -66,12 +77,18 @@ function PostCard({ post, highlight, onChanged }: { post: BoardPost; highlight: 
     }
   };
 
+  const saveEdit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!draft.trim()) return;
+    if (await act('edit', () => api.patch(`/board/posts/${post.id}`, { text: draft }))) setEditing(false);
+  };
+
   return (
     <article
       ref={card}
       aria-label={tr('ui.board.kindByAuthor', { kind: kindLabel(post.kind), author: post.author_name })}
       className={cn('flex flex-col gap-2 rounded-xl border bg-panel px-3.5 py-3 text-[13.5px]',
-        highlight ? 'border-accent' : 'border-line')}
+        highlight ? 'border-accent' : 'border-line', retracted && 'opacity-60')}
     >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="font-medium">{post.author_kind === 'person' ? tr('ui.board.you') : post.author_name}</span>
@@ -82,20 +99,41 @@ function PostCard({ post, highlight, onChanged }: { post: BoardPost; highlight: 
           <span className="text-[12px] text-fg-dim">{tr('ui.board.toName', { name: whoLabel(post.to_name) })}</span>
         )}
         {post.pinned && <PinIcon size={12} aria-label={tr('ui.board.pinned')} className="text-fg-dim" />}
-        <span className={cn('ml-auto text-[12px]', post.status === 'open' ? 'text-warn-ink' : post.status ? 'text-ok' : 'text-fg-dim')}>
-          {statusText(post)}
+        <span className={cn('ml-auto text-[12px]', retracted ? 'text-fg-dim' : post.status === 'open' ? 'text-warn-ink' : post.status ? 'text-ok' : 'text-fg-dim')}>
+          {retracted ? tr('ui.board.withdrawn') : statusText(post)}
         </span>
       </div>
-      <p className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">{post.text}</p>
+      {editing ? (
+        <form onSubmit={(e) => void saveEdit(e)} className="flex flex-col gap-2">
+          <MentionTextarea value={draft} onValue={setDraft} names={names} rows={3} maxLength={2000} autoFocus
+            aria-label={tr('ui.board.editPost')}
+            className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-[13.5px] outline-none focus:border-fg-dim" />
+          <div className="flex flex-wrap gap-1.5">
+            <Button type="submit" size="sm" disabled={!draft.trim() || busy === 'edit'}>{tr('ui.board.save')}</Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => { setEditing(false); setDraft(post.text); }}>{tr('ui.board.cancel')}</Button>
+          </div>
+        </form>
+      ) : (
+        <p className={cn('whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]', retracted && 'line-through')}>
+          <MentionText text={post.text} names={tagged(post.mentions)} />
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-fg-dim">
         {post.tags.map((t) => <span key={t} className="font-mono">#{t}</span>)}
         <span>{timeAgo(post.posted_at)}</span>
+        {post.edited_at && !retracted && <span>{tr('ui.board.edited')}</span>}
         {post.wake?.state === 'sent' && post.wake.chat_id && (
           <button type="button" className="text-accent-ink hover:underline" onClick={() => navigate(`/home?chat=${encodeURIComponent(post.wake.chat_id || '')}`)}>
             {tr('ui.board.nameWasAskedToAnswer', { name: whoLabel(post.to_name) })}
           </button>
         )}
         {post.wake?.state === 'skipped' && post.wake.reason && <span>{post.wake.reason}</span>}
+        {(post.mention_wakes || []).filter((w) => w.state === 'sent' && w.chat_id).map((w, i) => (
+          <button key={i} type="button" className="text-accent-ink hover:underline"
+            onClick={() => navigate(`/home?chat=${encodeURIComponent(w.chat_id || '')}`)}>
+            {tr('ui.board.nameWasTagged', { name: w.name })}
+          </button>
+        ))}
       </div>
       {post.replies.length > 0 && (
         <ul className="flex flex-col gap-1.5 border-l-2 border-line pl-3">
@@ -103,21 +141,22 @@ function PostCard({ post, highlight, onChanged }: { post: BoardPost; highlight: 
             <li key={i} className="text-[13px] leading-relaxed">
               <span className="font-medium">{r.author_kind === 'person' ? tr('ui.board.you') : r.author_name}</span>{' '}
               <span className="text-fg-dim">{timeAgo(r.at)}</span>
-              <p className="whitespace-pre-wrap text-fg-dim [overflow-wrap:anywhere]">{r.text}</p>
+              <p className="whitespace-pre-wrap text-fg-dim [overflow-wrap:anywhere]"><MentionText text={r.text} names={tagged(r.mentions)} /></p>
             </li>
           ))}
         </ul>
       )}
       {answering && (
         <form onSubmit={(e) => void send(e, false)} className="flex flex-col gap-2">
-          <textarea
+          <MentionTextarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onValue={setText}
+            names={names}
             rows={3}
             maxLength={2000}
             autoFocus
             aria-label={tr('ui.board.yourAnswer')}
-            placeholder={tr('ui.board.writeYourAnswer')}
+            placeholder={tr('ui.board.writeYourAnswerTag')}
             className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-[13.5px] outline-none focus:border-fg-dim"
           />
           <div className="flex flex-wrap gap-1.5">
@@ -131,25 +170,36 @@ function PostCard({ post, highlight, onChanged }: { post: BoardPost; highlight: 
           </div>
         </form>
       )}
-      {!answering && (
+      {!answering && !editing && (
         <div className="flex flex-wrap gap-1.5">
-          <button type="button" className={small} onClick={() => setAnswering(true)}>{ask ? tr('ui.board.answer') : tr('ui.board.reply')}</button>
-          {ask && post.status !== 'done' && (
+          {!retracted && (
+            <button type="button" className={small} onClick={() => setAnswering(true)}>{ask ? tr('ui.board.answer') : tr('ui.board.reply')}</button>
+          )}
+          {mine && !retracted && (
+            <button type="button" className={small} onClick={() => { setDraft(post.text); setEditing(true); }}>{tr('ui.board.edit')}</button>
+          )}
+          {mine && !retracted && (
+            <button type="button" className={small} disabled={busy === 'retract'}
+              onClick={() => void act('retract', () => api.post(`/board/posts/${post.id}/retract`, {}))}>
+              {tr('ui.board.withdraw')}
+            </button>
+          )}
+          {!retracted && ask && post.status !== 'done' && (
             <button type="button" className={small} disabled={busy === 'status'}
               onClick={() => void act('status', () => api.post(`/board/posts/${post.id}/status`, { status: 'done' }))}>
               {tr('ui.board.markDone')}
             </button>
           )}
-          {ask && post.status === 'done' && (
+          {!retracted && ask && post.status === 'done' && (
             <button type="button" className={small} disabled={busy === 'status'}
               onClick={() => void act('status', () => api.post(`/board/posts/${post.id}/status`, { status: 'open' }))}>
               {tr('ui.board.reopen')}
             </button>
           )}
-          <button type="button" className={small} disabled={busy === 'pin'}
+          {!retracted && <button type="button" className={small} disabled={busy === 'pin'}
             onClick={() => void act('pin', () => api.post(`/board/posts/${post.id}/pin`, { pinned: !post.pinned }))}>
             {post.pinned ? tr('ui.board.unpin') : tr('ui.board.pin')}
-          </button>
+          </button>}
           <button type="button" className={cn(small, 'text-danger-ink')} disabled={busy === 'delete'}
             onClick={() => void act('delete', () => api.delete(`/board/posts/${post.id}`))}>
             {tr('ui.board.delete')}
@@ -162,7 +212,9 @@ function PostCard({ post, highlight, onChanged }: { post: BoardPost; highlight: 
 }
 
 /** Post as the person. */
-function Composer({ board, targets, onPosted }: { board: string; targets: string[]; onPosted: () => void }) {
+function Composer({ board, targets, names, onPosted }: {
+  board: string; targets: string[]; names: string[]; onPosted: () => void;
+}) {
   const [kind, setKind] = useState<BoardKind>('heads_up');
   const [text, setText] = useState('');
   const [to, setTo] = useState('');
@@ -190,13 +242,14 @@ function Composer({ board, targets, onPosted }: { board: string; targets: string
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-2 rounded-xl border border-line bg-panel px-3.5 py-3">
-      <textarea
+      <MentionTextarea
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onValue={setText}
+        names={names}
         rows={2}
         maxLength={2000}
         aria-label={tr('ui.board.newPost')}
-        placeholder={tr('ui.board.postSomethingYourAgentsShould')}
+        placeholder={tr('ui.board.postSomethingTagAgents')}
         className="w-full resize-y bg-transparent text-[13.5px] leading-relaxed outline-none placeholder:text-fg-dim"
       />
       <div className="flex flex-wrap items-center gap-2">
@@ -247,6 +300,12 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
         <input type="number" min={1} max={365} defaultValue={data.keep_days} aria-label={tr('ui.board.daysToKeepPosts')}
           onBlur={(e) => void save({ keep_days: Number(e.target.value) })} className={cn(field, 'w-20')} />
         {tr('ui.board.daysPinnedAndOpenPostsStay')}
+      </label>
+      <label className="flex flex-wrap items-center gap-2">
+        {tr('ui.board.bringUpUnansweredQuestionsAfter')}
+        <input type="number" min={0} max={336} defaultValue={data.nudge_hours} aria-label={tr('ui.board.hoursBeforeBringingUp')}
+          onBlur={(e) => void save({ nudge_hours: Number(e.target.value) })} className={cn(field, 'w-20')} />
+        {tr('ui.board.hoursZeroNever')}
       </label>
       {error && <p role="alert" className="text-danger-ink">{error}</p>}
       <div><Button type="button" size="sm" variant="outline" onClick={onClose}>{tr('ui.board.close')}</Button></div>
@@ -342,8 +401,18 @@ export default function Board() {
   const highlight = params.get('post') || '';
   const [filter, setFilter] = useState<Filter>('all');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    const timer = window.setTimeout(() => setQuery(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+  useEffect(() => { setSearch(''); setQuery(''); }, [board]);
   const boards = useResource<BoardInfo[]>('/board/boards');
-  const posts = useResource<BoardPost[]>(`/board/posts?board=${encodeURIComponent(board)}`);
+  const posts = useResource<BoardPost[]>(
+    `/board/posts?board=${encodeURIComponent(board)}${query ? `&q=${encodeURIComponent(query)}` : ''}`);
+  const mentionable = useResource<{ name: string }[]>(`/board/mentions?board=${encodeURIComponent(board)}`);
+  const names = useMemo(() => (mentionable.data || []).map((m) => m.name), [mentionable.data]);
   const follows = useResource<BoardFollow[]>(board === 'agents' ? '/board/follows' : null);
   const current = boards.data?.find((b) => b.key === board);
   const swarmId = board.startsWith('swarm:') ? board.slice(6) : '';
@@ -366,15 +435,15 @@ export default function Board() {
   const pick = (key: string) => setParams(key === 'agents' ? {} : { board: key });
 
   const listed = useMemo(() => posts.data || [], [posts.data]);
-  const missing = !!highlight && !!posts.data && !listed.some((p) => p.id === highlight);
+  const missing = !query && !!highlight && !!posts.data && !listed.some((p) => p.id === highlight);
   const linked = useResource<BoardPost>(missing ? `/board/posts/${encodeURIComponent(highlight)}` : null);
   const all = useMemo(
     () => (missing && linked.data && linked.data.board === board ? [linked.data, ...listed] : listed),
     [missing, linked.data, listed, board],
   );
   const shown = all.filter((p) => filter === 'all' || (filter === 'open' ? p.status === 'open' : p.kind === filter));
-  const pinned = filter === 'all' ? shown.filter((p) => p.pinned) : [];
-  const rest = filter === 'all' ? shown.filter((p) => !p.pinned) : shown;
+  const pinned = filter === 'all' && !query ? shown.filter((p) => p.pinned) : [];
+  const rest = filter === 'all' && !query ? shown.filter((p) => !p.pinned) : shown;
   const count = (f: Filter) => all.filter((p) => (f === 'open' ? p.status === 'open' : p.kind === f)).length;
   const targets = swarmId
     ? ['lead', ...(swarm.data?.workers.map((w) => w.name) || [])]
@@ -410,7 +479,10 @@ export default function Board() {
                   : tr('ui.board.everyAgentOfYoursReadsAndPosts')}
               </p>
             </div>
-            <Composer board={board} targets={targets} onPosted={changed} />
+            <Composer board={board} targets={targets} names={names} onPosted={changed} />
+            <input type="search" value={search} onChange={(e) => setSearch(e.target.value)}
+              aria-label={tr('ui.board.searchTheBoard')} placeholder={tr('ui.board.searchTheBoard')}
+              className={cn(field, 'w-full')} />
             <FilterChips<Filter>
               label={tr('ui.board.show')}
               value={filter}
@@ -428,13 +500,13 @@ export default function Board() {
             ) : shown.length === 0 ? (
               <EmptyState
                 icon={<span aria-hidden className="font-mono text-lg">#</span>}
-                title={all.length ? tr('ui.board.nothingHere') : tr('ui.board.noPostsYet')}
-                desc={all.length ? tr('ui.board.tryAnotherFilter') : tr('ui.board.agentsPostFindingsQuestionsAndDecisions')}
+                title={query ? tr('ui.board.nothingMatches') : all.length ? tr('ui.board.nothingHere') : tr('ui.board.noPostsYet')}
+                desc={query ? tr('ui.board.tryOtherWords') : all.length ? tr('ui.board.tryAnotherFilter') : tr('ui.board.agentsPostFindingsQuestionsAndDecisions')}
               />
             ) : (
               <div className="flex flex-col gap-2.5">
                 {[...pinned, ...rest].map((p) => (
-                  <PostCard key={p.id} post={p} highlight={p.id === highlight} onChanged={changed} />
+                  <PostCard key={p.id} post={p} highlight={p.id === highlight} names={names} onChanged={changed} />
                 ))}
               </div>
             )}

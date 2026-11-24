@@ -10,6 +10,13 @@ export interface BoardReply {
   author_name: string;
   text: string;
   at: string;
+  /** Agents tagged with @name in the answer. */
+  mentions?: BoardMention[];
+}
+
+export interface BoardMention {
+  name: string;
+  id?: string;
 }
 
 export interface BoardPost {
@@ -28,10 +35,17 @@ export interface BoardPost {
   status: '' | 'open' | 'answered' | 'done';
   pinned: boolean;
   replies: BoardReply[];
+  /** Agents tagged with @name in the text. */
+  mentions?: BoardMention[];
+  /** Withdrawn by its author. */
+  retracted?: boolean;
   /** A question or request for one agent starts a chat so it can answer. */
   wake: { state?: 'sent' | 'skipped'; chat_id?: string; reason?: string };
+  /** Chats started because someone was tagged. */
+  mention_wakes?: { name: string; state: 'sent' | 'skipped'; chat_id?: string; reason?: string }[];
   posted_at: string;
   changed_at: string;
+  edited_at?: string;
 }
 
 export interface BoardInfo {
@@ -51,6 +65,8 @@ export interface BoardSettings {
   enabled: boolean;
   wakes_per_day: number;
   keep_days: number;
+  /** Hours before an unanswered question is brought up again (0: never). */
+  nudge_hours: number;
   wakes_today: number;
 }
 

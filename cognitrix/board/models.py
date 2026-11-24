@@ -19,6 +19,7 @@ STATUSES = ('', 'open', 'answered', 'done')
 DEFAULT_FOLLOW_KINDS = ['decision', 'question', 'request']
 DEFAULT_WAKES_PER_DAY = 10
 DEFAULT_KEEP_DAYS = 30
+DEFAULT_NUDGE_HOURS = 24
 
 
 def _int(value: Any, default: int) -> int:
@@ -53,24 +54,33 @@ class BoardPost(Model):
     status: str = ''
     pinned: bool = False
     replies: list = Field(default_factory=list)
-    """[{author_kind, author_id, author_name, text, at}]"""
+    """[{author_kind, author_id, author_name, text, at, mentions}]"""
+    mentions: list = Field(default_factory=list)
+    """[{name, id}]: agents (or swarm workers) tagged with @name in the text."""
     wake: dict = Field(default_factory=dict)
     """{'state': 'sent' | 'skipped', 'chat_id', 'reason'} for a post that tried to wake its agent."""
+    mention_wakes: list = Field(default_factory=list)
+    """[{key, name, state, chat_id, reason}]: chats started because someone was tagged."""
+    retracted: bool = False
+    """Withdrawn by its author: kept for the record, listed to nobody."""
     posted_at: int = 0
     """Milliseconds since 1970 (odbms turns date-like text into whole-second dates)."""
     changed_at: int = 0
+    edited_at: int = 0
+    nudged_at: int = 0
+    """When an unanswered question or request was last brought up again."""
 
-    @field_validator('pinned', mode='before')
+    @field_validator('pinned', 'retracted', mode='before')
     @classmethod
     def _bools(cls, value):
-        return bool(value)
+        return bool(value) and str(value).lower() not in ('0', 'false')
 
-    @field_validator('posted_at', 'changed_at', mode='before')
+    @field_validator('posted_at', 'changed_at', 'edited_at', 'nudged_at', mode='before')
     @classmethod
     def _stamps(cls, value):
         return _int(value, 0)
 
-    @field_validator('tags', 'replies', mode='before')
+    @field_validator('tags', 'replies', 'mentions', 'mention_wakes', mode='before')
     @classmethod
     def _lists(cls, value):
         return value if isinstance(value, list) else []
@@ -141,6 +151,8 @@ class BoardSettings(Model):
     """Chats the board may start in a day to answer questions and requests."""
     keep_days: int = DEFAULT_KEEP_DAYS
     """Posts older than this drop off, unless pinned or still open."""
+    nudge_hours: int = DEFAULT_NUDGE_HOURS
+    """An unanswered question or request is brought up again after this many hours (0: never)."""
     wake_day: str = ''
     wakes_used: int = 0
 
@@ -149,10 +161,11 @@ class BoardSettings(Model):
     def _enabled(cls, value):
         return True if value is None else bool(value)
 
-    @field_validator('wakes_per_day', 'keep_days', 'wakes_used', mode='before')
+    @field_validator('wakes_per_day', 'keep_days', 'nudge_hours', 'wakes_used', mode='before')
     @classmethod
     def _ints(cls, value, info):
-        defaults = {'wakes_per_day': DEFAULT_WAKES_PER_DAY, 'keep_days': DEFAULT_KEEP_DAYS}
+        defaults = {'wakes_per_day': DEFAULT_WAKES_PER_DAY, 'keep_days': DEFAULT_KEEP_DAYS,
+                    'nudge_hours': DEFAULT_NUDGE_HOURS}
         return _int(value, defaults.get(info.field_name, 0))
 
     @field_validator('user_id', 'wake_day', mode='before')
