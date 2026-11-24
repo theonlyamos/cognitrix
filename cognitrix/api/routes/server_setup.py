@@ -87,6 +87,52 @@ def _reachable(host: str, port: int, timeout: float = 3.0) -> bool:
         return False
 
 
+def _sign_in_problem(db_type: str, host: str, port: int, name: str, user: str, password: str) -> str:
+    """Sign in to the database the way the app will on its next start, so a
+    wrong user, password or name is fixed here, not after a restart that
+    fails. '' when it worked (or the driver isn't installed to check)."""
+    async def attempt() -> None:
+        if db_type == 'postgresql':
+            import aiopg
+
+            base = f'user={user} password={password} host={host} port={port}'
+            try:
+                conn = await aiopg.connect(f'dbname={name} {base}', timeout=5)
+            except Exception as exc:
+                if 'database' not in str(exc):
+                    raise
+                conn = await aiopg.connect(base, timeout=5)  # the app makes the database
+            conn.close()
+        elif db_type == 'mysql':
+            import aiomysql
+
+            try:
+                conn = await aiomysql.connect(host=host, port=port, user=user, password=password, db=name,
+                                              connect_timeout=5)
+            except Exception as exc:
+                if 'Unknown database' not in str(exc):
+                    raise
+                conn = await aiomysql.connect(host=host, port=port, user=user, password=password,
+                                              connect_timeout=5)
+            conn.close()
+        elif db_type == 'mongodb':
+            from motor.motor_asyncio import AsyncIOMotorClient
+
+            client = AsyncIOMotorClient(host=host, port=port, serverSelectionTimeoutMS=5000)
+            try:
+                await client.admin.command('ping')
+            finally:
+                client.close()
+
+    try:
+        asyncio.run(asyncio.wait_for(attempt(), timeout=10))
+    except ImportError:
+        return ''
+    except Exception as exc:  # the driver's own message says what is wrong
+        return str(exc).strip().splitlines()[0][:300] if str(exc).strip() else type(exc).__name__
+    return ''
+
+
 def _changes(body: ServerSetupBody) -> dict[str, str]:
     """The values to save, or a 400 that says what is wrong."""
     from cognitrix.config import DEFAULT_DB_PORTS
@@ -119,6 +165,10 @@ def _changes(body: ServerSetupBody) -> dict[str, str]:
                         'DB_USER': body.db_user.strip()})
         if body.db_password:
             changes['DB_PASSWORD'] = body.db_password
+        problem = _sign_in_problem(db_type, host, int(port_text), body.db_name.strip() or 'cognitrix',
+                                   body.db_user.strip(), body.db_password or app_settings.get('DB_PASSWORD', ''))
+        if problem:
+            raise HTTPException(status_code=400, detail=f"Couldn't sign in to the database: {problem}")
     if body.queue == 'redis':
         url = body.broker_url.strip() or app_settings.get('CELERY_BROKER_URL', '')
         parsed = urlparse(url)

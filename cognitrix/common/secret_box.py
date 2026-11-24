@@ -27,6 +27,7 @@ import logging
 import os
 import secrets
 import threading
+import time
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
@@ -88,20 +89,53 @@ def _write_owner_only(path: Path, text: str, *, exclusive: bool = False) -> None
         pass
 
 
-def read_or_create_key(path: Path) -> str:
+def read_or_create_key(path: Path, *, attempts: int = 50) -> str:
     """The key kept in ``path``, made (random, owner-only) the first time.
-    Safe when the web server and the worker start together."""
-    try:
-        if path.exists():
+    Safe when the web server and the worker start together: the key is
+    written to a temporary file and linked into place only if no key is there
+    yet, so a process never sees half a key or replaces another's."""
+    for _ in range(attempts):
+        try:
             text = path.read_text(encoding='utf-8').strip()
-            if text:
-                return text
-        text = secrets.token_urlsafe(32)
-        _write_owner_only(path, text, exclusive=not path.exists())
-        return text
+        except FileNotFoundError:
+            text = None
+        if text:
+            return text
+        if text is None:
+            candidate = secrets.token_urlsafe(32)
+            if _create_if_missing(path, candidate):
+                return candidate
+            continue  # another process won: read its key
+        time.sleep(0.05)  # an empty file: another process may be writing it
+    # Still empty: an earlier crash left it so. Make a key now.
+    text = secrets.token_urlsafe(32)
+    _write_owner_only(path, text)
+    return text
+
+
+def _create_if_missing(path: Path, text: str) -> bool:
+    """Put ``text`` at ``path`` only if nothing is there. True if it was ours."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f'.{path.name}.{os.getpid()}.{secrets.token_hex(4)}')
+    _write_owner_only(tmp, text)
+    try:
+        os.link(tmp, path)
+        return True
     except FileExistsError:
-        # Another process made it between our check and our write.
-        return path.read_text(encoding='utf-8').strip()
+        return False
+    except OSError:
+        # No hard links here (some network or Windows filesystems): create
+        # exclusively instead; a reader that sees it empty waits and reads again.
+        try:
+            _write_owner_only(path, text, exclusive=True)
+            return True
+        except FileExistsError:
+            return False
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def adopt_environment_keys() -> None:

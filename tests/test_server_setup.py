@@ -63,6 +63,8 @@ async def test_pointing_at_a_database_and_redis(db, monkeypatch):
     from cognitrix.api.routes import server_setup
 
     monkeypatch.setattr(server_setup, '_reachable', lambda host, port, timeout=3.0: (host, port) != ('bad.example', 5432))
+    monkeypatch.setattr(server_setup, '_sign_in_problem',
+                        lambda kind, host, port, name, user, password: '' if password == 'pw-secret' else 'password authentication failed')
     with pytest.raises(HTTPException, match='') as exc:
         await server_setup.save_server_setup(server_setup.ServerSetupBody(db_type='postgresql', db_host='bad.example'))
     assert exc.value.status_code == 400 and "Couldn't reach" in exc.value.detail
@@ -71,6 +73,13 @@ async def test_pointing_at_a_database_and_redis(db, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await server_setup.save_server_setup(server_setup.ServerSetupBody(queue='redis', broker_url='http://x'))
     assert 'redis://' in exc.value.detail
+
+    # A wrong password is caught here, not after a restart that fails.
+    with pytest.raises(HTTPException) as exc:
+        await server_setup.save_server_setup(server_setup.ServerSetupBody(
+            db_type='postgresql', db_host='db.example', db_user='cog', db_password='wrong'))
+    assert 'password authentication failed' in exc.value.detail
+    assert not app_settings.server_setup_done()
 
     result = await server_setup.save_server_setup(server_setup.ServerSetupBody(
         db_type='postgresql', db_host='db.example', db_user='cog', db_password='pw-secret',
@@ -153,3 +162,49 @@ def test_settings_command(monkeypatch, capsys):
     assert app_settings.get('CELERY_BROKER_URL') == ''
     with pytest.raises(SystemExit):
         manage_settings(Namespace(settings_action='set', items=['NOT_A_SETTING=1'], if_unset=False, page=''))
+
+
+def test_sign_in_problem_reports_the_driver_error(monkeypatch):
+    from cognitrix.api.routes import server_setup
+
+    # Nothing listens on this port, so the driver's own error comes back.
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    assert server_setup._sign_in_problem('postgresql', '127.0.0.1', port, 'cognitrix', 'u', 'p') != ''
+
+
+def test_web_server_and_worker_end_up_with_the_same_key(tmp_path):
+    """Both processes start at once on a new server: neither replaces the
+    other's key."""
+    import threading
+
+    from cognitrix.common import secret_box
+
+    path = tmp_path / 'jwt_secret'
+    results = []
+    start = threading.Barrier(8)
+
+    def worker():
+        start.wait()
+        results.append(secret_box.read_or_create_key(path))
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(set(results)) == 1 and path.read_text() == results[0]
+    assert [p.name for p in tmp_path.iterdir()] == ['jwt_secret']
+
+
+def test_an_empty_key_file_waits_for_the_writer(tmp_path, monkeypatch):
+    from cognitrix.common import secret_box
+
+    path = tmp_path / 'secrets.key'
+    path.write_text('')
+    reads = iter(['', 'written-by-the-other-process'])
+    real_read = type(path).read_text
+    monkeypatch.setattr(type(path), 'read_text', lambda self, **kw: next(reads) if self == path else real_read(self, **kw))
+    monkeypatch.setattr(secret_box.time, 'sleep', lambda s: None)
+    assert secret_box.read_or_create_key(path) == 'written-by-the-other-process'
