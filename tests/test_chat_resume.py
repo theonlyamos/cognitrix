@@ -260,3 +260,41 @@ async def test_continue_turn_adds_no_message_and_saves_each_round(monkeypatch):
     # Saved after the tool round (history then ends with the tool result) and at the end.
     assert any(session.chat[n - 1].get('role') == 'tool' for n in saves if n <= len(session.chat))
     assert saves[-1] == len(session.chat)
+
+
+async def test_a_pickup_cut_off_mid_way_is_picked_up_again(db, world):
+    session = await _session([{'role': 'User', 'type': 'text', 'content': 'go'}])
+    lease = await _lease(session)
+    await resume.ChatTurnLease.update_one({'id': lease.id}, {
+        'status': 'resuming', 'owner': 'gone-engine',
+        'heartbeat_at': resume._iso(datetime.now(UTC) - timedelta(seconds=600))})
+    assert await resume.recover_pass() == 1
+    await _settle()
+    assert len(world.turns) == 1
+
+
+async def test_tool_calls_are_saved_before_they_run(monkeypatch):
+    from cognitrix.sessions.base import Session
+    from tests.test_steering import _agent, _patch
+
+    saved_before_tool = []
+
+    def on_tool():
+        saved_before_tool.append(any(m.get('type') == 'tool_calls' for m in snapshots[-1]) if snapshots else False)
+
+    snapshots = []
+    probe, _ = _patch(monkeypatch, ['tool', 'done'], on_tool=on_tool)
+
+    async def snapshot_save(self):
+        snapshots.append([dict(m) for m in self.chat])
+        return self
+
+    monkeypatch.setattr(Session, 'save', snapshot_save)
+    session = Session(agent_id='a1')
+    session.id = 's10'
+
+    async def sink(*_a, **_k):
+        return None
+
+    await session('go', _agent([probe]), 'web', False, sink, {'type': 'generate', 'action': 'chat_message'}, True)
+    assert saved_before_tool == [True]

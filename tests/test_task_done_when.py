@@ -162,3 +162,14 @@ async def test_a_run_checks_its_result_fixes_it_and_saves_the_check(monkeypatch)
     fix_index, fix_text = prompts[1]
     assert fix_index is None
     assert 'Only three vendors are named' in fix_text and 'three vendors: a, b, c' in fix_text
+
+
+async def test_a_pass_on_files_the_reviewer_could_not_open_is_unverified():
+    async def check(_r):
+        return StepEvaluation(passed=True, gate='unverified', finalscore=9)
+
+    async def fix(*_a):
+        raise AssertionError('no fix')
+
+    _result, record = await done_when.check_and_fix(TASK, StepResult(text='see image'), check=check, fix=fix)
+    assert record['status'] == 'unverified'

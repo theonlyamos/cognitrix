@@ -1335,6 +1335,11 @@ class Session(Model):
                                     'content': response.llm_response or '',
                                     'tool_calls': response.tool_calls,
                                 })
+                                # Saved before the tools run: after a restart
+                                # the turn knows these were started, and marks
+                                # them interrupted instead of silently
+                                # repeating a side effect (sessions/resume.py).
+                                await self._checkpoint(interface, persist_history)
                             # Surface tool activity to browser transports so the chat
                             # UI can show what the agent is running: name + params up
                             # front, then the result on completion. The whole batch

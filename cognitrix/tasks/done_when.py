@@ -67,7 +67,10 @@ def _now() -> str:
 
 
 def _record(evaluation: StepEvaluation, fixes: int) -> dict[str, Any]:
-    if evaluation.error_code == 'evaluation_unverified':
+    if evaluation.error_code == 'evaluation_unverified' or (
+            evaluation.passed and evaluation.gate == 'unverified'):
+        # The reviewer couldn't give an answer, or passed a result whose files
+        # it could only see described, not open (tasks/evaluation.py).
         status = 'unverified'
     else:
         status = 'met' if evaluation.passed else 'not_met'

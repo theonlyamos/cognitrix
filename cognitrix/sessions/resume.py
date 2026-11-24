@@ -111,7 +111,8 @@ class ChatTurnLease(Model):
     owner: str = ''
     """The engine process running the turn."""
     status: str = 'running'
-    """running, ended, resumed (a later lease carries on) or dropped."""
+    """running, resuming (being picked up), ended, resumed (a later lease
+    carries on) or dropped."""
     heartbeat_at: str = ''
     started_at: str = ''
     """When the person's request was first sent (kept across resumes)."""
@@ -246,7 +247,7 @@ def _single_engine() -> bool:
 
 def _abandoned(lease: ChatTurnLease, now: datetime) -> bool:
     if lease.owner == OWNER:
-        return False
+        return False  # this engine's own (a pickup it is doing now included)
     if _single_engine():
         return True
     beat = _parse(lease.heartbeat_at)
@@ -303,10 +304,13 @@ def close_open_tool_calls(chat: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def _claim(lease: ChatTurnLease) -> bool:
+    """Take a lease to pick its turn up. A lease left ``resuming`` by an
+    engine that stopped mid-pickup can be claimed again once that engine
+    has gone quiet (its claim time counts as its heartbeat)."""
     try:
         changed = await ChatTurnLease.update_one(
-            {'id': lease.id, 'status': 'running', 'heartbeat_at': lease.heartbeat_at},
-            {'status': 'resuming', 'owner': OWNER},
+            {'id': lease.id, 'status': lease.status, 'heartbeat_at': lease.heartbeat_at},
+            {'status': 'resuming', 'owner': OWNER, 'heartbeat_at': _iso(_now())},
         )
     except Exception:
         logger.exception('Could not claim chat turn %s', lease.session_id)
@@ -395,7 +399,9 @@ async def recover_pass() -> int:
         return 0
     now = _now()
     count = 0
-    for lease in await ChatTurnLease.find({'status': 'running'}) or []:
+    leases = [*(await ChatTurnLease.find({'status': 'running'}) or []),
+              *(await ChatTurnLease.find({'status': 'resuming'}) or [])]
+    for lease in leases:
         if lease.run_id in {s.run.run_id for s in _TRACKED.values()}:
             continue
         if not _abandoned(lease, now) or not await _claim(lease):
@@ -416,7 +422,7 @@ async def tidy(days: int = 7) -> None:
     """Forget leases of turns that ended more than ``days`` ago."""
     cutoff = _now() - timedelta(days=days)
     for lease in await ChatTurnLease.find({}) or []:
-        if lease.status == 'running':
+        if lease.status in ('running', 'resuming'):
             continue
         started = _parse(lease.started_at)
         if started is not None and started < cutoff:
