@@ -19,6 +19,9 @@ logger = logging.getLogger('cognitrix.log')
 
 SQLITE_BUSY_TIMEOUT_MS = 15_000
 
+DEFAULT_DB_PORTS = {'postgresql': '5432', 'mysql': '3306', 'mongodb': '27017'}
+DEFAULT_CORS_ORIGINS = 'http://localhost:8000,http://localhost:5173'
+
 def _resolve_version() -> str:
     """Version, sourced only from pyproject.toml. Read the source file directly
     when running from a checkout (an edit then shows up without reinstalling),
@@ -49,13 +52,15 @@ class CognitrixSettings:
         self.api_version = API_VERSION
         self.workdir = Path.home() / '.cognitrix'
 
-        # Database settings
-        self.db_type = os.getenv('DB_TYPE', 'sqlite')
-        self.db_name = os.getenv('DB_NAME', str(Path.home() / '.cognitrix' / 'cognitrix.db'))
-        self.db_host = os.getenv('DB_HOST', 'localhost')
-        self.db_port = int(os.getenv('DB_PORT', '27017'))
-        self.db_user = os.getenv('DB_USER', '')
-        self.db_password = os.getenv('DB_PASSWORD', '')
+        # Database settings (Settings > Advanced > Database and job queue, or the
+        # first-start Server setup screen; read once at start).
+        self.db_type = app_setting('DB_TYPE', 'sqlite') or 'sqlite'
+        default_name = str(Path.home() / '.cognitrix' / 'cognitrix.db') if self.db_type == 'sqlite' else 'cognitrix'
+        self.db_name = app_setting('DB_NAME', default_name)
+        self.db_host = app_setting('DB_HOST', 'localhost')
+        self.db_port = int(app_setting('DB_PORT', DEFAULT_DB_PORTS.get(self.db_type, '27017')))
+        self.db_user = app_setting('DB_USER', '')
+        self.db_password = app_setting('DB_PASSWORD', '')
 
         try:
             self.task_recovery_interval_seconds = float(
@@ -73,21 +78,18 @@ class CognitrixSettings:
                 'TASK_RECOVERY_INTERVAL_SECONDS must be a positive number'
             )
 
-        # Deployment environment marker (read early: gates JWT-secret behaviour).
-        self.env = os.getenv('COGNITRIX_ENV', 'development')
-
-        # JWT settings
+        # Sign-in tokens are signed with a key the server makes for itself.
         self.jwt_secret_key = self._resolve_jwt_secret()
-        self.jwt_algorithm = os.getenv('JWT_ALGORITHM', 'HS256')
+        self.jwt_algorithm = 'HS256'
         self.jwt_access_token_expire_minutes = int(app_setting('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', '30'))
 
         # Filesystem tool confinement: Read/Write/Edit may not escape this root.
         # Defaults to the current working directory.
         self.tools_root = Path(os.getenv('COGNITRIX_TOOLS_ROOT', Path.cwd())).expanduser().resolve()
 
-        # CORS: comma-separated list of allowed origins for the web API.
-        _cors = os.getenv('COGNITRIX_CORS_ORIGINS', 'http://localhost:8000,http://localhost:5173')
-        self.cors_origins = [o.strip() for o in _cors.split(',') if o.strip()]
+        # CORS: other addresses allowed to call the web API (Settings > Advanced).
+        _cors = app_setting('COGNITRIX_CORS_ORIGINS', DEFAULT_CORS_ORIGINS)
+        self.cors_origins = [o.strip() for o in _cors.replace('\n', ',').split(',') if o.strip()]
 
         # MCP Configuration
         self.mcp_config_file = self.workdir / 'mcp.json'
@@ -96,42 +98,17 @@ class CognitrixSettings:
         self._ensure_directories()
 
     def _resolve_jwt_secret(self) -> str:
-        """Resolve a stable JWT secret.
+        """The key that signs sign-in tokens: made once and kept in the data
+        folder (``jwt_secret``), so sessions survive restarts and nobody has
+        to set one. A key an older setup set as JWT_SECRET_KEY is copied
+        there once, on the first start after upgrading."""
+        from cognitrix.common.secret_box import adopt_environment_keys, jwt_key_file, read_or_create_key
 
-        - If JWT_SECRET_KEY is set, use it.
-        - In production (COGNITRIX_ENV=production) it is required: fail fast.
-        - Otherwise persist a generated key under the workdir so tokens survive
-          restarts (the old behaviour generated a new key every start, silently
-          invalidating all sessions).
-        """
-        env_key = os.getenv('JWT_SECRET_KEY')
-        if env_key:
-            return env_key
-
-        if self.env == 'production':
-            raise RuntimeError(
-                "JWT_SECRET_KEY must be set when COGNITRIX_ENV=production."
-            )
-
-        key_file = self.workdir / 'jwt_secret'
+        adopt_environment_keys()
         try:
-            if key_file.exists():
-                return key_file.read_text(encoding='utf-8').strip()
-            self.workdir.mkdir(parents=True, exist_ok=True)
-            key = secrets.token_urlsafe(32)
-            key_file.write_text(key, encoding='utf-8')
-            try:
-                os.chmod(key_file, 0o600)
-            except OSError:
-                pass
-            logger.warning(
-                "JWT_SECRET_KEY not set; using a persisted development key at %s. "
-                "Set JWT_SECRET_KEY (and COGNITRIX_ENV=production) for deployment.",
-                key_file,
-            )
-            return key
+            return read_or_create_key(jwt_key_file())
         except OSError:
-            # Filesystem unavailable — fall back to a process-local key.
+            logger.warning("Couldn't keep the sign-in key in the data folder; sign-ins end when the app stops.")
             return secrets.token_urlsafe(32)
 
     def _ensure_directories(self):
@@ -281,9 +258,6 @@ settings = CognitrixSettings()
 COGNITRIX_WORKDIR = settings.workdir
 BASE_DIR = Path(__file__).parent
 def _frontend_build_dir() -> Path:
-    override = os.getenv('COGNITRIX_FRONTEND_DIR')
-    if override:
-        return Path(override)
     # A PyInstaller build (the desktop app's engine) unpacks bundled data
     # files under sys._MEIPASS; the spec copies frontend/dist to frontend/dist.
     bundle = getattr(sys, '_MEIPASS', None)

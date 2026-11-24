@@ -39,10 +39,11 @@ Shared servers have no owner and can't use anyone's sign-ins.
 as `enc:v1:…`. Covered: saved sign-ins, MCP server headers and env, pasted voice
 keys. Plain-text rows from earlier versions are sealed on startup.
 
-Key: `COGNITRIX_SECRETS_KEY`; otherwise `~/.cognitrix/secrets.key` (created
-0600) outside production; in production a key derived from `JWT_SECRET_KEY`
-(with a warning). `COGNITRIX_SECRETS_OLD_KEYS` keeps old keys readable for
-rotation.
+Key: `~/.cognitrix/secrets.key` (created 0600 on first start). Keys it
+replaced stay readable from `secrets.old_keys`, one per line. Servers that
+used to set `COGNITRIX_SECRETS_KEY` (or relied on a key derived from
+`JWT_SECRET_KEY` in production) have them copied into these files once, on
+the first start after upgrading.
 
 ## Fit with connected-app sign-in (OAuth)
 

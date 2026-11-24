@@ -8,7 +8,6 @@ import pytest
 def test_settings_read_positive_task_recovery_interval(monkeypatch):
     from cognitrix.config import CognitrixSettings
 
-    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret")
     monkeypatch.setenv("TASK_RECOVERY_INTERVAL_SECONDS", "12.5")
     monkeypatch.setattr(CognitrixSettings, "_ensure_directories", lambda self: None)
 

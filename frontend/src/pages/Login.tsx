@@ -46,8 +46,12 @@ export default function Login() {
   const [forgotState, setForgotState] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
 
   useEffect(() => {
-    api.get('/auth/options').then(({ data }) => setOptions((o) => ({ ...o, ...data }))).catch(() => {});
-  }, []);
+    api.get('/auth/options').then(({ data }) => {
+      // A new server: say where its database and job queue are first.
+      if (data.server_setup) navigate('/setup', { replace: true });
+      else setOptions((o) => ({ ...o, ...data }));
+    }).catch(() => {});
+  }, [navigate]);
 
   const sendReset = async (e: React.FormEvent) => {
     e.preventDefault();

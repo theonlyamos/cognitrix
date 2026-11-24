@@ -200,7 +200,14 @@ async def auth_options(invite: str | None = None):
         'signup_open': await _signup_open() or valid_invite,
         'password_reset_by_email': _reset_by_email_ready(),
         'code_sign_in': signins_on(),
+        'server_setup': await _server_setup_pending(),
     }
+
+
+async def _server_setup_pending() -> bool:
+    from cognitrix.api.routes.server_setup import setup_pending
+
+    return await setup_pending()
 
 
 def signins_on() -> bool:

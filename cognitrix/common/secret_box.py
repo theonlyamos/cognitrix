@@ -9,18 +9,15 @@ prefix. Text without the prefix is treated as an old plain-text value and
 passed through unchanged, so rows written before encryption keep working and
 are re-sealed on startup (see ``seal_legacy_rows``).
 
-Where the key comes from, first match wins:
+The key is made once and kept in ``<data folder>/secrets.key`` (owner read
+and write only); nobody sets it. Keys it replaced are kept one per line in
+``secrets.old_keys`` so values sealed with them still open.
 
-1. ``COGNITRIX_SECRETS_KEY``: any string; it is stretched to a Fernet key.
-2. Outside production, a key generated once and kept in
-   ``~/.cognitrix/secrets.key`` (owner read/write only).
-3. In production without (1), a key derived from ``JWT_SECRET_KEY``, so an
-   existing deployment keeps starting. Set ``COGNITRIX_SECRETS_KEY`` so that
-   rotating the JWT secret does not lock the saved secrets.
-
-``COGNITRIX_SECRETS_OLD_KEYS`` (comma separated) still decrypts values sealed
-with earlier keys, which lets an operator rotate the key. An old
-``JWT_SECRET_KEY`` works there too, for moving off the production fallback.
+Older setups set the keys as environment variables (``COGNITRIX_SECRETS_KEY``,
+or a key derived from ``JWT_SECRET_KEY`` in production). On the first start
+after upgrading, ``adopt_environment_keys`` copies those into the key files,
+so saved secrets and sign-ins keep working; after that the environment is
+not read again and the variables can be removed.
 """
 from __future__ import annotations
 
@@ -55,39 +52,124 @@ def _key_file() -> Path:
     return Path.home() / '.cognitrix' / 'secrets.key'
 
 
-def _primary_key() -> bytes:
-    env_key = os.getenv('COGNITRIX_SECRETS_KEY', '').strip()
-    if env_key:
-        return _stretch(env_key, 'secrets')
+def _old_keys_file() -> Path:
+    return _key_file().with_name('secrets.old_keys')
 
-    if os.getenv('COGNITRIX_ENV', 'development') == 'production':
-        jwt = os.getenv('JWT_SECRET_KEY', '').strip()
-        if jwt:
-            logger.warning(
-                "COGNITRIX_SECRETS_KEY is not set; saved secrets are encrypted with a key "
-                "derived from JWT_SECRET_KEY. Set COGNITRIX_SECRETS_KEY before rotating it."
-            )
-            return _stretch(jwt, 'secrets-from-jwt')
-        raise SecretBoxError('COGNITRIX_SECRETS_KEY must be set when COGNITRIX_ENV=production.')
 
-    path = _key_file()
+def jwt_key_file() -> Path:
+    """Signs sign-in tokens (config.py reads it)."""
+    return _key_file().with_name('jwt_secret')
+
+
+def _adopted_marker() -> Path:
+    return _key_file().with_name('.keys-adopted')
+
+
+RAW = 'fernet:'   # a key file line holding a ready Fernet key, not text to stretch
+
+
+def _fernet_key(material: str) -> list[bytes]:
+    """The Fernet keys one line of a key file stands for."""
+    material = material.strip()
+    if material.startswith(RAW):
+        return [material[len(RAW):].encode('ascii')]
+    return [_stretch(material, 'secrets')]
+
+
+def _write_owner_only(path: Path, text: str, *, exclusive: bool = False) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
+    fd = os.open(str(path), flags, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+        handle.write(text)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def read_or_create_key(path: Path) -> str:
+    """The key kept in ``path``, made (random, owner-only) the first time.
+    Safe when the web server and the worker start together."""
     try:
         if path.exists():
             text = path.read_text(encoding='utf-8').strip()
             if text:
-                return _stretch(text, 'secrets')
-        path.parent.mkdir(parents=True, exist_ok=True)
+                return text
         text = secrets.token_urlsafe(32)
-        # Create with owner-only permissions from the start.
-        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-            handle.write(text)
-        return _stretch(text, 'secrets')
+        _write_owner_only(path, text, exclusive=not path.exists())
+        return text
     except FileExistsError:
-        # Another process created it between our check and our write.
-        return _stretch(path.read_text(encoding='utf-8').strip(), 'secrets')
+        # Another process made it between our check and our write.
+        return path.read_text(encoding='utf-8').strip()
+
+
+def adopt_environment_keys() -> None:
+    """Once, on the first start after upgrading: keep the keys an older setup
+    gave as environment variables, by writing them to the key files. Saved
+    secrets and sign-ins then still open, and the variables can be removed.
+    The environment is never read for keys after this."""
+    marker = _adopted_marker()
+    try:
+        if marker.exists():
+            return
+        jwt = os.environ.get('JWT_SECRET_KEY', '').strip()
+        secrets_env = os.environ.get('COGNITRIX_SECRETS_KEY', '').strip()
+        production = os.environ.get('COGNITRIX_ENV', '').strip() == 'production'
+        key_file = _key_file()
+        from_jwt = RAW + _stretch(jwt, 'secrets-from-jwt').decode('ascii') if jwt else ''
+        primary = ''
+        if secrets_env:
+            primary = secrets_env
+        elif from_jwt and (production or not key_file.exists()):
+            # Production used to derive the key from JWT_SECRET_KEY. Without a
+            # key file this was such a server, even when COGNITRIX_ENV is gone.
+            primary = from_jwt
+        old = [k.strip() for k in os.environ.get('COGNITRIX_SECRETS_OLD_KEYS', '').split(',') if k.strip()]
+        old_lines: list[str] = [from_jwt] if from_jwt and from_jwt != primary else []
+        for key in old:
+            old_lines += [key, RAW + _stretch(key, 'secrets-from-jwt').decode('ascii')]
+        if primary:
+            previous = key_file.read_text(encoding='utf-8').strip() if key_file.exists() else ''
+            if previous and previous != primary:
+                old_lines.append(previous)
+            _write_owner_only(key_file, primary)
+        if old_lines:
+            old_file = _old_keys_file()
+            existing = old_file.read_text(encoding='utf-8').splitlines() if old_file.exists() else []
+            lines = existing + [line for line in old_lines if line not in existing]
+            _write_owner_only(old_file, '\n'.join(lines) + '\n')
+        if jwt:
+            _write_owner_only(jwt_key_file(), jwt)
+        _write_owner_only(marker, 'Keys from environment variables were copied to the key files once.\n')
+        if primary or old_lines or jwt:
+            logger.warning(
+                'Copied the keys set as environment variables into %s. They are not read from the '
+                'environment any more; you can remove JWT_SECRET_KEY, COGNITRIX_SECRETS_KEY and '
+                'COGNITRIX_SECRETS_OLD_KEYS.', key_file.parent)
+    except OSError as exc:
+        logger.warning("Couldn't copy keys from environment variables: %s", exc)
+
+
+def _primary_key() -> bytes:
+    adopt_environment_keys()
+    path = _key_file()
+    try:
+        return _fernet_key(read_or_create_key(path))[0]
     except OSError as exc:
         raise SecretBoxError(f"Couldn't read or create the secrets key at {path}: {exc}") from exc
+
+
+def _old_keys() -> list[bytes]:
+    try:
+        lines = _old_keys_file().read_text(encoding='utf-8').splitlines()
+    except OSError:
+        return []
+    keys: list[bytes] = []
+    for line in lines:
+        if line.strip():
+            keys += _fernet_key(line)
+    return keys
 
 
 def _get_box() -> MultiFernet:
@@ -95,11 +177,11 @@ def _get_box() -> MultiFernet:
     with _lock:
         if _box is None:
             keys = [Fernet(_primary_key())]
-            for old in os.getenv('COGNITRIX_SECRETS_OLD_KEYS', '').split(','):
-                if old.strip():
-                    keys.append(Fernet(_stretch(old.strip(), 'secrets')))
-                    # An old JWT_SECRET_KEY, for deployments that used the fallback.
-                    keys.append(Fernet(_stretch(old.strip(), 'secrets-from-jwt')))
+            for old in _old_keys():
+                try:
+                    keys.append(Fernet(old))
+                except ValueError:
+                    logger.warning('Skipping a malformed line in %s', _old_keys_file())
             _box = MultiFernet(keys)
         return _box
 
@@ -135,7 +217,7 @@ def unseal(value: str | None) -> str:
         return _get_box().decrypt(value[len(PREFIX):].encode('ascii')).decode('utf-8')
     except InvalidToken as exc:
         raise SecretBoxError(
-            'A saved secret could not be decrypted. Was COGNITRIX_SECRETS_KEY changed?'
+            'A saved secret could not be decrypted. Was secrets.key in the data folder replaced?'
         ) from exc
 
 

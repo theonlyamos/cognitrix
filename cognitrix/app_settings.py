@@ -15,10 +15,13 @@ Environment variables (and ``.env``) are not read for any of these, not
 even once on upgrade: an admin sets them again in Settings. Model provider
 keys and OAuth clients live in ``saved_keys`` the same way.
 
-A few values stay environment-only because they are plumbing, not settings:
-where the database and queue are, the keys that unlock this very file, what
-the desktop app tells its own engine, and what the engine tells the sandbox
-container. ``ENV_ONLY`` lists them for the docs and for a test that keeps
+Even the server's own setup is here: the database and job queue (chosen on
+the first-start Server setup screen; this file is read before the database
+opens) and the web server's allowed addresses. The keys that sign sign-ins
+and unlock saved secrets are made by the server and kept in the data folder
+(see ``secret_box``). What stays environment-only is what one process tells
+another: what the desktop app tells its own engine, and what the engine
+tells the sandbox container. ``ENV_ONLY`` lists them for the docs and for a test that keeps
 new ``os.getenv`` reads honest.
 """
 from __future__ import annotations
@@ -223,6 +226,34 @@ def _registry() -> list[Setting]:
                 'The address people use to reach this server, for links in emails, sign-in with Google or '
                 'GitHub, SMS and webhooks. Leave empty on the desktop app.', placeholder='https://cognitrix.example.com'))
 
+    g = 'Database and job queue'
+    add(Setting('DB_TYPE', 'advanced', g, 'Database',
+                'SQLite keeps everything in one file in the data folder. Pick another to use a database server.',
+                kind='select', default='sqlite', restart=True,
+                options=(('sqlite', 'SQLite (built in)'), ('postgresql', 'PostgreSQL'), ('mysql', 'MySQL'),
+                         ('mongodb', 'MongoDB'))))
+    add(Setting('DB_HOST', 'advanced', g, 'Database server', 'Not used with SQLite.', placeholder='localhost',
+                restart=True))
+    add(Setting('DB_PORT', 'advanced', g, 'Database port', 'Leave empty for the usual port.', kind='number',
+                restart=True))
+    add(Setting('DB_NAME', 'advanced', g, 'Database name',
+                'With SQLite, the path of the database file.', placeholder='cognitrix', restart=True))
+    add(Setting('DB_USER', 'advanced', g, 'Database user', restart=True))
+    add(Setting('DB_PASSWORD', 'advanced', g, 'Database password', kind='secret', restart=True))
+    add(Setting('CELERY_BROKER_URL', 'advanced', g, 'Job queue (Redis)',
+                'Where task runs wait for a worker, e.g. redis://localhost:6379/0. Leave empty to use the '
+                'built-in queue in the data folder.', kind='secret', restart=True))
+    add(Setting('TASK_LIMIT_REDIS_URL', 'advanced', g, 'Redis for shared limits',
+                'Keeps model-call limits across several workers. Leave empty to use the job queue Redis.',
+                kind='secret', restart=True))
+
+    g = 'Web server'
+    add(Setting('COGNITRIX_CORS_ORIGINS', 'advanced', g, 'Other addresses allowed to call the API',
+                'One per line. Only needed when the app is opened from another address than the server.',
+                kind='list', placeholder='http://localhost:8000\nhttp://localhost:5173', restart=True))
+    add(Setting('COGNITRIX_CSP', 'advanced', g, 'Content security policy',
+                'Leave empty for the built-in policy. Type off to send none.'))
+
     g = 'Safety'
     add(Setting('COGNITRIX_REVIEWER', 'advanced', g, 'Action reviewer',
                 'A second model checks risky tool calls. Agents can override it.', kind='select', default='off',
@@ -315,12 +346,7 @@ def registry() -> dict[str, Setting]:
 # Values that stay environment variables: deployment plumbing, keys that
 # unlock saved secrets, and what one Cognitrix process tells another.
 ENV_ONLY: dict[str, str] = {
-    'DB_TYPE / DB_NAME / DB_HOST / DB_PORT / DB_USER / DB_PASSWORD': 'Where the database is (needed before settings load).',
-    'CELERY_BROKER_URL / CELERY_WORKER_MODE / CELERY_FORCE_FILESYSTEM / TASK_LIMIT_REDIS_URL': 'Queue plumbing for server deployments.',
-    'COGNITRIX_ENV': 'production / development switch for server deployments.',
-    'JWT_SECRET_KEY / JWT_ALGORITHM': 'Signs sign-in tokens; generated and kept in the data folder when unset.',
-    'COGNITRIX_SECRETS_KEY / COGNITRIX_SECRETS_OLD_KEYS': 'Unlocks saved secrets, this file included; generated when unset.',
-    'COGNITRIX_CORS_ORIGINS / COGNITRIX_CSP / COGNITRIX_FRONTEND_DIR': 'Web server plumbing.',
+    'CELERY_WORKER_MODE / CELERY_FORCE_FILESYSTEM': 'Set by the app for the worker it starts itself.',
     'COGNITRIX_DESKTOP / COGNITRIX_ENGINE_PID / COGNITRIX_DESKTOP_TOKEN / COGNITRIX_TOOLS_ROOT / COGNITRIX_CWD_FILE':
         'Set by the desktop app for its own engine.',
     'COGNITRIX_SANDBOX_* inside the computer image, COGNITRIX_API_URL / COGNITRIX_API_KEY, '
@@ -462,7 +488,7 @@ _WHOLE_NUMBERS = frozenset({
     'COGNITRIX_CODING_AGENT_TIMEOUT', 'COGNITRIX_SWARM_MAX_CONCURRENCY', 'COGNITRIX_SWARM_MAX_WORKERS',
     'COGNITRIX_SWARM_MAX_TOKENS', 'COGNITRIX_AUTOMATION_MAX_RUNS_PER_DAY', 'COGNITRIX_MEDIA_PROCESSING_CONCURRENCY',
     'COGNITRIX_PRODUCED_FILE_MAX_MB', 'COGNITRIX_PRODUCED_PC_FILE_MAX_MB', 'COGNITRIX_PRODUCED_FILES_QUOTA_MB',
-    'TASK_PROVIDER_CONCURRENCY', 'TASK_ACTOR_CONCURRENCY',
+    'TASK_PROVIDER_CONCURRENCY', 'TASK_ACTOR_CONCURRENCY', 'DB_PORT',
 })
 
 
@@ -518,6 +544,21 @@ def set_many(changes: dict[str, Any]) -> None:
             else:
                 values.pop(name, None)
         raw[VALUES] = values
+        _write_file(raw)
+
+
+SETUP_DONE = 'server_setup_done'
+
+
+def server_setup_done() -> bool:
+    """Whether the first-start Server setup screen was finished (or skipped)."""
+    return bool(_read_file().get(SETUP_DONE))
+
+
+def mark_server_setup_done() -> None:
+    with _lock:
+        raw = _read_file()
+        raw[SETUP_DONE] = True
         _write_file(raw)
 
 

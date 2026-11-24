@@ -3,8 +3,11 @@
 # volume mounted at /home/cognitrix/.cognitrix. The containers run as the
 # unprivileged "cognitrix" user; the entry script hands the volume to it.
 #
-#   cp .env.example .env      # set JWT_SECRET_KEY; provider keys go in Settings
 #   docker compose up --build
+#
+# Nothing to set beforehand: keys are made on first start and everything else
+# is in the app (Settings). The commands below point the app at the Redis
+# container the first time; after that it can be changed in Settings > Advanced.
 #
 # Scale execution with `docker compose up --scale worker=3`. Keep web at a
 # SINGLE replica: the schedule tick loop is per-process, so two web containers
@@ -12,14 +15,13 @@
 
 x-app: &app
   image: cognitrix:latest
-  env_file: .env
-  environment:
-    # Presence of CELERY_BROKER_URL flips both processes to the Redis broker
-    # (the web container then treats its local-worker spawn as a no-op).
-    CELERY_BROKER_URL: redis://redis:6379/0
-    COGNITRIX_ENV: production          # requires JWT_SECRET_KEY (fail-fast)
+  # Older setups kept JWT_SECRET_KEY / COGNITRIX_SECRETS_KEY here. They are
+  # copied into the data volume on first start; after that this file can go.
+  env_file:
+    - path: .env
+      required: false
   volumes:
-    - cognitrix-data:/home/cognitrix/.cognitrix  # shared SQLite DB, jwt_secret, mcp.json
+    - cognitrix-data:/home/cognitrix/.cognitrix  # settings, SQLite DB, keys, mcp.json
   depends_on:
     redis:
       condition: service_healthy
@@ -41,7 +43,9 @@ services:
   web:
     <<: *app
     build: .
-    command: ["cognitrix", "--ui", "web"]
+    # A saved Redis queue flips both processes to it (the web container then
+    # treats its local-worker spawn as a no-op).
+    command: ["sh", "-c", "cognitrix settings set --if-unset CELERY_BROKER_URL=redis://redis:6379/0 && exec cognitrix --ui web"]
     ports:
       - "8000:8000"
     healthcheck:
@@ -53,7 +57,7 @@ services:
 
   worker:
     <<: *app
-    command: ["celery", "-A", "cognitrix.celery_worker", "worker", "--pool=solo", "--loglevel=info"]
+    command: ["sh", "-c", "cognitrix settings set --if-unset CELERY_BROKER_URL=redis://redis:6379/0 && exec celery -A cognitrix.celery_worker worker --pool=solo --loglevel=info"]
 
 volumes:
   redis-data:

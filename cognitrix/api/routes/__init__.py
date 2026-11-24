@@ -37,6 +37,7 @@ from ...api.routes.folders import folders_api
 from ...api.routes.hosted_apps import hosted_apps_api
 from ...api.routes.base import api_router
 from ...api.routes.app_settings import app_settings_api
+from ...api.routes.server_setup import server_setup_api
 from ...api.routes.providers import providers_api
 from ...api.routes.public import public_api
 from ...api.routes.public_agents import public_agent_api, public_links_api
@@ -76,6 +77,7 @@ api_router.include_router(hosted_apps_api)
 api_router.include_router(skills_api)
 api_router.include_router(providers_api)
 api_router.include_router(app_settings_api)
+api_router.include_router(server_setup_api)
 api_router.include_router(automations_api)
 api_router.include_router(github_watches_api)
 api_router.include_router(tasks_run_api)

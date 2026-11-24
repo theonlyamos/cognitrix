@@ -74,12 +74,12 @@ def test_seal_round_trip_and_plain_text_passes_through(monkeypatch):
     assert secret_box.seal('') == ''
 
     # A different key can't open it, but the old key still works after rotation.
-    monkeypatch.setenv('COGNITRIX_SECRETS_KEY', 'another-key')
+    secret_box._key_file().write_text('another-key')
     secret_box.reset_key_cache()
     with pytest.raises(secret_box.SecretBoxError):
         secret_box.unseal(sealed)
     assert secret_box.unseal_or_empty(sealed) == ''
-    monkeypatch.setenv('COGNITRIX_SECRETS_OLD_KEYS', 'test-secrets-key')
+    secret_box._old_keys_file().write_text('test-secrets-key\n')
     secret_box.reset_key_cache()
     assert secret_box.unseal(sealed) == 'hello-token'
 
@@ -90,8 +90,8 @@ def test_key_file_is_created_owner_only(tmp_path, monkeypatch):
 
     from cognitrix.common import secret_box
 
-    monkeypatch.delenv('COGNITRIX_SECRETS_KEY')
     monkeypatch.setattr(secret_box, '_key_file', lambda: tmp_path / 'secrets.key')
+    (tmp_path / '.keys-adopted').write_text('done')
     secret_box.reset_key_cache()
     sealed = secret_box.seal('v')
     path = tmp_path / 'secrets.key'
@@ -102,18 +102,80 @@ def test_key_file_is_created_owner_only(tmp_path, monkeypatch):
     assert secret_box.unseal(sealed) == 'v'
 
 
-def test_production_needs_a_key(monkeypatch):
+def test_keys_from_an_older_setup_are_copied_once(tmp_path, monkeypatch):
+    """A production server that kept its keys in environment variables still
+    opens its saved secrets and sign-ins after upgrading, and the environment
+    is not read again after that first start."""
     from cognitrix.common import secret_box
 
-    monkeypatch.delenv('COGNITRIX_SECRETS_KEY')
+    monkeypatch.setattr(secret_box, '_key_file', lambda: tmp_path / 'secrets.key')
+    # Sealed the old way: production, no COGNITRIX_SECRETS_KEY, key from JWT_SECRET_KEY.
+    old_box = secret_box.Fernet(secret_box._stretch('jwt-key', 'secrets-from-jwt'))
+    sealed = secret_box.PREFIX + old_box.encrypt(b'v').decode('ascii')
+
     monkeypatch.setenv('COGNITRIX_ENV', 'production')
-    monkeypatch.delenv('JWT_SECRET_KEY', raising=False)
+    monkeypatch.setenv('JWT_SECRET_KEY', 'jwt-key')
+    monkeypatch.delenv('COGNITRIX_SECRETS_KEY', raising=False)
     secret_box.reset_key_cache()
-    with pytest.raises(secret_box.SecretBoxError):
-        secret_box.seal('v')
+    assert secret_box.unseal(sealed) == 'v'
+    assert (tmp_path / 'jwt_secret').read_text() == 'jwt-key'
+
+    # The variables can go now.
+    monkeypatch.delenv('JWT_SECRET_KEY')
+    monkeypatch.delenv('COGNITRIX_ENV')
+    secret_box.reset_key_cache()
+    assert secret_box.unseal(sealed) == 'v'
+
+    # Setting one again later changes nothing.
+    monkeypatch.setenv('JWT_SECRET_KEY', 'another-jwt')
+    monkeypatch.setenv('COGNITRIX_SECRETS_KEY', 'something-else')
+    secret_box.reset_key_cache()
+    assert secret_box.unseal(sealed) == 'v'
+
+
+def test_a_jwt_derived_key_is_kept_without_cognitrix_env(tmp_path, monkeypatch):
+    """fly.toml no longer sets COGNITRIX_ENV, but the server's JWT secret still is."""
+    from cognitrix.common import secret_box
+
+    monkeypatch.setattr(secret_box, '_key_file', lambda: tmp_path / 'secrets.key')
+    sealed = secret_box.PREFIX + secret_box.Fernet(secret_box._stretch('jwt-key', 'secrets-from-jwt')).encrypt(b'v').decode()
+    monkeypatch.delenv('COGNITRIX_ENV', raising=False)
+    monkeypatch.delenv('COGNITRIX_SECRETS_KEY', raising=False)
     monkeypatch.setenv('JWT_SECRET_KEY', 'jwt-key')
     secret_box.reset_key_cache()
-    assert secret_box.unseal(secret_box.seal('v')) == 'v'
+    assert secret_box.unseal(sealed) == 'v'
+
+
+def test_a_desktop_key_file_is_kept(tmp_path, monkeypatch):
+    """A desktop or dev install already has its own key file; a stray JWT
+    variable doesn't replace it."""
+    from cognitrix.common import secret_box
+
+    monkeypatch.setattr(secret_box, '_key_file', lambda: tmp_path / 'secrets.key')
+    (tmp_path / 'secrets.key').write_text('desktop-key')
+    sealed = secret_box.PREFIX + secret_box.Fernet(secret_box._stretch('desktop-key', 'secrets')).encrypt(b'v').decode()
+    monkeypatch.delenv('COGNITRIX_ENV', raising=False)
+    monkeypatch.delenv('COGNITRIX_SECRETS_KEY', raising=False)
+    monkeypatch.setenv('JWT_SECRET_KEY', 'jwt-key')
+    secret_box.reset_key_cache()
+    assert secret_box.unseal(sealed) == 'v'
+    assert (tmp_path / 'secrets.key').read_text() == 'desktop-key'
+
+
+def test_a_dedicated_key_and_old_keys_are_copied(tmp_path, monkeypatch):
+    from cognitrix.common import secret_box
+
+    monkeypatch.setattr(secret_box, '_key_file', lambda: tmp_path / 'secrets.key')
+    by_old = secret_box.PREFIX + secret_box.Fernet(secret_box._stretch('old-key', 'secrets')).encrypt(b'a').decode()
+    by_new = secret_box.PREFIX + secret_box.Fernet(secret_box._stretch('new-key', 'secrets')).encrypt(b'b').decode()
+    monkeypatch.setenv('COGNITRIX_SECRETS_KEY', 'new-key')
+    monkeypatch.setenv('COGNITRIX_SECRETS_OLD_KEYS', 'old-key')
+    secret_box.reset_key_cache()
+    assert secret_box.unseal(by_old) == 'a' and secret_box.unseal(by_new) == 'b'
+    monkeypatch.delenv('COGNITRIX_SECRETS_KEY')
+    monkeypatch.delenv('COGNITRIX_SECRETS_OLD_KEYS')
+    secret_box.reset_key_cache()
+    assert secret_box.unseal(by_old) == 'a' and secret_box.unseal(by_new) == 'b'
 
 
 # --- hosts and placeholders -------------------------------------------------
@@ -419,12 +481,11 @@ async def test_review_fixes(db, monkeypatch):
         reset_execution_context(token)
     assert 'ghp_' not in text
 
-    monkeypatch.delenv('COGNITRIX_SECRETS_KEY')
-    monkeypatch.setenv('COGNITRIX_ENV', 'production')
-    monkeypatch.setenv('JWT_SECRET_KEY', 'old-jwt')
+    # A key replaced earlier (here one an old setup derived from its JWT key) still opens values.
+    secret_box._key_file().write_text(secret_box.RAW + secret_box._stretch('old-jwt', 'secrets-from-jwt').decode())
     secret_box.reset_key_cache()
     sealed = secret_box.seal('v')
-    monkeypatch.setenv('COGNITRIX_SECRETS_KEY', 'new-dedicated-key')
-    monkeypatch.setenv('COGNITRIX_SECRETS_OLD_KEYS', 'old-jwt')
+    secret_box._key_file().write_text('new-dedicated-key')
+    secret_box._old_keys_file().write_text(secret_box.RAW + secret_box._stretch('old-jwt', 'secrets-from-jwt').decode())
     secret_box.reset_key_cache()
     assert secret_box.unseal(sealed) == 'v'

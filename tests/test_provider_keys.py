@@ -25,7 +25,6 @@ async def db(tmp_path, monkeypatch):
     await _ensure_schema()
 
     monkeypatch.setattr(settings, 'workdir', tmp_path)
-    monkeypatch.setenv('COGNITRIX_SECRETS_KEY', 'test-secrets-key')
     from cognitrix.common import secret_box
     secret_box.reset_key_cache()
     monkeypatch.delenv('COGNITRIX_ADMIN_EMAILS', raising=False)

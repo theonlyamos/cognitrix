@@ -28,9 +28,12 @@ export default function Signup() {
 
   useEffect(() => {
     api.get('/auth/options', { params: invite ? { invite } : undefined })
-      .then(({ data }) => setOpen(data.signup_open !== false))
+      .then(({ data }) => {
+        if (data.server_setup && !invite) navigate('/setup', { replace: true });
+        else setOpen(data.signup_open !== false);
+      })
       .catch(() => {});
-  }, [invite]);
+  }, [invite, navigate]);
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();

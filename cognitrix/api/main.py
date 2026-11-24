@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..app_settings import get as app_setting
 from ..config import FRONTEND_BUILD_DIR, initialize_database, settings
 from ..media.staging import (
     start_attachment_maintenance,
@@ -182,8 +183,8 @@ app.add_middleware(
 
 # What a page served by this engine may load and run. Everything the app needs
 # ships with it, so scripts come only from the engine itself; images may come
-# from anywhere because agents' replies link to them. COGNITRIX_CSP=off drops
-# the header, any other value replaces the policy. The desktop app is left
+# from anywhere because agents' replies link to them. Settings > Advanced >
+# Content security policy: off drops the header, any other value replaces it. The desktop app is left
 # alone: its window talks to the shell in ways a strict policy can block.
 _DEFAULT_CSP = (
     "default-src 'self'; "
@@ -202,7 +203,7 @@ _DEFAULT_CSP = (
 
 
 def _content_security_policy() -> str:
-    configured = os.environ.get('COGNITRIX_CSP', '').strip()
+    configured = app_setting('COGNITRIX_CSP', '').strip()
     if configured.lower() in ('off', '0', 'false', 'none'):
         return ''
     if configured:
