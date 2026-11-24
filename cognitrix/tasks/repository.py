@@ -66,6 +66,7 @@ _RUN_MUTABLE_FIELDS = {
     "error",
     "started_at",
     "completed_at",
+    "done_when_check",
 }
 _STEP_MUTABLE_FIELDS = {
     "status",

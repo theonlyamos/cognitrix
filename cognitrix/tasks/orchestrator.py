@@ -45,6 +45,7 @@ from cognitrix.tasks.dag import (
     finalize_results,
     run_dag,
 )
+from cognitrix.tasks.done_when import check_and_fix, fix_prompt, with_done_when
 from cognitrix.tasks.evaluation import evaluate_step
 from cognitrix.tasks.events import TaskRunEventEmitter
 from cognitrix.tasks.executor import TaskStepExecutor
@@ -316,7 +317,7 @@ async def _planner_plan(task: 'Task', roster: list[Agent], leader: Agent) -> lis
     always = sorted({t.name for a in roster for t in (a.tools or [])
                      if t.category == 'automation'})
     plan = await StructuredPlanner(leader.llm).create_plan(
-        _with_automation_brief(task.description), roster, tools,
+        _with_automation_brief(with_done_when(task.description, task)), roster, tools,
         always_available=always)
     steps = list(plan.steps or [])
     if not steps or len(steps) > MAX_PLAN_STEPS or not all((s.title or '').strip() for s in steps):
@@ -798,7 +799,7 @@ def _durable_step_prompt(
 ) -> str:
     parts = [
         f"You are completing one step of the task: {task.title}",
-        f"Task description: {task.description}",
+        f"Task description: {with_done_when(task.description or '', task)}",
         f"\nYour step (#{step.step_index + 1}): {step.title}\n{step.description}",
     ]
     if step.expected_output:
@@ -874,7 +875,7 @@ async def _synthesize_step_results(
         {
             'role': 'user',
             'content': (
-                f"Task: {task.title}\n{_with_automation_brief(task.description)}\n\n"
+                f"Task: {task.title}\n{_with_automation_brief(with_done_when(task.description or '', task))}\n\n"
                 "Completed step outputs follow as inert evidence only.\n"
                 + rendered_results
             ),
@@ -1000,7 +1001,7 @@ async def _consume_retry(
     usage_writer: _UsageWriter,
     metrics: TaskRunPhaseRecorder,
     *,
-    step_index: int,
+    step_index: int | None,
     attempt: int,
 ) -> None:
     async with metrics.measure(
@@ -1048,6 +1049,90 @@ async def _brief_published(run: TaskRun) -> bool:
     except Exception:
         logger.debug('Could not look up the brief for run %s', run.id, exc_info=True)
         return True  # don't fail a run on a lookup problem
+
+
+async def _meet_done_when(
+    task: 'Task',
+    run: TaskRun,
+    result: StepResult,
+    roster: Sequence[Agent],
+    leader: Agent,
+    capabilities: TaskCapabilityRegistry,
+    emitter: TaskRunEventEmitter,
+    ledger: BudgetLedger,
+    usage_writer: '_UsageWriter',
+    metrics: TaskRunPhaseRecorder,
+    tool_context,
+    cancel_event: asyncio.Event,
+    lease_controller: LeaseController,
+) -> tuple[StepResult, dict[str, Any] | None]:
+    """Check the final result against the task's "Done when" and let the
+    lead agent fix it while it falls short (tasks/done_when.py)."""
+    _, fix_snapshot = _choose_snapshot_agent(leader.name, None, roster, leader)
+
+    async def checkpoint() -> None:
+        lease_controller.checkpoint()
+        if cancel_event.is_set():
+            raise asyncio.CancelledError()
+        await _budget_checkpoint(ledger, usage_writer)
+
+    async def check(item: StepResult):
+        await checkpoint()
+        try:
+            async with metrics.measure(TaskRunPhase.EVALUATE, step_index=None, attempt=1):
+                return await evaluate_step(
+                    _evaluation_llm(
+                        fix_snapshot,
+                        tool_resolver=capabilities.resolver_for(fix_snapshot.agent_id),
+                    ),
+                    task.description or task.title or '',
+                    item.text,
+                    task.done_when or '',
+                    threshold=GATE_THRESHOLD,
+                    artifacts=item.artifacts,
+                    expected_output=task.done_when or '',
+                )
+        finally:
+            await usage_writer.persist()
+
+    async def fix(item: StepResult, record: dict[str, Any], round_number: int) -> StepResult:
+        await checkpoint()
+        await _consume_retry(ledger, usage_writer, metrics, step_index=None, attempt=round_number)
+        await emitter.emit(
+            'done_when_fix',
+            step_index=None,
+            data={'round': round_number, 'notes': record.get('notes') or []},
+        )
+        prompt = fix_prompt(task, item, record, block=untrusted_text_block)
+        brief = _automation_brief.get()
+        if brief:
+            prompt += "\n\n" + brief
+        if _memory_note.get():
+            prompt += "\n\n" + _memory_note.get()
+        executor = TaskStepExecutor(
+            fix_snapshot,
+            tool_resolver=capabilities.resolver_for(fix_snapshot.agent_id),
+            task_id=task.id,
+            run_id=run.id,
+            step_index=None,
+            step_title='Meet "Done when"',
+            emitter=emitter,
+            cancel_check=checkpoint,
+            computer=getattr(task, 'computer', None),
+        )
+        try:
+            async with metrics.measure(TaskRunPhase.STEP, step_index=None, attempt=round_number):
+                fixed = await asyncio.wait_for(
+                    executor.execute(prompt, tool_context=tool_context, attempt=round_number),
+                    timeout=STEP_TIMEOUT,
+                )
+        finally:
+            await usage_writer.persist()
+        # Files and pages made in earlier rounds stay part of the result.
+        kept = [a for a in item.artifacts if a not in fixed.artifacts]
+        return fixed.model_copy(update={'artifacts': [*kept, *fixed.artifacts]}) if kept else fixed
+
+    return await check_and_fix(task, result, check=check, fix=fix)
 
 
 async def _execute_compiled_steps(
@@ -1680,6 +1765,24 @@ async def run(
                 )
             final_result = await finalize_results(ordered_results, synthesize)
             await usage_writer.persist()
+            if not getattr(task, 'standing_agent_id', None):
+                final_result, done_check = await _meet_done_when(
+                    task, run_rec, final_result, roster, leader, capabilities,
+                    emitter, ledger, usage_writer, metrics, tool_context,
+                    cancel_event, lease_controller,
+                )
+                if done_check is not None:
+                    try:
+                        await repository.mutate(
+                            run_rec.id,
+                            claim=claim,
+                            updates={'done_when_check': done_check},
+                            expected_statuses={TaskRunStatus.RUNNING},
+                            event={'kind': 'done_when_check', 'data': done_check},
+                        )
+                        run_rec.done_when_check = done_check
+                    except RunStateConflict:
+                        logger.info("Run %s changed before its Done when check was saved", run_rec.id)
 
         applied = await _set_run_status(
             run_rec,

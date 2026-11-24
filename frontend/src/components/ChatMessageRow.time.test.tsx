@@ -31,3 +31,11 @@ describe('reply time and duration', () => {
     expect(screen.getByRole('button', { name: 'regenerate' })).toBeTruthy();
   });
 });
+
+describe('app notices', () => {
+  it('renders a system message as a small note', () => {
+    render(<ChatMessageRow message={{ id: 'n1', role: 'system', content: 'The app restarted during this reply.' }} isLast={false} streaming={false} />);
+    const note = screen.getByRole('note');
+    expect(note.textContent).toContain('The app restarted during this reply.');
+  });
+});

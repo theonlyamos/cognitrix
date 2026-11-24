@@ -32,6 +32,7 @@ interface TaskData {
   swarm?: boolean;
   read_memory?: boolean;
   computer?: string | null;
+  done_when?: string | null;
 }
 
 type ScheduleMode = 'none' | 'once' | 'interval' | 'cron';
@@ -94,6 +95,7 @@ export default function TaskPage() {
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [doneWhen, setDoneWhen] = useState('');
   const [steps, setSteps] = useState<Step[]>([]);
   const [assigned, setAssigned] = useState<Set<string>>(new Set());
   const [teamId, setTeamId] = useState('');
@@ -138,6 +140,7 @@ export default function TaskPage() {
     if (!existing) return;
     setTitle(existing.title || '');
     setDescription(existing.description || '');
+    setDoneWhen(existing.done_when || '');
     const si = existing.step_instructions || {};
     setSteps(
       Object.keys(si)
@@ -266,6 +269,7 @@ export default function TaskPage() {
         autostart: !editing && when === 'now',
         swarm,
         read_memory: readMemory,
+        done_when: doneWhen.trim() || null,
         computer: computer || null,
         // A new task made from a project's Tasks tab belongs to that project.
         ...(!taskId && searchParams.get('project') ? { project_id: searchParams.get('project') } : {}),
@@ -350,6 +354,12 @@ export default function TaskPage() {
       <Field label={tr('ui.taskPage.whatShouldGetDone')} required>
         <Textarea rows={5} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={tr('ui.taskPage.whatShouldGetDonePlaceholder')} autoFocus />
       </Field>
+
+      {!onWeb && (
+        <Field label={tr('ui.taskPage.doneWhen')} hint={tr('ui.taskPage.optionalWhatAFinishedResult')}>
+          <Textarea rows={2} value={doneWhen} onChange={(e) => setDoneWhen(e.target.value)} maxLength={4000} placeholder={tr('ui.taskPage.eGATableOf')} />
+        </Field>
+      )}
 
       {onWeb && (
         <Field label={tr('ui.taskPage.agentOnTheWeb')}>

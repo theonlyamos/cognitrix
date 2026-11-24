@@ -291,7 +291,12 @@ def send_turn(
             await _alert_once(user_key, str(session.id), f'{agent.name} finished a chat',
                               reply[:300] or 'The chat finished.')
 
-    return run_in_background(user_key, agent, session, text, on_done=done)
+    run = run_in_background(user_key, agent, session, text, on_done=done)
+    # Picked up again if the engine stops mid-turn (sessions/resume.py).
+    from cognitrix.sessions import resume as chat_resume
+
+    chat_resume.track(run, 'agent', prompt=text if isinstance(text, str) else '')
+    return run
 
 
 async def report_back(user_key: str, agent: Any, session: Any, status: str, reply: str) -> None:

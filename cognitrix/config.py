@@ -342,6 +342,7 @@ _TASKRUN_MIGRATION_COLUMNS = (
     ('cancel_requested_at', 'TEXT'), ('version', 'INTEGER'),
     ('next_event_sequence', 'INTEGER'), ('event_outbox', 'TEXT'),
     ('budget', 'TEXT'), ('usage', 'TEXT'), ('error_code', 'TEXT'),
+    ('done_when_check', 'TEXT'),
 )
 
 _TASKRUN_HEAD_MIGRATION_COLUMNS = (
@@ -364,6 +365,8 @@ _TASK_MIGRATION_COLUMNS = (
     ('project_id', 'TEXT'),
     ('computer', 'TEXT'),
     ('schedule_tz', 'TEXT'),
+    ('result_artifact', 'TEXT'),
+    ('done_when', 'TEXT'),
 )
 
 _USER_MIGRATION_COLUMNS = (
@@ -899,6 +902,7 @@ async def _ensure_schema():
     from cognitrix.projects.models import MODELS as PROJECT_MODELS
     from cognitrix.public_agents.models import MODELS as PUBLIC_AGENT_MODELS
     from cognitrix.safety.command_rules import MODELS as COMMAND_RULE_MODELS
+    from cognitrix.sessions.resume import MODELS as CHAT_RESUME_MODELS
     from cognitrix.sessions.sharing import MODELS as CHAT_SHARE_MODELS
     from cognitrix.sessions.side_questions import SideQuestion
     from cognitrix.skills.drafts import SkillDraft
@@ -918,6 +922,7 @@ async def _ensure_schema():
         *BOARD_MODELS,
         *PUBLIC_AGENT_MODELS,
         *CHAT_SHARE_MODELS,
+        *CHAT_RESUME_MODELS,
         *EMAIL_MODELS,
         *PAYMENT_MODELS,
         *CALENDAR_CALL_MODELS,

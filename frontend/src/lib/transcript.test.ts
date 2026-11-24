@@ -199,3 +199,17 @@ describe('turn timing on restored replies', () => {
     expect(messages[2].durationMs).toBe(2000);
   });
 });
+
+describe('a reply picked up after a restart', () => {
+  it('shows the restart note as an app notice, not as the person speaking', () => {
+    const chat = [
+      { role: 'User', type: 'text', content: 'find me a flat' },
+      { role: 'User', type: 'steer', content: '[System: the app restarted…]', resumed: true },
+      { role: 'assistant', type: 'text', content: 'Here are three flats.' },
+    ];
+    const messages = toChatMessages(parseChatEntries(chat));
+    expect(messages.map((m) => m.role)).toEqual(['user', 'system', 'assistant']);
+    expect(messages[1].content).toMatch(/restarted/);
+    expect(messages[1].content).not.toContain('[System');
+  });
+});

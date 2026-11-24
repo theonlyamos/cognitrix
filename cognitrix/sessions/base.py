@@ -650,8 +650,11 @@ class Session(Model):
         from cognitrix import usage
         from cognitrix.memory import guard as memory_guard
         from cognitrix.safety.action_reviewer import _goal_text, turn_goal
+        from cognitrix.sessions.resume import ContinueTurn
 
-        token = turn_goal.set(_goal_text(message))
+        # A turn picked up after a restart has no new message: its goal is
+        # still the request it was answering (sessions/resume.py).
+        token = turn_goal.set(_goal_text(message.goal if isinstance(message, ContinueTurn) else message))
         # Memory saves after reading web or app content need the person's OK.
         guard_token = memory_guard.start_turn()
         # Model calls in this turn count toward this person's usage totals.
@@ -1049,7 +1052,10 @@ class Session(Model):
         # Add the new message to the history before building the prompt
         if wsquery is None:
             wsquery = {}
-        if record_history:
+        from cognitrix.sessions.resume import ContinueTurn
+
+        continuing = isinstance(message, ContinueTurn)
+        if record_history and not continuing:
             entry = agent.process_prompt(message)
             # Regenerate or edit of a turn that keeps its uploads: the message
             # is already in the history (marked by the rewind), so update it
@@ -1211,6 +1217,10 @@ class Session(Model):
                 self.loaded_tools = sorted(turn_loaded)
             return _code_mode.sent_schemas(formatted_tools, turn_loaded)
 
+        if not continuing:
+            # The request is saved before any work starts, so a restart can
+            # pick the turn up (sessions/resume.py).
+            await self._checkpoint(interface, persist_history)
         tool_rounds = 0
         active_tool_calls: list[dict[str, Any]] = []
         last_denied_sig = None
@@ -1532,6 +1542,9 @@ class Session(Model):
                                         raise
                                     except Exception:
                                         logger.warning("Turn compaction failed", exc_info=True)
+                                    # Each finished tool round is saved, so a
+                                    # restart loses at most the round running.
+                                    await self._checkpoint(interface, persist_history)
 
                                 prompt = await agent.get_context_manager().build_prompt(agent, self)
                                 # Keep the folder list (including any just granted) on every request.
@@ -1751,6 +1764,17 @@ class Session(Model):
             logger.exception(e)
         finally:
             _code_mode.loaded_this_turn.reset(loaded_token)
+
+    async def _checkpoint(self, interface: str, persist_history: bool) -> None:
+        """Save a chat turn's progress so far (sessions/resume.py)."""
+        if not persist_history or interface not in ('web', 'ws'):
+            return
+        try:
+            await asyncio.shield(self.save())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning('Could not save chat %s mid-turn', self.id, exc_info=True)
 
     async def _board_turn(self, agent: 'Agent', owner: str, tool_context: Any) -> 'Agent':
         """Give this turn the Board tool and the board note (board/service.py)."""
