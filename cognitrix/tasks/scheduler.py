@@ -196,7 +196,7 @@ async def scheduler_loop() -> None:
 
 
 async def automation_tick(now: datetime | None = None) -> int:
-    """Agent wake-ups, new-mail, pull request and calendar-call checks, and queued trigger events (see tasks/automation.py)."""
+    """Agent wake-ups, new-mail, pull request and calendar-call checks, unanswered board questions, and queued trigger events (see tasks/automation.py)."""
     from cognitrix.tasks.automation import dispatch_trigger_events, fire_due_wakes
 
     now = now or _utcnow()
@@ -218,6 +218,18 @@ async def automation_tick(now: datetime | None = None) -> int:
         await poll_calendar_calls(now)
     except Exception:
         logger.exception('Could not check calendars for calls')
+    try:
+        from cognitrix.board.service import nudge_stale
+
+        await nudge_stale(now.replace(tzinfo=UTC))
+    except Exception:
+        logger.exception('Could not bring up unanswered board questions')
+    try:
+        from cognitrix.board.schedules import run_due
+
+        await run_due(now.replace(tzinfo=UTC))
+    except Exception:
+        logger.exception('Could not post scheduled board posts')
     try:
         from cognitrix.assistant.checkins import proactive_tick
 

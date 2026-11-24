@@ -41,10 +41,12 @@ SLACK_MANIFEST: dict[str, Any] = {
     },
     'oauth_config': {
         # app_mentions:read lets people @mention the bot in a channel it was added to.
-        'scopes': {'bot': ['app_mentions:read', 'chat:write', 'im:history', 'im:read', 'im:write']},
+        # channels:history + message.channels: copy a mirrored channel to the message board (board/mirror.py).
+        'scopes': {'bot': ['app_mentions:read', 'channels:history', 'chat:write', 'groups:history',
+                           'im:history', 'im:read', 'im:write']},
     },
     'settings': {
-        'event_subscriptions': {'bot_events': ['app_mention', 'message.im']},
+        'event_subscriptions': {'bot_events': ['app_mention', 'message.channels', 'message.groups', 'message.im']},
         'interactivity': {'is_enabled': True},
         'org_deploy_enabled': False,
         'socket_mode_enabled': True,
@@ -159,6 +161,7 @@ class SlackTransport(Transport):
                     private=False,
                     mention=True,
                     thread_id=str(event.get('thread_ts') or event.get('ts') or ''),
+                    message_id=str(event.get('ts') or ''),
                 ))
                 return
             if event.get('type') != 'message':
@@ -169,6 +172,9 @@ class SlackTransport(Transport):
                 sender_name='',
                 text=str(event.get('text') or ''),
                 private=event.get('channel_type') == 'im',
+                # In a channel: the thread it was written in, if any (a mirrored board answers there).
+                thread_id='' if event.get('channel_type') == 'im' else str(event.get('thread_ts') or ''),
+                message_id=str(event.get('ts') or ''),
             ))
         elif envelope.get('type') == 'interactive' and payload.get('type') == 'block_actions':
             container = payload.get('container') or {}

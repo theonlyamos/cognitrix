@@ -281,8 +281,8 @@ async def test_slack_mention_in_a_channel_becomes_a_threaded_message():
     ):
         await transport._dispatch({'type': 'events_api', 'payload': {'event': event}}, handlers)
     assert got == [
-        Incoming('C1', 'U1', '', 'what changed?', False, True, '10.1'),
-        Incoming('C1', 'U2', '', 'and   then?', False, True, '10.1'),
+        Incoming('C1', 'U1', '', 'what changed?', False, True, '10.1', '10.1'),
+        Incoming('C1', 'U2', '', 'and   then?', False, True, '10.1', '10.5'),
     ]
     assert 'app_mention' in SLACK_MANIFEST['settings']['event_subscriptions']['bot_events']
     assert 'app_mentions:read' in SLACK_MANIFEST['oauth_config']['scopes']['bot']

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react';
+import { Link, useInRouterContext } from 'react-router-dom';
 import { CardChart } from '@/components/cards/CardChart';
 import { buttonMessage, requestCardAction, type Card, type CardBlock, type CardButton } from '@/lib/cards';
 import { cn } from '@/lib/utils';
@@ -184,10 +185,7 @@ export function InfoCard({ card }: { card: Card }) {
           <Label>{tr('ui.cards.infoCard.nextSteps')}</Label>
           <div className="flex flex-wrap gap-2">
             {buttons.map((b, i) => (b.url ? (
-              <a key={i} href={b.url} target="_blank" rel="noreferrer nofollow"
-                className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 text-[13px] transition-colors hover:border-fg-dim md:min-h-0">
-                {b.label}<span aria-hidden className="text-fg-dim">↗</span>
-              </a>
+              <CardLink key={i} url={b.url} label={b.label} />
             ) : (
               <button key={i} type="button" onClick={() => press(b)} disabled={!!pressed}
                 aria-pressed={pressed === b.label}
@@ -225,5 +223,21 @@ export function InfoCardPending() {
       </div>
       <div className="h-24 w-full animate-pulse rounded bg-panel-2" />
     </div>
+  );
+}
+
+/** A link button: a page of this app opens in place, anything else in a new tab. */
+function CardLink({ url, label }: { url: string; label: string }) {
+  const routed = useInRouterContext();
+  const style = 'inline-flex min-h-11 items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 text-[13px] transition-colors hover:border-fg-dim md:min-h-0';
+  if (url.startsWith('/') && !url.startsWith('//')) {
+    return routed
+      ? <Link to={url} className={style}>{label}</Link>
+      : <a href={url} className={style}>{label}</a>;
+  }
+  return (
+    <a href={url} target="_blank" rel="noreferrer nofollow" className={style}>
+      {label}<span aria-hidden className="text-fg-dim">↗</span>
+    </a>
   );
 }

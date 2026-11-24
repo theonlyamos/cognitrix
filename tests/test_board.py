@@ -302,3 +302,205 @@ async def test_old_open_and_pinned_posts_stay_in_the_list(db, agents, monkeypatc
         await service.create_post('u1', board='agents', kind='finding', text=f'f{i}')
     texts = [p.text for p in await service.list_posts('u1', 'agents', limit=2)]
     assert texts[:2] == ['f4', 'f3'] and 'Still open?' in texts and 'f0' not in texts
+
+
+def test_find_mentions_prefers_longer_names_and_spelled_variants():
+    from cognitrix.board.service import find_mentions
+
+    names = [('Research', 'r1'), ('Research Lead', 'r2'), ('Writer', 'w1')]
+    found = find_mentions('@research_lead and @Writer, but not me@Writer2 or email@writer.com', names)
+    assert [m['name'] for m in found] == ['Research Lead', 'Writer']
+    assert find_mentions('@Research did it', names) == [{'name': 'Research', 'id': 'r1'}]
+    assert find_mentions('no tags here', names) == []
+    lead = find_mentions('ask @Boss', [('lead', 'a9'), ('Accra', 'a1')], lead_name='Boss')
+    assert lead == [{'name': 'lead', 'id': 'a9'}]
+
+
+async def test_tagging_an_agent_in_a_post_or_answer_wakes_it(db, agents, started):
+    from cognitrix.board import service
+
+    await _chat(RESEARCHER)
+    shown = await _board(RESEARCHER, action='post', kind='finding', text='@Writer the launch moved to May.')
+    assert 'Tagged: @Writer' in shown.text and shown.card and shown.card['title'].startswith('Posted a finding')
+    await service.settle()
+    assert len(started) == 1 and started[0].agent is WRITER and 'tagged you' in started[0].text
+    post = (await service.posts_on('u1', 'agents'))[0]
+    assert post.mentions == [{'name': 'Writer', 'id': WRITER.id}]
+    assert post.mention_wakes[0]['state'] == 'sent'
+
+    # A finding's chat reply isn't saved as an answer (only questions get one).
+    await started[0].on_done('complete', 'Noted.')
+    assert (await service.get_post('u1', str(post.id))).replies == []
+
+    # Tagging yourself does nothing; tagging in an answer wakes again.
+    await _board(RESEARCHER, action='answer', post_id=str(post.id), text='@Researcher @Writer also the price.')
+    await service.settle()
+    assert len(started) == 2
+    fresh = await service.get_post('u1', str(post.id))
+    assert fresh.replies[0]['mentions'] == [{'name': 'Writer', 'id': WRITER.id}]
+
+    note = await service.digest('u1', WRITER.id, 'Writer')
+    assert 'Tagged you (@):' in note and 'launch moved' in note
+
+
+async def test_a_tagged_question_gets_the_reply_as_its_answer(db, agents, started):
+    from cognitrix.board import service
+
+    await _chat(RESEARCHER)
+    await _board(RESEARCHER, action='post', kind='question', text='@Writer which tone for the launch?')
+    await service.settle()
+    post = (await service.posts_on('u1', 'agents'))[0]
+    await started[0].on_done('complete', 'Warm and plain.')
+    fresh = await service.get_post('u1', str(post.id))
+    assert fresh.status == 'answered' and fresh.replies[0]['text'] == 'Warm and plain.'
+
+
+async def test_search_and_the_already_asked_check(db, agents, started):
+    await _chat(RESEARCHER)
+    await _board(RESEARCHER, action='post', kind='question', text='Do we quote launch prices with VAT included?')
+    await _board(RESEARCHER, action='post', kind='finding', text='Acme raised prices.', tags='acme')
+
+    await _chat(WRITER)
+    found = (await _board(WRITER, action='search', query='VAT prices')).text
+    assert found.startswith('2 post(s)') and found.index('with VAT') < found.index('Acme')
+    assert 'Acme raised' in (await _board(WRITER, action='search', query='#acme')).text
+    assert 'Nothing' in (await _board(WRITER, action='search', query='zebra')).text
+
+    dup = await _board(WRITER, action='post', kind='question', text='Are launch prices quoted with VAT included?')
+    assert dup.error.code == 'similar_posts' and 'force=true' in dup.error.message
+    forced = await _board(WRITER, action='post', kind='question', force=True,
+                          text='Are launch prices quoted with VAT included?')
+    assert forced.status == 'success'
+
+
+async def test_edit_and_retract_your_own_post(db, agents, started):
+    from cognitrix.board import service
+
+    await _chat(RESEARCHER)
+    await _board(RESEARCHER, action='post', kind='question', text='Which currency?')
+    post = (await service.posts_on('u1', 'agents'))[0]
+
+    await _chat(WRITER)
+    assert (await _board(WRITER, action='edit', post_id=str(post.id), text='x')).error.code == 'not_yours'
+
+    await _chat(RESEARCHER)
+    edited = await _board(RESEARCHER, action='edit', post_id=str(post.id), text='Which currency, @Writer?')
+    assert edited.status == 'success' and '@Writer' in edited.text
+    await service.settle()
+    assert len(started) == 1  # newly tagged on edit
+    fresh = await service.get_post('u1', str(post.id))
+    assert fresh.edited_at and fresh.text == 'Which currency, @Writer?'
+
+    assert (await _board(RESEARCHER, action='retract', post_id=str(post.id))).status == 'success'
+    fresh = await service.get_post('u1', str(post.id))
+    assert fresh.retracted and fresh.status == 'done'
+    assert 'currency' not in (await _board(WRITER, action='read')).text
+    with pytest.raises(service.BoardError):
+        await service.reply('u1', str(post.id), 'GHS', service.PERSON)
+
+
+async def test_unanswered_questions_are_brought_up_once(db, agents, started):
+    from datetime import UTC, datetime, timedelta
+
+    from cognitrix.board import service
+    from cognitrix.board.models import BoardPost
+    from cognitrix.tasks.automation import AgentNotification
+
+    researcher = service.Author(kind='agent', id=RESEARCHER.id, name='Researcher')
+    anyone = await service.create_post('u1', board='agents', kind='question', text='Anyone?', author=researcher)
+    await service.save_follow('u1', WRITER.id, wake=False)
+    to_writer = await service.create_post('u1', board='agents', kind='question', text='Writer?', to='Writer',
+                                          author=researcher)
+    fresh_one = await service.create_post('u1', board='agents', kind='question', text='New?', author=researcher)
+    await service.settle()
+    old = int((datetime.now(UTC) - timedelta(hours=30)).timestamp() * 1000)
+    for p in (anyone, to_writer):
+        await BoardPost.update_one({'id': p.id}, {'posted_at': old})
+
+    await service.save_follow('u1', WRITER.id, wake=True)
+    assert await service.nudge_stale(force=True) == 2
+    await service.settle()
+    assert len(started) == 1 and started[0].agent is WRITER  # it was never woken; now it is
+    alerts = await AgentNotification.find({'user_id': 'u1'})
+    assert len(alerts) == 1 and 'No answer' in alerts[0].title and 'Anyone?' in alerts[0].message
+    assert (await service.get_post('u1', str(fresh_one.id))).nudged_at == 0
+
+    assert await service.nudge_stale(force=True) == 0  # once only
+    await service.save_settings('u1', {'nudge_hours': 0})
+    assert service.public_settings(await service.get_settings('u1'))['nudge_hours'] == 0
+
+
+async def test_tags_reach_an_addressed_finding_and_edits_show_in_the_note(db, agents, started):
+    from cognitrix.board import service
+
+    await _chat(RESEARCHER)
+    await _board(RESEARCHER, action='post', kind='finding', to='Writer', text='@Writer prices changed.')
+    await service.settle()
+    assert len(started) == 1 and started[0].agent is WRITER
+
+    await service.save_follow('u1', WRITER.id, wake=False)
+    await _board(RESEARCHER, action='post', kind='finding', text='Acme is down.')
+    post = (await service.posts_on('u1', 'agents'))[0]
+    await service.digest('u1', WRITER.id, 'Writer')
+    await _board(RESEARCHER, action='edit', post_id=str(post.id), text='Acme is down, @Writer.')
+    await service.settle()
+    note = await service.digest('u1', WRITER.id, 'Writer')
+    assert 'Tagged you (@):' in note and 'Acme is down' in note
+
+
+async def test_decisions_go_to_memory_and_changes_are_announced(db, agents, started):
+    from cognitrix.board import service
+    from cognitrix.memory import saved
+
+    queue = service.listen('u1')
+    researcher = service.Author(kind='agent', id=RESEARCHER.id, name='Researcher')
+    rule = await service.create_post('u1', board='agents', kind='decision', text='Prices are ex-VAT.',
+                                     author=researcher)
+    assert (await queue.get())['post_id'] == str(rule.id)
+
+    post, now = await service.remember('u1', str(rule.id))
+    assert now and post.memory_id
+    row = await saved.Memory.get(post.memory_id)
+    assert row.content.endswith('Prices are ex-VAT.') and not row.pending
+    with pytest.raises(service.BoardError):
+        await service.remember('u1', str(rule.id))
+
+    other = await service.create_post('u1', board='agents', kind='decision', text='Ship on Fridays only.',
+                                      author=researcher)
+    await _chat(WRITER)
+    said = await _board(WRITER, action='remember', post_id=str(other.id))
+    assert 'proposed' in said.text
+    proposal = await saved.Memory.get((await service.get_post('u1', str(other.id))).memory_id)
+    assert proposal.pending
+    finding = await service.create_post('u1', board='agents', kind='finding', text='x', author=researcher)
+    assert (await _board(WRITER, action='remember', post_id=str(finding.id))).error.code == 'not_a_decision'
+    service.unlisten('u1', queue)
+    assert 'u1' not in service._LISTENERS
+
+
+async def test_paging_and_the_morning_brief_note(db, agents, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from cognitrix.board import service
+    from cognitrix.board.models import BoardPost
+
+    monkeypatch.setattr(service, 'POSTS_PER_HOUR', 1000)
+    researcher = service.Author(kind='agent', id=RESEARCHER.id, name='Researcher')
+    for i in range(5):
+        await service.create_post('u1', board='agents', kind='finding', text=f'f{i}', author=researcher)
+    first = await service.list_posts('u1', 'agents', limit=2)
+    more = await service.list_posts('u1', 'agents', limit=2, before=first[1].posted_at)
+    assert [p.text for p in first] == ['f4', 'f3'] and [p.text for p in more] == ['f2', 'f1']
+    assert [p.text for p in await service.list_posts('u1', 'agents', status='open')] == []
+
+    assert await service.brief_note('u1') == ''
+    ask = await service.create_post('u1', board='agents', kind='question', text='Which currency?', to='you',
+                                    author=researcher)
+    stuck = await service.create_post('u1', board='agents', kind='question', text='Launch date?',
+                                      author=researcher)
+    old = int((datetime.now(UTC) - timedelta(days=2)).timestamp() * 1000)
+    await BoardPost.update_one({'id': stuck.id}, {'posted_at': old})
+    await service.create_post('u1', board='agents', kind='decision', text='Ex-VAT prices.', author=researcher)
+    note = await service.brief_note('u1')
+    assert 'waiting on the person' in note and 'Which currency?' in note and f'post={ask.id}' in note
+    assert 'no answer' in note and 'Launch date?' in note and 'New decisions' in note

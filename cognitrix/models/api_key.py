@@ -19,7 +19,8 @@ from odbms import Model
 from pydantic import validator
 
 KEY_PREFIX = 'ctx_'
-VALID_SCOPES = {'chat', 'run', 'read', 'write'}
+VALID_SCOPES = {'chat', 'run', 'read', 'write', 'board'}
+"""board: read and post on the message board as an outside agent (the board CLI)."""
 
 
 def generate_secret() -> str:

@@ -1801,6 +1801,18 @@ class Session(Model):
                 worker=str(started_by['worker']), chat_id=sid))
         else:
             notes.append(await board.digest(owner, str(agent.id), str(agent.name)))
+            # The project's channel too, with this task's thread first (board/channels.py).
+            try:
+                from cognitrix.projects.context import get as _turn_project
+
+                project = _turn_project()
+                project_id = project.id if project is not None else str(self.project_id or '')
+                if project_id and str(getattr(project, 'user_id', owner) or owner) == str(owner):
+                    thread = f'task:{self.task_id}' if self.task_id else ''
+                    notes.append(await board.digest(owner, str(agent.id), str(agent.name),
+                                                    board=board.project_board(project_id), thread=thread))
+            except Exception:
+                logger.debug('Project channel note unavailable', exc_info=True)
             if sid and not self.task_id and not getattr(tool_context, 'run_id', None):
                 from cognitrix.swarms import service as swarms
 
