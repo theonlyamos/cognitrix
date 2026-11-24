@@ -19,7 +19,8 @@ READ_LIMIT = 15
 
 class _Me:
     def __init__(self, user_key: str, author: Author, *, swarm_id: str = '', worker: str = '',
-                 lead_swarm: str = '', agent_id: str = ''):
+                 lead_swarm: str = '', agent_id: str = '', project_id: str = '', thread: str = '',
+                 thread_title: str = ''):
         self.user_key = user_key
         self.author = author
         self.swarm_id = swarm_id
@@ -28,9 +29,16 @@ class _Me:
         self.lead_swarm = lead_swarm
         """Set for a chat that started a swarm: its newest one."""
         self.agent_id = agent_id
+        self.project_id = project_id
+        """The project of this chat or task: its channel is the default board."""
+        self.thread = thread
+        """In a task run: ``task:<id>``, its thread on the project channel."""
+        self.thread_title = thread_title
 
     def default_board(self) -> str:
-        return service.swarm_board(self.swarm_id) if self.swarm_id else 'agents'
+        if self.swarm_id:
+            return service.swarm_board(self.swarm_id)
+        return service.project_board(self.project_id) if self.project_id else 'agents'
 
 
 async def _me(ctx: Any, parent: Any) -> _Me:
@@ -61,8 +69,36 @@ async def _me(ctx: Any, parent: Any) -> _Me:
             lead_swarm = str(latest.id) if latest is not None else ''
         except Exception:
             lead_swarm = ''
+    project_id, thread, thread_title = await _project_and_thread(ctx, chat)
     return _Me(user_key, Author(kind='agent', id=agent_id, name=agent_name, chat_id=chat_id, depth=depth),
-               lead_swarm=lead_swarm, agent_id=agent_id)
+               lead_swarm=lead_swarm, agent_id=agent_id, project_id=project_id, thread=thread,
+               thread_title=thread_title)
+
+
+async def _project_and_thread(ctx: Any, chat: Any) -> tuple[str, str, str]:
+    """(project id, thread, thread title) of the turn: a task's thread on its project channel."""
+    project_id = ''
+    try:
+        from cognitrix.projects.context import get as turn_project
+
+        current = turn_project()
+        project_id = current.id if current is not None else ''
+    except Exception:
+        project_id = ''
+    project_id = project_id or str(getattr(chat, 'project_id', '') or '')
+    task_id = str(getattr(ctx, 'task_id', '') or getattr(chat, 'task_id', '') or '')
+    if not task_id:
+        return project_id, '', ''
+    try:
+        from cognitrix.tasks.base import Task
+
+        task = await Task.get(task_id)
+    except Exception:
+        task = None
+    if task is None:
+        return project_id, '', ''
+    project_id = project_id or str(getattr(task, 'project_id', '') or '')
+    return project_id, f'task:{task.id}', str(task.title or '')
 
 
 def _board(me: _Me, board: str, *, posting: bool) -> str:
@@ -71,6 +107,10 @@ def _board(me: _Me, board: str, *, posting: bool) -> str:
         return me.default_board()
     if value in ('agents', 'all', 'everyone'):
         return 'agents'
+    if value in ('project', 'channel', 'my project', 'project channel'):
+        if not me.project_id:
+            raise BoardError('no_project', 'This chat is not in a project. Use board "agents".')
+        return service.project_board(me.project_id)
     if value in ('swarm', 'my swarm', 'team'):
         swarm_id = me.swarm_id or me.lead_swarm
         if not swarm_id:
@@ -83,8 +123,14 @@ def _board(me: _Me, board: str, *, posting: bool) -> str:
     return key
 
 
+def _where(board: str) -> str:
+    if service.swarm_of(board):
+        return 'the swarm board'
+    return 'the project channel' if service.project_of(board) else 'the board'
+
+
 def _found(rows: list, board: str, what: str) -> str:
-    where = 'the swarm board' if service.swarm_of(board) else 'the board'
+    where = _where(board)
     if not rows:
         return f'Nothing {what}on {where}.'
     return f'{len(rows)} post(s) {what}on {where}, newest first:\n' + '\n'.join(
@@ -94,35 +140,46 @@ def _found(rows: list, board: str, what: str) -> str:
 @tool(category=BOARD_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
 async def board(action: str, text: str = '', kind: str = '', to: str = '', tags: str = '', post_id: str = '',
                 filter: str = '', board: str = '', close: bool = False, kinds: str = '', wake: str = '',
-                query: str = '', force: bool = False, *, parent=None) -> ToolOutcome:
+                query: str = '', force: bool = False, thread: str = '', seconds: int = 0, when: str = '',
+                *, parent=None) -> ToolOutcome:
     """The message board your agents share (a swarm has its own). Post things other agents need, read what
     they posted, and answer questions. Every post has a kind: "finding" (something you found out that changes
     others' work), "question" (something you can't settle yourself), "request" (work you need someone else to
     do), "decision" (a rule everyone follows from now on; pinned) or "heads_up" (a warning). Questions and
     requests stay open until answered or closed. Post only what others need: no thanks, status or chatter.
-    Write @Name in a post or answer to tag an agent (on a swarm board a worker, or @lead): it is told and can
-    respond. Before asking, search: it may already be answered.
+    Write @Name in a post or answer to tag an agent or a person (on a swarm board a worker, or @lead): they
+    are told and can respond. Before asking, search: it may already be answered. A project has its own
+    channel (board "project"), the default in a project chat; in a task its posts go in the task's thread.
+    Claim an open request before working on it so nobody does it twice.
     Actions: "read" lists posts (filter: open, pinned, for_me, mine, a kind or a #tag; post_id shows one with
     all its answers); "search" finds posts by words (query); "post" adds one (kind, text, optional to and
     tags); "answer" replies to a post (post_id, text; close=true also marks it done); "edit" corrects your own
     post (post_id, text); "retract" withdraws your own post; "remember" proposes a decision for everyone's
     long-term memory (post_id); "close" marks a question or request done;
     "reopen"; "pin" / "unpin"; "follow" sets which new posts you are told about at the start of a turn
-    (kinds, tags, wake), or shows them when given nothing.
+    (kinds, tags, wake), or shows them when given nothing; "claim" takes on an open request or question
+    (post_id), "unclaim" lets it go; "wait" waits for an answer to a post (post_id, seconds, at most 300);
+    post with seconds > 0 also waits for the answer, to ask someone and use their answer right away;
+    "schedule" makes a repeating post (text, to, when like "weekdays 09:00"), "schedules" lists them,
+    "unschedule" removes one (post_id = its id); "commands" lists the /commands: a post starting with
+    /name (like "/review PR 12") runs that saved workflow and its result is posted back as the answer.
 
-    :param action: read, search, post, answer, edit, retract, remember, close, reopen, pin, unpin or follow.
+    :param action: read, search, post, answer, edit, retract, remember, close, reopen, pin, unpin, follow, claim, unclaim, wait, schedule, schedules, unschedule or commands.
     :param text: What the post or answer says (at most 2000 characters). @Name tags an agent.
     :param kind: For "post": finding, question, request, decision or heads_up.
     :param to: For "post": who it is for. An agent's name (a question or request starts a chat so it can answer), "you" for the person (goes to their Inbox), on a swarm board a worker's name or "lead". Empty for anyone.
     :param tags: For "post": up to 5 short topic tags, comma separated. For "follow": tags to hear about.
     :param post_id: The post, for answer, close, reopen, pin, unpin, or read to see one post.
-    :param filter: For "read": open, pinned, for_me, mine, a kind, or #tag.
-    :param board: "agents" (everyone's board), "swarm" (your swarm's), or a board key. Default: your swarm's board when you are a swarm worker, else "agents".
+    :param filter: For "read": open, unclaimed, pinned, for_me, mine, a kind, or #tag.
+    :param board: "agents" (everyone's board), "project" (this project's channel), "swarm" (your swarm's), or a board key. Default: your swarm's board for a swarm worker, the project channel in a project, else "agents".
     :param close: For "answer": also mark the question or request done.
     :param kinds: For "follow": kinds of new posts to hear about, comma separated (questions and requests for you always come).
     :param wake: For "follow": "yes" lets a question or request for you start a chat so you can answer; "no" waits until you next work.
     :param query: For "search": the words to look for. board "*" searches every board.
     :param force: For "post": post a question even though a similar one is already on the board.
+    :param thread: For "post", "read" and "schedule": a thread in the channel ("task:<id>" or a few words). Default in a task: its own thread.
+    :param seconds: For "wait", or "post" to also wait: how long to wait for an answer (at most 300).
+    :param when: For "schedule": when it repeats, like "weekdays 09:00", "daily 18:30" or "mon,thu 9am" (the person's time zone).
     """
     ctx = current_execution_context()
     verb = str(action or '').strip().lower()
@@ -135,7 +192,8 @@ async def board(action: str, text: str = '', kind: str = '', to: str = '', tags:
                 lines = [service.post_line(post, text_limit=service.TEXT_MAX).split('\n    ↳')[0]]
                 lines += [f'  ↳ {r.get("author_name")}: {r.get("text")}' for r in post.replies]
                 return ToolOutcome.success('\n'.join(lines))
-            return ToolOutcome.success(await _read(me, key, str(filter or '').strip().lower()))
+            return ToolOutcome.success(await _read(me, key, str(filter or '').strip().lower(),
+                                                   thread=service.clean_thread(thread)))
         if verb in ('search', 'find'):
             key = '*' if str(board or '').strip() == '*' else _board(me, board, posting=False)
             words = str(query or text or filter or '').strip()
@@ -144,11 +202,65 @@ async def board(action: str, text: str = '', kind: str = '', to: str = '', tags:
                 return ToolOutcome.success(f'Nothing on the board matches "{words}".')
             return ToolOutcome.success(f'{len(rows)} post(s) match "{words}", best first:\n' + '\n'.join(
                 f'- {service.post_line(p)}' for p in rows))
-        if verb in ('post', 'add', 'new'):
+        if verb in ('post', 'add', 'new', 'ask'):
             key = _board(me, board, posting=True)
-            post = await service.create_post(me.user_key, board=key, kind=kind or 'finding', text=text,
-                                             tags=tags, to=to, author=me.author, check_similar=not force)
+            in_thread, title = _thread_for(me, key, thread)
+            post = await service.create_post(me.user_key, board=key, kind=kind or ('question' if verb == 'ask' else 'finding'),
+                                             text=text, tags=tags, to=to, author=me.author,
+                                             check_similar=not force, thread=in_thread, thread_title=title)
+            if int(seconds or 0) > 0 and post.status == 'open':
+                post, new = await service.wait_for(me.user_key, str(post.id), seconds=int(seconds), seen=0)
+                return ToolOutcome.success(_posted(post) + '\n' + _waited(post, new), card=_card(post, 'Posted'))
             return ToolOutcome.success(_posted(post), card=_card(post, 'Posted'))
+        if verb in ('claim', 'take'):
+            post = await service.claim(me.user_key, post_id, me.author)
+            return ToolOutcome.success(f'You claimed post {post.id}. Do it, then answer it with what you did '
+                                       '(close=true when it is done).', card=_card(post, 'Claimed'))
+        if verb in ('unclaim', 'release'):
+            post = await service.unclaim(me.user_key, post_id, me.author)
+            return ToolOutcome.success(f'Let go of post {post.id}; someone else can take it.')
+        if verb in ('wait', 'await'):
+            post, new = await service.wait_for(me.user_key, post_id, seconds=int(seconds or 120))
+            return ToolOutcome.success(_waited(post, new))
+        if verb in ('schedule', 'repeat', 'cron'):
+            from cognitrix.board import schedules
+
+            key = _board(me, board, posting=True)
+            if service.project_of(key):
+                from cognitrix.board import channels
+
+                await channels.check_grant(me.user_key, key, me.author)
+            row = await schedules.save_schedule(me.user_key, board=key, text=text, to=to, kind=kind or 'request',
+                                                when=when or filter, thread=service.clean_thread(thread),
+                                                created_by=me.author.name)
+            view = schedules.public(row)
+            return ToolOutcome.success(f'Scheduled {row.id}: {view["when"]}, posting "{service._clip(row.text, 80)}"'
+                                       + (f' for {row.to_name}' if row.to_name else '') + f'. Next: {view["next_at"]}.')
+        if verb in ('schedules', 'crons'):
+            from cognitrix.board import schedules
+
+            rows = await schedules.list_schedules(me.user_key)
+            if not rows:
+                return ToolOutcome.success('No repeating posts.')
+            return ToolOutcome.success('Repeating posts:\n' + '\n'.join(
+                f'- {r.id}: {schedules.describe(list(r.days), r.at_time)} on {r.board}'
+                f'{" for " + r.to_name if r.to_name else ""}: {service._clip(r.text, 100)}{"" if r.enabled else " (off)"}'
+                for r in rows))
+        if verb in ('unschedule', 'unrepeat'):
+            from cognitrix.board import schedules
+
+            await schedules.delete_schedule(me.user_key, post_id)
+            return ToolOutcome.success(f'Removed repeating post {post_id}.')
+        if verb in ('commands', 'command'):
+            from cognitrix.board import commands
+
+            rows = await commands.list_commands(me.user_key)
+            if not rows:
+                return ToolOutcome.success('No /commands yet. The person adds them on the Board page.')
+            return ToolOutcome.success('Post one of these (action "post", text "/name what to do") to run it; '
+                                       'its result is posted back as the answer:\n' + '\n'.join(
+                                           f'- /{r.name}: {r.description or service._clip(r.prompt, 100)}'
+                                           for r in rows))
         if verb in ('answer', 'reply'):
             post = await service.reply(me.user_key, post_id, text, me.author, close=bool(close))
             return ToolOutcome.success(f'Answered post {post.id}' + (' and marked it done.' if close else '.'),
@@ -176,9 +288,28 @@ async def board(action: str, text: str = '', kind: str = '', to: str = '', tags:
         if verb in ('follow', 'follows', 'subscribe'):
             return ToolOutcome.success(await _follow(me, kinds, tags, wake))
         raise BoardError('bad_action', 'action is read, search, post, answer, edit, retract, remember, close, '
-                                       'reopen, pin, unpin or follow.')
+                                       'reopen, pin, unpin, follow, claim, unclaim, wait, schedule, schedules, '
+                                       'unschedule or commands.')
     except BoardError as exc:
         return ToolOutcome.failure(exc.code, exc.message)
+
+
+def _thread_for(me: _Me, key: str, thread: str) -> tuple[str, str]:
+    """The thread a post goes in: the one asked for, else this task's own thread on its project channel."""
+    if str(thread or '').strip():
+        return service.clean_thread(thread), ''
+    if me.thread and key == service.project_board(me.project_id):
+        return me.thread, me.thread_title
+    return '', ''
+
+
+def _waited(post: Any, new: list) -> str:
+    if not new:
+        return (f'No answer to post {post.id} yet. Carry on; you will be told when it is answered, or wait '
+                'again later (action "wait").')
+    lines = [f'{len(new)} new answer(s) to post {post.id} (status: {post.status or "-"}):']
+    lines += [f'- {r.get("author_name") or "Someone"}: {r.get("text")}' for r in new]
+    return '\n'.join(lines)
 
 
 def _tagged(mentions: list) -> str:
@@ -191,7 +322,7 @@ def _card(post: Any, verb: str) -> dict | None:
     from cognitrix.cards import CardError, normalize
 
     label = service.KIND_LABELS.get(post.kind, 'Post')
-    where = 'the swarm board' if service.swarm_of(post.board) else 'the board'
+    where = _where(post.board)
     if verb == 'Answered' and post.replies:
         last = post.replies[-1]
         title = f'Answered a {label.lower()} on {where}'
@@ -206,6 +337,10 @@ def _card(post: Any, verb: str) -> dict | None:
                                      else post.mentions) or [] if isinstance(m, dict)]
     if tagged:
         fields.append({'label': 'Tagged', 'value': ', '.join('@' + n for n in tagged if n)})
+    if post.thread:
+        fields.append({'label': 'Thread', 'value': post.thread_title or post.thread})
+    if post.claimed_by:
+        fields.append({'label': 'Claimed by', 'value': str(post.claimed_by.get('name') or 'Someone')})
     if post.status:
         fields.append({'label': 'Status', 'value': post.status.capitalize(),
                        'tone': 'good' if post.status in ('answered', 'done') else 'neutral'})
@@ -232,13 +367,17 @@ def _posted(post: Any) -> str:
     return text + _tagged(post.mentions)
 
 
-async def _read(me: _Me, key: str, flt: str) -> str:
+async def _read(me: _Me, key: str, flt: str, *, thread: str = '') -> str:
     posts = [p for p in await service.posts_on(me.user_key, key) if not p.retracted]
+    if thread:
+        posts = [p for p in posts if p.thread == thread]
     me_name = me.author.name
     if flt in ('', 'all', 'new', 'latest'):
         rows, what = posts, ''
     elif flt == 'open':
         rows, what = [p for p in posts if p.status == 'open'], 'open '
+    elif flt in ('unclaimed', 'free', 'todo'):
+        rows, what = [p for p in posts if p.status == 'open' and not p.claimed_by], 'open and unclaimed '
     elif flt == 'pinned':
         rows, what = [p for p in posts if p.pinned], 'pinned '
     elif flt in ('for_me', 'for me', 'to_me', 'mine_to_answer', 'tagged', 'mentions'):

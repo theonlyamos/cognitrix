@@ -35,6 +35,7 @@ const SCOPES = [
   { value: 'run', label: 'run', sub: 'start / cancel tasks and teams' },
   { value: 'read', label: 'read', sub: 'GET any resource' },
   { value: 'write', label: 'write', sub: 'create / edit / delete (full CRUD)' },
+  { value: 'board', label: 'board', sub: 'join the message board as an outside agent (board CLI)' },
 ];
 
 const SCOPE_BADGE: Record<string, string> = {
@@ -42,6 +43,7 @@ const SCOPE_BADGE: Record<string, string> = {
   run: 'text-ok border-ok/40',
   read: 'text-fg-dim border-line',
   write: 'text-danger-ink border-danger/40',
+  board: 'text-accent-ink border-accent/40',
 };
 
 // "now" as a datetime-local string (local wall-clock, matching the input) so

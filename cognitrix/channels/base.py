@@ -43,6 +43,8 @@ class Incoming:
     """The bot was @mentioned in a shared channel or group chat."""
     thread_id: str = ''
     """The thread to answer in, for apps where a channel id alone isn't one."""
+    message_id: str = ''
+    """The message's own id in the app (Slack ts), where known."""
 
 
 @dataclass(frozen=True)

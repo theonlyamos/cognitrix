@@ -33,6 +33,18 @@ def _text(value: Any) -> str:
     return '' if value is None else str(value)
 
 
+def _json(value: Any, kind: type) -> Any:
+    """A list or dict column; a new column on an old database comes back as text."""
+    if isinstance(value, str) and value.strip():
+        import json
+
+        try:
+            value = json.loads(value)
+        except ValueError:
+            value = None
+    return value if isinstance(value, kind) else kind()
+
+
 class BoardPost(Model):
     user_id: str
     """Principal key of the person whose agents share the board."""
@@ -71,29 +83,39 @@ class BoardPost(Model):
     """When an unanswered question or request was last brought up again."""
     memory_id: str = ''
     """A decision saved to (or proposed for) the agents' memory."""
+    thread: str = ''
+    """A thread in a channel, such as ``task:<id>`` for the posts about one task ('' = none)."""
+    thread_title: str = ''
+    claimed_by: dict = Field(default_factory=dict)
+    """{kind, id, name}: who took on a request or question, so nobody else does it twice."""
+    claimed_at: int = 0
+    people: list = Field(default_factory=list)
+    """[{name, id}]: people tagged with @Name (they hear about it in their Inbox)."""
+    mirror: dict = Field(default_factory=dict)
+    """{mirror id: Slack message ts}: where the post was copied to Slack."""
 
     @field_validator('pinned', 'retracted', mode='before')
     @classmethod
     def _bools(cls, value):
         return bool(value) and str(value).lower() not in ('0', 'false')
 
-    @field_validator('posted_at', 'changed_at', 'edited_at', 'nudged_at', mode='before')
+    @field_validator('posted_at', 'changed_at', 'edited_at', 'nudged_at', 'claimed_at', mode='before')
     @classmethod
     def _stamps(cls, value):
         return _int(value, 0)
 
-    @field_validator('tags', 'replies', 'mentions', 'mention_wakes', mode='before')
+    @field_validator('tags', 'replies', 'mentions', 'mention_wakes', 'people', mode='before')
     @classmethod
     def _lists(cls, value):
-        return value if isinstance(value, list) else []
+        return _json(value, list)
 
-    @field_validator('wake', mode='before')
+    @field_validator('wake', 'claimed_by', 'mirror', mode='before')
     @classmethod
     def _dicts(cls, value):
-        return value if isinstance(value, dict) else {}
+        return _json(value, dict)
 
     @field_validator('board', 'kind', 'text', 'author_kind', 'author_id', 'author_name', 'chat_id',
-                     'to_name', 'to_id', 'status', 'memory_id', mode='before')
+                     'to_name', 'to_id', 'status', 'memory_id', 'thread', 'thread_title', mode='before')
     @classmethod
     def _texts(cls, value):
         return _text(value)
@@ -176,4 +198,150 @@ class BoardSettings(Model):
         return _text(value)
 
 
-MODELS = (BoardPost, BoardFollow, BoardCursor, BoardSettings)
+class BoardChannel(Model):
+    """A project's channel (``project:<id>``): who besides its owner may use
+    it, and which agents may post there."""
+    user_id: str
+    key: str
+    project_id: str = ''
+    members: list = Field(default_factory=list)
+    """User ids of other people who may read and post in the channel."""
+    agents: list = Field(default_factory=list)
+    """Agent ids allowed to post besides the project's own agents."""
+    externals: list = Field(default_factory=list)
+    """Names of outside agents (board CLI, scoped key) allowed to post."""
+    created_at: int = 0
+
+    @field_validator('members', 'agents', 'externals', mode='before')
+    @classmethod
+    def _lists(cls, value):
+        return [str(v) for v in _json(value, list) if str(v or '').strip()]
+
+    @field_validator('created_at', mode='before')
+    @classmethod
+    def _stamp(cls, value):
+        return _int(value, 0)
+
+    @field_validator('user_id', 'key', 'project_id', mode='before')
+    @classmethod
+    def _texts(cls, value):
+        return _text(value)
+
+
+class BoardAgent(Model):
+    """An outside agent that joined the board through the board CLI with a
+    key that has the "board" scope. Its unread queue is ``inbox``."""
+    user_id: str
+    name: str
+    key_id: str = ''
+    """The API key it last used."""
+    last_seen: int = 0
+
+    @field_validator('last_seen', mode='before')
+    @classmethod
+    def _stamp(cls, value):
+        return _int(value, 0)
+
+    @field_validator('user_id', 'name', 'key_id', mode='before')
+    @classmethod
+    def _texts(cls, value):
+        return _text(value)
+
+
+class BoardSchedule(Model):
+    """A repeating post: "every weekday at 9:00, ask reviewer to check open PRs"."""
+    user_id: str
+    board: str = 'agents'
+    thread: str = ''
+    to_name: str = ''
+    """Who it is for: an agent's name (it is woken to do it), or '' for anyone."""
+    kind: str = 'request'
+    text: str = ''
+    days: list = Field(default_factory=lambda: [0, 1, 2, 3, 4])
+    """Weekdays it runs on, 0 = Monday."""
+    at_time: str = '09:00'
+    """HH:MM in ``tz``."""
+    tz: str = ''
+    enabled: bool = True
+    next_at: int = 0
+    last_at: int = 0
+    last_post: str = ''
+    created_by: str = ''
+    """Who made it: a person's name or an agent's name."""
+
+    @field_validator('days', mode='before')
+    @classmethod
+    def _days(cls, value):
+        out = []
+        for v in _json(value, list):
+            try:
+                day = int(v)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= day <= 6 and day not in out:
+                out.append(day)
+        return sorted(out)
+
+    @field_validator('enabled', mode='before')
+    @classmethod
+    def _enabled(cls, value):
+        return True if value is None else bool(value) and str(value).lower() not in ('0', 'false')
+
+    @field_validator('next_at', 'last_at', mode='before')
+    @classmethod
+    def _stamps(cls, value):
+        return _int(value, 0)
+
+    @field_validator('user_id', 'board', 'thread', 'to_name', 'kind', 'text', 'at_time', 'tz', 'last_post',
+                     'created_by', mode='before')
+    @classmethod
+    def _texts(cls, value):
+        return _text(value)
+
+
+class BoardCommand(Model):
+    """A fixed workflow anyone on the board runs by posting ``/name …``:
+    the agent gets the prompt and the rest of the post, and its result is
+    posted back as the answer."""
+    user_id: str
+    name: str
+    agent_id: str = ''
+    prompt: str = ''
+    description: str = ''
+    created_at: int = 0
+
+    @field_validator('created_at', mode='before')
+    @classmethod
+    def _stamp(cls, value):
+        return _int(value, 0)
+
+    @field_validator('user_id', 'name', 'agent_id', 'prompt', 'description', mode='before')
+    @classmethod
+    def _texts(cls, value):
+        return _text(value)
+
+
+class BoardMirror(Model):
+    """A board copied both ways to a Slack channel through one of the
+    person's chat apps (cognitrix/channels)."""
+    user_id: str
+    board: str
+    channel_id: str
+    """The ChatChannel (a Slack app) that posts and listens."""
+    slack_channel: str
+    """The Slack channel id (C…)."""
+    created_at: int = 0
+
+    @field_validator('created_at', mode='before')
+    @classmethod
+    def _stamp(cls, value):
+        return _int(value, 0)
+
+    @field_validator('user_id', 'board', 'channel_id', 'slack_channel', mode='before')
+    @classmethod
+    def _texts(cls, value):
+        return _text(value)
+
+
+MODELS = (BoardPost, BoardFollow, BoardCursor, BoardSettings, BoardChannel, BoardAgent, BoardSchedule,
+          BoardCommand, BoardMirror)

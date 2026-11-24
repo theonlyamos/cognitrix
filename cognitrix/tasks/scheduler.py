@@ -225,6 +225,12 @@ async def automation_tick(now: datetime | None = None) -> int:
     except Exception:
         logger.exception('Could not bring up unanswered board questions')
     try:
+        from cognitrix.board.schedules import run_due
+
+        await run_due(now.replace(tzinfo=UTC))
+    except Exception:
+        logger.exception('Could not post scheduled board posts')
+    try:
         from cognitrix.assistant.checkins import proactive_tick
 
         await proactive_tick(now.replace(tzinfo=UTC))

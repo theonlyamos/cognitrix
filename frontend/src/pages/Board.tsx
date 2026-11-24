@@ -10,9 +10,10 @@ import { PageHeader, LoadingState, ErrorState, EmptyState, FilterChips } from '@
 import { timeAgo } from '@/lib/agentDraft';
 import { ENDED, type Swarm } from '@/lib/swarms';
 import {
-  BOARD_KINDS, kindLabel, kindTone, type BoardFollow, type BoardInfo, type BoardKind, type BoardPost,
-  type BoardSettings,
+  BOARD_KINDS, kindLabel, kindTone, threadLabel, type BoardFollow, type BoardInfo, type BoardKind, type BoardPost,
+  type BoardSettings, type MentionName,
 } from '@/lib/board';
+import { ChannelPanel, CommandsPanel, SchedulesPanel, SlackMirrorPanel } from '@/components/board/BoardPanels';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
 import { MentionText, MentionTextarea } from '@/components/board/Mentions';
@@ -42,8 +43,8 @@ function tagged(list?: { name: string }[]): string[] {
 }
 
 /** One post with its answers and what can be done with it. */
-function PostCard({ post, highlight, names, onChanged }: {
-  post: BoardPost; highlight: boolean; names: string[]; onChanged: () => void;
+function PostCard({ post, highlight, names, onChanged, onThread }: {
+  post: BoardPost; highlight: boolean; names: string[]; onChanged: () => void; onThread?: (thread: string) => void;
 }) {
   const navigate = useNavigate();
   const [answering, setAnswering] = useState(false);
@@ -55,7 +56,8 @@ function PostCard({ post, highlight, names, onChanged }: {
   const card = useRef<HTMLElement>(null);
   useEffect(() => { if (highlight) card.current?.scrollIntoView({ block: 'center' }); }, [highlight]);
   const ask = post.kind === 'question' || post.kind === 'request';
-  const mine = post.author_kind === 'person';
+  const mine = !!post.mine;
+  const claimer = post.claimed_by?.name || '';
   const retracted = !!post.retracted;
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
@@ -95,7 +97,7 @@ function PostCard({ post, highlight, names, onChanged }: {
         highlight ? 'border-accent' : 'border-line', retracted && 'opacity-60')}
     >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-medium">{post.author_kind === 'person' ? tr('ui.board.you') : post.author_name}</span>
+        <span className="font-medium">{mine ? tr('ui.board.you') : post.author_name}</span>
         <span className={cn('rounded px-1.5 py-px font-mono text-[10px] font-semibold uppercase tracking-wide', kindTone(post.kind))}>
           {kindLabel(post.kind)}
         </span>
@@ -103,6 +105,10 @@ function PostCard({ post, highlight, names, onChanged }: {
           <span className="text-[12px] text-fg-dim">{tr('ui.board.toName', { name: whoLabel(post.to_name) })}</span>
         )}
         {post.pinned && <PinIcon size={12} aria-label={tr('ui.board.pinned')} className="text-fg-dim" />}
+        {post.command && <span className="font-mono text-[12px] text-accent-ink">/{post.command}</span>}
+        {claimer && post.status === 'open' && (
+          <span className="rounded bg-accent/10 px-1.5 py-px text-[11.5px] text-accent-ink">{tr('ui.board.claimedByName', { name: claimer })}</span>
+        )}
         <span className={cn('ml-auto text-[12px]', retracted ? 'text-fg-dim' : post.status === 'open' ? 'text-warn-ink' : post.status ? 'text-ok' : 'text-fg-dim')}>
           {retracted ? tr('ui.board.withdrawn') : statusText(post)}
         </span>
@@ -119,10 +125,16 @@ function PostCard({ post, highlight, names, onChanged }: {
         </form>
       ) : (
         <p className={cn('whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]', retracted && 'line-through')}>
-          <MentionText text={post.text} names={tagged(post.mentions)} />
+          <MentionText text={post.text} names={[...tagged(post.mentions), ...tagged(post.people)]} />
         </p>
       )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-fg-dim">
+        {post.thread && (
+          <button type="button" className="rounded border border-line px-1.5 hover:bg-panel-2" onClick={() => onThread?.(post.thread || '')}
+            aria-label={tr('ui.board.showThreadName', { name: threadLabel(post) })}>
+            {tr('ui.board.threadName', { name: threadLabel(post) })}
+          </button>
+        )}
         {post.tags.map((t) => <span key={t} className="font-mono">#{t}</span>)}
         <span>{timeAgo(post.posted_at)}</span>
         {post.edited_at && !retracted && <span>{tr('ui.board.edited')}</span>}
@@ -143,9 +155,9 @@ function PostCard({ post, highlight, names, onChanged }: {
         <ul className="flex flex-col gap-1.5 border-l-2 border-line pl-3">
           {post.replies.map((r, i) => (
             <li key={i} className="text-[13px] leading-relaxed">
-              <span className="font-medium">{r.author_kind === 'person' ? tr('ui.board.you') : r.author_name}</span>{' '}
+              <span className="font-medium">{r.mine ? tr('ui.board.you') : r.author_name}</span>{' '}
               <span className="text-fg-dim">{timeAgo(r.at)}</span>
-              <p className="whitespace-pre-wrap text-fg-dim [overflow-wrap:anywhere]"><MentionText text={r.text} names={tagged(r.mentions)} /></p>
+              <p className="whitespace-pre-wrap text-fg-dim [overflow-wrap:anywhere]"><MentionText text={r.text} names={[...tagged(r.mentions), ...tagged(r.people)]} /></p>
             </li>
           ))}
         </ul>
@@ -178,6 +190,18 @@ function PostCard({ post, highlight, names, onChanged }: {
         <div className="flex flex-wrap gap-1.5">
           {!retracted && (
             <button type="button" className={small} onClick={() => setAnswering(true)}>{ask ? tr('ui.board.answer') : tr('ui.board.reply')}</button>
+          )}
+          {!retracted && ask && post.status === 'open' && !claimer && (
+            <button type="button" className={small} disabled={busy === 'claim'}
+              onClick={() => void act('claim', () => api.post(`/board/posts/${post.id}/claim`, {}))}>
+              {tr('ui.board.claim')}
+            </button>
+          )}
+          {!retracted && claimer && post.status === 'open' && (
+            <button type="button" className={small} disabled={busy === 'claim'}
+              onClick={() => void act('claim', () => api.post(`/board/posts/${post.id}/unclaim`, {}))}>
+              {tr('ui.board.letItGo')}
+            </button>
           )}
           {mine && !retracted && (
             <button type="button" className={small} onClick={() => { setDraft(post.text); setEditing(true); }}>{tr('ui.board.edit')}</button>
@@ -224,13 +248,16 @@ function PostCard({ post, highlight, names, onChanged }: {
 }
 
 /** Post as the person. */
-function Composer({ board, targets, names, onPosted }: {
-  board: string; targets: string[]; names: string[]; onPosted: () => void;
+function Composer({ board, targets, names, thread, onPosted }: {
+  board: string; targets: string[]; names: string[]; thread: string; onPosted: () => void;
 }) {
   const [kind, setKind] = useState<BoardKind>('heads_up');
   const [text, setText] = useState('');
   const [to, setTo] = useState('');
   const [tags, setTags] = useState('');
+  const [threadName, setThreadName] = useState(thread);
+  useEffect(() => { setThreadName(thread); }, [thread]);
+  const channel = board.startsWith('project:');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => { setTo(''); }, [board]);
@@ -241,7 +268,7 @@ function Composer({ board, targets, names, onPosted }: {
     setBusy(true);
     setError('');
     try {
-      await api.post('/board/posts', { board, kind, text, to, tags });
+      await api.post('/board/posts', { board, kind, text, to, tags, thread: channel ? threadName : '' });
       setText('');
       setTags('');
       onPosted();
@@ -261,7 +288,7 @@ function Composer({ board, targets, names, onPosted }: {
         rows={2}
         maxLength={2000}
         aria-label={tr('ui.board.newPost')}
-        placeholder={tr('ui.board.postSomethingTagAgents')}
+        placeholder={tr('ui.board.postSomethingTagOrCommand')}
         className="w-full resize-y bg-transparent text-[13.5px] leading-relaxed outline-none placeholder:text-fg-dim"
       />
       <div className="flex flex-wrap items-center gap-2">
@@ -274,6 +301,10 @@ function Composer({ board, targets, names, onPosted }: {
         </Select>
         <input value={tags} onChange={(e) => setTags(e.target.value)} aria-label={tr('ui.board.tags')}
           placeholder={tr('ui.board.tagsCommaSeparated')} className={cn(field, 'w-40 min-w-0 flex-1 sm:flex-none')} />
+        {channel && (
+          <input value={threadName} onChange={(e) => setThreadName(e.target.value)} aria-label={tr('ui.board.thread')}
+            placeholder={tr('ui.board.threadOptional')} className={cn(field, 'w-36 min-w-0 flex-1 sm:flex-none')} />
+        )}
         <Button type="submit" size="sm" className="ml-auto" disabled={busy || !text.trim()}>{tr('ui.board.post')}</Button>
       </div>
       {error && <p role="alert" className="text-[12px] text-danger-ink">{error}</p>}
@@ -411,6 +442,7 @@ export default function Board() {
   const [params, setParams] = useSearchParams();
   const board = params.get('board') || 'agents';
   const highlight = params.get('post') || '';
+  const thread = params.get('thread') || '';
   const [filter, setFilter] = useState<Filter>('all');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -427,9 +459,10 @@ export default function Board() {
   const [olderDone, setOlderDone] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   useEffect(() => { setOlder([]); setOlderDone(false); }, [board, query]);
-  const mentionable = useResource<{ name: string }[]>(`/board/mentions?board=${encodeURIComponent(board)}`);
+  const mentionable = useResource<MentionName[]>(`/board/mentions?board=${encodeURIComponent(board)}`);
   const names = useMemo(() => (mentionable.data || []).map((m) => m.name), [mentionable.data]);
   const follows = useResource<BoardFollow[]>(board === 'agents' ? '/board/follows' : null);
+  const projectId = board.startsWith('project:') ? board.slice(8) : '';
   const current = boards.data?.find((b) => b.key === board);
   const swarmId = board.startsWith('swarm:') ? board.slice(6) : '';
   const swarm = useResource<Swarm>(swarmId ? `/swarms/${swarmId}` : null);
@@ -460,6 +493,7 @@ export default function Board() {
     void refetchBoards({ silent: true });
   };
   const pick = (key: string) => setParams(key === 'agents' ? {} : { board: key });
+  const pickThread = (name: string) => setParams(name ? { board, thread: name } : (board === 'agents' ? {} : { board }));
 
   const listed = useMemo(() => {
     const first = posts.data || [];
@@ -486,14 +520,32 @@ export default function Board() {
     () => (missing && linked.data && linked.data.board === board ? [linked.data, ...listed] : listed),
     [missing, linked.data, listed, board],
   );
-  const shown = all.filter((p) => filter === 'all' || (filter === 'open' ? p.status === 'open' : p.kind === filter));
+  const threads = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const p of all) if (p.thread && !seen.has(p.thread)) seen.set(p.thread, threadLabel(p));
+    return Array.from(seen, ([key, label]) => ({ key, label }));
+  }, [all]);
+  const shown = all.filter((p) => (!thread || p.thread === thread)
+    && (filter === 'all' || (filter === 'open' ? p.status === 'open' : p.kind === filter)));
   const pinned = filter === 'all' && !query ? shown.filter((p) => p.pinned) : [];
   const rest = filter === 'all' && !query ? shown.filter((p) => !p.pinned) : shown;
   const count = (f: Filter) => all.filter((p) => (f === 'open' ? p.status === 'open' : p.kind === f)).length;
   const targets = swarmId
     ? ['lead', ...(swarm.data?.workers.map((w) => w.name) || [])]
-    : (follows.data || []).map((f) => f.agent_name);
-  const title = board === 'agents' ? tr('ui.board.allAgents') : current?.title || tr('ui.board.swarmBoard');
+    : projectId
+      ? (mentionable.data || []).map((m) => m.name)
+      : [...(follows.data || []).map((f) => f.agent_name),
+        ...(mentionable.data || []).filter((m) => m.kind === 'external').map((m) => m.name)];
+  const title = board === 'agents' ? tr('ui.board.allAgents') : current?.title || (projectId ? tr('ui.board.projectChannel') : tr('ui.board.swarmBoard'));
+  const owned = !current?.shared;
+  const sidePanels = (
+    <>
+      {projectId && <ChannelPanel board={board} onChanged={() => void mentionable.refetch({ silent: true })} />}
+      {owned && !swarmId && <SchedulesPanel board={board} targets={targets.filter((n) => n !== 'you')} />}
+      {owned && !swarmId && <CommandsPanel />}
+      {owned && <SlackMirrorPanel board={board} />}
+    </>
+  );
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
@@ -511,7 +563,7 @@ export default function Board() {
             <div className="md:hidden">
               <Select value={board} onChange={(e) => pick(e.target.value)} aria-label={tr('ui.board.board')} className="h-10 w-full">
                 {(boards.data || [{ key: 'agents', title: '', kind: 'agents' } as BoardInfo]).map((b) => (
-                  <option key={b.key} value={b.key}>{b.kind === 'agents' ? tr('ui.board.allAgents') : b.title}</option>
+                  <option key={b.key} value={b.key}>{b.kind === 'agents' ? tr('ui.board.allAgents') : b.kind === 'project' ? `# ${b.title}` : b.title}</option>
                 ))}
               </Select>
             </div>
@@ -521,10 +573,26 @@ export default function Board() {
               <p className="text-[12.5px] text-fg-dim">
                 {swarmId
                   ? tr('ui.board.workersAndTheLeadOfThisSwarm', { name: current?.agent_name || swarm.data?.agent_name || '' })
-                  : tr('ui.board.everyAgentOfYoursReadsAndPosts')}
+                  : projectId ? tr('ui.board.theProjectSAgentsAndPeoplePost')
+                    : tr('ui.board.everyAgentOfYoursReadsAndPosts')}
               </p>
             </div>
-            <Composer board={board} targets={targets} names={names} onPosted={changed} />
+            <Composer board={board} targets={targets} names={names} thread={thread} onPosted={changed} />
+            {threads.length > 0 && (
+              <div role="group" aria-label={tr('ui.board.threads')} className="flex flex-wrap items-center gap-1.5 text-[12px]">
+                <span className="text-fg-dim">{tr('ui.board.threads')}</span>
+                <button type="button" aria-pressed={!thread} onClick={() => pickThread('')}
+                  className={cn('rounded-full border px-2.5 py-0.5', !thread ? 'border-accent text-accent-ink' : 'border-line text-fg-dim hover:text-fg')}>
+                  {tr('ui.board.all')}
+                </button>
+                {threads.map((t) => (
+                  <button key={t.key} type="button" aria-pressed={thread === t.key} onClick={() => pickThread(t.key)}
+                    className={cn('max-w-[220px] truncate rounded-full border px-2.5 py-0.5', thread === t.key ? 'border-accent text-accent-ink' : 'border-line text-fg-dim hover:text-fg')}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
             <input type="search" value={search} onChange={(e) => setSearch(e.target.value)}
               aria-label={tr('ui.board.searchTheBoard')} placeholder={tr('ui.board.searchTheBoard')}
               className={cn(field, 'w-full')} />
@@ -551,7 +619,7 @@ export default function Board() {
             ) : (
               <div className="flex flex-col gap-2.5">
                 {[...pinned, ...rest].map((p) => (
-                  <PostCard key={p.id} post={p} highlight={p.id === highlight} names={names} onChanged={changed} />
+                  <PostCard key={p.id} post={p} highlight={p.id === highlight} names={names} onChanged={changed} onThread={pickThread} />
                 ))}
                 {canLoadOlder && (
                   <Button type="button" size="sm" variant="outline" className="self-center" disabled={loadingOlder}
@@ -562,7 +630,8 @@ export default function Board() {
               </div>
             )}
             <div className="flex flex-col gap-4 border-t border-line pt-4 lg:hidden">
-              {swarmId ? <SwarmJobs swarmId={swarmId} /> : <Follows />}
+              {swarmId ? <SwarmJobs swarmId={swarmId} /> : !projectId && <Follows />}
+              {sidePanels}
             </div>
           </div>
         </div>
@@ -575,7 +644,8 @@ export default function Board() {
             <Row label={tr('ui.board.findings')} value={count('finding')} />
             <Row label={tr('ui.board.decisions')} value={count('decision')} />
           </section>
-          {!swarmId && <Follows />}
+          {!swarmId && !projectId && <Follows />}
+          {sidePanels}
         </aside>
       </div>
     </div>
@@ -594,6 +664,7 @@ function Row({ label, value }: { label: string; value: number }) {
 function BoardList({ boards, current, onPick }: { boards: BoardInfo[]; current: string; onPick: (key: string) => void }) {
   const everyone = boards.find((b) => b.kind === 'agents');
   const swarms = boards.filter((b) => b.kind === 'swarm');
+  const projects = boards.filter((b) => b.kind === 'project');
   const item = (b: BoardInfo, label: string) => (
     <button
       key={b.key}
@@ -611,6 +682,8 @@ function BoardList({ boards, current, onPick }: { boards: BoardInfo[]; current: 
     <>
       <div className="px-2.5 pb-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-dim">{tr('ui.board.boards')}</div>
       {item(everyone || { key: 'agents', kind: 'agents', title: '', status: '', open: 0, total: 0, latest: '' }, tr('ui.board.allAgents'))}
+      {projects.length > 0 && <div className="px-2.5 pb-1 pt-3 text-[10.5px] font-semibold uppercase tracking-wider text-fg-dim">{tr('ui.board.projects')}</div>}
+      {projects.map((b) => item(b, `# ${b.title}`))}
       {swarms.length > 0 && <div className="px-2.5 pb-1 pt-3 text-[10.5px] font-semibold uppercase tracking-wider text-fg-dim">{tr('ui.board.swarms')}</div>}
       {swarms.map((b) => item(b, b.title))}
     </>

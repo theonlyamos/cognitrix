@@ -68,12 +68,12 @@ describe('Board', () => {
     fireEvent.change(screen.getByLabelText('For'), { target: { value: 'Researcher' } });
     fireEvent.click(screen.getByRole('button', { name: 'Post' }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/board/posts', {
-      board: 'agents', kind: 'decision', text: 'Launch moved to March.', to: 'Researcher', tags: '',
+      board: 'agents', kind: 'decision', text: 'Launch moved to March.', to: 'Researcher', tags: '', thread: '',
     }));
   });
 
   it('suggests agents after @, shows tags, and edits or withdraws your own post', async () => {
-    posts.push(post({ id: 'p4', author_kind: 'person', author_name: 'You', author_id: '', text: 'Ask @Writer first.',
+    posts.push(post({ id: 'p4', author_kind: 'person', author_name: 'Ama', author_id: '', mine: true, text: 'Ask @Writer first.',
       mentions: [{ name: 'Writer' }] }));
     render(<MemoryRouter><Board /></MemoryRouter>);
     const mine = (await screen.findByText(/Ask/)).closest('article')!;
@@ -122,5 +122,63 @@ describe('Board', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show older posts' }));
     expect(await screen.findByText('An old post')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show older posts' })).not.toBeInTheDocument();
+  });
+
+  it('shows a project channel with threads, claims, repeating posts and commands', async () => {
+    const channelPosts = [
+      post({ id: 'c1', board: 'project:pr1', kind: 'request', text: 'Write the launch post.', status: 'open',
+        thread: 'task:t1', thread_title: 'Launch post', claimed_by: { kind: 'agent', name: 'Writer' } }),
+      post({ id: 'c2', board: 'project:pr1', kind: 'request', text: 'Check the prices.', status: 'open',
+        thread: 'task:t2', thread_title: 'Prices', people: [{ name: 'Kofi' }] }),
+    ];
+    api.get.mockImplementation((path: string) => Promise.resolve({
+      data: path.startsWith('/board/posts') ? channelPosts
+        : path === '/board/boards' ? [
+          { key: 'agents', kind: 'agents', title: 'All agents', status: '', open: 0, total: 0, latest: '' },
+          { key: 'project:pr1', kind: 'project', title: 'Launch', status: '', open: 2, total: 2, latest: '', project_id: 'pr1' },
+        ]
+        : path.startsWith('/board/channels') ? {
+          board: 'project:pr1', project_id: 'pr1', title: 'Launch', owner: true,
+          members: [{ id: 'u2', name: 'Kofi', email: 'kofi@example.com' }],
+          project_agents: [{ id: 'a1', name: 'Researcher' }], agents: [], externals: [], known_externals: ['Codex'],
+        }
+        : path.startsWith('/board/schedules') ? []
+        : path === '/board/commands' ? { commands: [], suggested: [{ name: 'review', description: 'Review a change', prompt: 'Review it.' }] }
+        : path.startsWith('/board/mirrors') ? { slack_connected: false, mirrors: [] }
+        : path === '/board/follows' ? [{ agent_id: 'a1', agent_name: 'Researcher', kinds: [], tags: [], wake: true },
+          { agent_id: 'a2', agent_name: 'Writer', kinds: [], tags: [], wake: true }]
+        : path.startsWith('/board/mentions') ? [{ name: 'Researcher', kind: 'agent' }, { name: 'Kofi', kind: 'person' }]
+        : {},
+    }));
+    api.post.mockImplementation((path: string) => Promise.resolve({ data: path === '/board/schedules'
+      ? { id: 's1', board: 'project:pr1', thread: '', to: 'Researcher', kind: 'request', text: 'Check PRs', days: [0, 1, 2, 3, 4],
+        time: '09:00', when: 'weekdays at 09:00', enabled: true, next_at: '', last_at: '', created_by: 'Ama' } : {} }));
+    api.put.mockImplementation((path: string) => Promise.resolve({ data: path.startsWith('/board/commands')
+      ? { name: 'review', agent_id: 'a1', agent_name: 'Researcher', prompt: 'Review it.', description: 'Review a change' } : {} }));
+    render(<MemoryRouter initialEntries={['/board?board=project:pr1']}><Board /></MemoryRouter>);
+
+    expect(await screen.findByText('Write the launch post.')).toBeInTheDocument();
+    expect(screen.getAllByText('Claimed by Writer').length).toBe(1);
+    const second = screen.getByText('Check the prices.').closest('article')!;
+    fireEvent.click(within(second).getByRole('button', { name: 'Claim' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/board/posts/c2/claim', {}));
+
+    // Threads filter the channel.
+    fireEvent.click(within(screen.getByRole('group', { name: 'Threads' })).getByRole('button', { name: 'Prices' }));
+    await waitFor(() => expect(screen.queryByText('Write the launch post.')).not.toBeInTheDocument());
+
+    // People and grants, a repeating post, a suggested command.
+    expect((await screen.findAllByText('kofi@example.com')).length).toBeGreaterThan(0);
+    const writer = screen.getAllByRole('checkbox', { name: 'Writer' })[0];
+    fireEvent.click(writer);
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith('/board/channels/project%3Apr1', { agents: ['a2'] }));
+    fireEvent.change(screen.getAllByLabelText('What it asks')[0], { target: { value: 'Check PRs' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add repeating post' })[0]);
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/board/schedules',
+      { board: 'project:pr1', text: 'Check PRs', to: '', when: 'weekdays 09:00', kind: 'request' }));
+    expect((await screen.findAllByText('weekdays at 09:00')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getAllByRole('button', { name: '+ /review' })[0]);
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith('/board/commands/review',
+      { agent_id: 'a1', prompt: 'Review it.', description: 'Review a change' }));
   });
 });

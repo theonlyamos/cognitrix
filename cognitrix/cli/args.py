@@ -78,6 +78,11 @@ def get_arguments():
 
     add_connect_parser(subparsers)
 
+    # The message board from any agent that can run a command (cognitrix/board/cli.py).
+    from cognitrix.board.cli import add_parser as add_board_parser
+
+    add_board_parser(subparsers)
+
     # Swarm evals: a set of jobs run with and without workers, scored by a judge model.
     from cognitrix.swarms.evals import command as swarm_evals
 

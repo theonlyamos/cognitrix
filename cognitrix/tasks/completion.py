@@ -125,6 +125,17 @@ async def _save_result_artifact(run_id: str) -> None:
         logger.exception('Could not save the result of run %s as an artifact', run_id)
 
 
+async def _post_result_to_board(run_id: str) -> None:
+    """A finished run of a task whose thread is in use on its project's
+    channel posts its result there (board/service.py post_task_result)."""
+    try:
+        from cognitrix.board.service import post_task_result
+
+        await post_task_result(run_id)
+    except Exception:
+        logger.exception('Could not post the result of run %s to the board', run_id)
+
+
 async def _queue_creator_report(run_id: str) -> bool:
     """Owe the agent that created the task a report on this run, when it
     asked for one (tasks/reports.py). Runs for every finished run, webhook
@@ -155,6 +166,7 @@ async def deliver_completion_notification(
     """Claim and deliver one terminal notification; safe under concurrency."""
     repository = repository or RunRepository()
     await _save_result_artifact(run_id)
+    await _post_result_to_board(run_id)
     agent_only = await _queue_creator_report(run_id)
     owner = owner or f"completion:{uuid.uuid4()}"
     claimed = await repository.claim_completion_notification(

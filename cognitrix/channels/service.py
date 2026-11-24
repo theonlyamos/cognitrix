@@ -394,6 +394,15 @@ class ChannelService:
             if msg.private:
                 await self._reply(channel, msg.chat_id, 'This account is disabled.')
             return
+        if channel.kind == 'slack' and not msg.private:
+            # A Slack channel a message board is copied to (board/mirror.py).
+            try:
+                from cognitrix.board import mirror
+
+                if await mirror.incoming(channel, msg):
+                    return
+            except Exception:
+                logger.exception('Could not copy a Slack message to the message board')
         if msg.mention and not msg.private:
             await self._on_mention(channel, msg)
             return
