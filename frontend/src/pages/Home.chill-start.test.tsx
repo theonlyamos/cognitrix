@@ -80,5 +80,7 @@ describe('Home in chill mode: which chat opens', () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(apiGet).not.toHaveBeenCalledWith('/sessions/c1/chat');
     expect(apiGet).not.toHaveBeenCalledWith('/sessions/c2/chat');
+    // A reload keeps the empty chat.
+    expect(localStorage.getItem('chatSession:agent-1')).toBe('');
   });
 });

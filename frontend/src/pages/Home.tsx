@@ -1186,7 +1186,9 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     restoredForAgent.current = agentId;
     const stored = localStorage.getItem(sessionKey(agentId));
     if (stored === '' || freshStartRef.current) {
-      // Sentinel: the user deliberately left a blank new thread.
+      // Sentinel: the user deliberately left a blank new thread. A fresh
+      // chill start writes it too, so a reload keeps the empty chat.
+      if (stored !== '') localStorage.setItem(sessionKey(agentId), '');
       setActiveSessionId(null);
       resetThreadState();
       return;
