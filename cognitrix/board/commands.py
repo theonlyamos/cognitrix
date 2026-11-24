@@ -50,10 +50,14 @@ def clean_name(name: str) -> str:
 
 def split(text: str) -> tuple[str, str]:
     """('review', 'PR 12') for '/review PR 12'; ('', '') when it isn't a command."""
-    match = re.match(r'\s*/([A-Za-z0-9_-]{1,24})(?:\s+(.*))?$', str(text or ''), re.DOTALL)
-    if not match:
+    body = str(text or '').strip()
+    if not body.startswith('/'):
         return '', ''
-    return match.group(1).lower(), (match.group(2) or '').strip()
+    parts = body[1:].split(None, 1)
+    name = parts[0] if parts else ''
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,24}', name):
+        return '', ''
+    return name.lower(), (parts[1].strip() if len(parts) > 1 else '')
 
 
 async def list_commands(user_key: str) -> list[BoardCommand]:
