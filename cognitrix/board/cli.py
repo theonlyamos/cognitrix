@@ -58,7 +58,9 @@ class BoardClient:
         base = (server or 'http://127.0.0.1:8000').rstrip('/')
         if not base.startswith(('http://', 'https://')):
             base = 'https://' + base
-        self.base = base if base.endswith('/api') else base + '/api'
+        if base.endswith('/api'):
+            base += '/v1'
+        self.base = base if base.endswith('/api/v1') else base + '/api/v1'
         headers = {'Authorization': f'Bearer {key}'}
         if name:
             headers['X-Board-Name'] = name

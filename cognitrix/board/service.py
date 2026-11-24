@@ -355,7 +355,12 @@ async def posts_on(user_key: str, board: str, **where: Any) -> list[BoardPost]:
 
 
 async def get_post(user_key: str, post_id: str) -> BoardPost:
-    row = await BoardPost.get(str(post_id or '').strip()) if str(post_id or '').strip() else None
+    wanted = str(post_id or '').strip().strip('[]').lower()
+    row = await BoardPost.get(wanted) if wanted else None
+    if row is None and len(wanted) >= 6 and re.fullmatch(r'[0-9a-f-]+', wanted):
+        # Agents often quote the first part of an id ("5e40d18e").
+        found = [p for p in await BoardPost.find({'user_id': str(user_key)}) or [] if str(p.id).startswith(wanted)]
+        row = found[0] if len(found) == 1 else None
     if row is None or row.user_id != str(user_key):
         raise BoardError('post_not_found', 'No such post on your boards. Read the board for post ids.')
     return row
@@ -975,7 +980,11 @@ async def _add_reply(user_key: str, post_id: str, text: str, author: Author, *,
         # Someone working on a claimed request may post progress without settling it.
         if not close and post.claimed_by and _claimer(post, author) and post.status == 'open':
             status = 'open'
-    changes = {'replies': replies, 'status': status, 'changed_at': now_ms()}
+    changes: dict[str, Any] = {'replies': replies, 'status': status, 'changed_at': now_ms()}
+    if close and post.kind == 'request' and not post.claimed_by and author.kind in BOTS:
+        # Whoever did an unclaimed request and closed it took it on.
+        changes['claimed_by'] = {'kind': author.kind, 'id': author.id, 'name': entry['author_name']}
+        changes['claimed_at'] = changes['changed_at']
     await BoardPost.update_one({'id': post.id}, changes)
     for key, value in changes.items():
         setattr(post, key, value)
@@ -1264,8 +1273,13 @@ async def _open_board_chat(user_key: str, post: BoardPost, agent: Any, depth: in
     }
     session = await agent_chats.create_chat(user_key, agent, started_by)
     title = f'Board: {_clip(title_text, 60)}'
-    await Session.update_one({'id': str(session.id)}, {'title': title})
-    session.title = title
+    changes: dict[str, Any] = {'title': title}
+    if project_of(post.board):
+        # A chat about a project channel post works in that project (its folders, its channel).
+        changes['project_id'] = project_of(post.board)
+    await Session.update_one({'id': str(session.id)}, changes)
+    for key, value in changes.items():
+        setattr(session, key, value)
     return session
 
 
@@ -1290,6 +1304,18 @@ def _answer_when_done(user_key: str, post: BoardPost, agent: Any, session: Any):
     return done
 
 
+async def _where_note(user_key: str, post: BoardPost) -> str:
+    """', in the "Launch" project channel (board "project:…")' for a channel post."""
+    if not project_of(post.board):
+        return ''
+    from cognitrix.board import channels
+
+    project = await channels.project_for(user_key, post.board)
+    thread = f', thread "{post.thread_title or post.thread}"' if post.thread else ''
+    return (f', in the "{getattr(project, "name", "project")}" project channel (board "{post.board}"{thread}; '
+            'use that board when you read or post about it)')
+
+
 async def wake(user_key: str, post_id: str, *, depth: int = 0) -> str:
     """Start a chat with the agent a question or request is for, so it can
     answer. Returns 'sent' or why not."""
@@ -1306,7 +1332,8 @@ async def wake(user_key: str, post_id: str, *, depth: int = 0) -> str:
         return reason
     session = await _open_board_chat(user_key, post, agent, depth, post.text)
     label = KIND_LABELS.get(post.kind, 'question').lower()
-    text = (f'{post.author_name} left you a {label} on the message board (post {post.id}):\n\n{post.text}\n\n'
+    where = await _where_note(user_key, post)
+    text = (f'{post.author_name} left you a {label} on the message board (post {post.id}){where}:\n\n{post.text}\n\n'
             f'Answer it with Board (action "answer", post_id "{post.id}"), in a few lines. '
             'If it isn\'t yours to answer or you can\'t, answer saying so and who might know. '
             'Your answer is sent back to them.')
@@ -1346,7 +1373,8 @@ async def wake_mention(user_key: str, post_id: str, agent_id: str, *, by: str, t
         return reason
     session = await _open_board_chat(user_key, post, agent, depth, text)
     label = KIND_LABELS.get(post.kind, 'post').lower()
-    lines = [f'{by} tagged you on the message board (post {post.id}, a {label} by {post.author_name}).']
+    where = await _where_note(user_key, post)
+    lines = [f'{by} tagged you on the message board (post {post.id}, a {label} by {post.author_name}){where}.']
     if text != post.text:
         lines.append(f'The post: {post.text}')
     lines.append(f'{by} wrote: {text}')
