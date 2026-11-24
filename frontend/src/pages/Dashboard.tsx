@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ModeSwitch } from '@/components/chill/ChillScreen';
-import { CHILL_PATH, setUiMode } from '@/lib/uiMode';
+import { CHILL_NEW_PATH, setUiMode } from '@/lib/uiMode';
 import {
   ArrowRight,
   ArrowUp,
@@ -488,7 +488,7 @@ export default function Dashboard() {
               {summary.length > 0 && <p className="mt-1.5 text-[14px] text-fg-dim">{summary.join(' · ')}</p>}
             </div>
             <div className="relative flex flex-none flex-wrap items-center gap-2 [&>a]:bg-bg/85 [&>a]:backdrop-blur-sm">
-              <ModeSwitch chill={false} onChill={() => { setUiMode('chill'); navigate(CHILL_PATH); }} onFull={() => {}} className="chill" />
+              <ModeSwitch chill={false} onChill={() => { setUiMode('chill'); navigate(CHILL_NEW_PATH); }} onFull={() => {}} className="chill" />
               <Button asChild variant="outline" size="sm">
                 <Link to="/tasks/new">
                   <Plus className="h-3.5 w-3.5" aria-hidden="true" />{' '}{tr('ui.dashboard.newTask')}

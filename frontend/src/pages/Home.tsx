@@ -47,7 +47,7 @@ import { AgentPickerChip, NewChatGreeting, newChatSuggestions } from '@/componen
 import { useOptionalUser } from '@/context/AppContext';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 import { takeChatAutoSend, takeChatDraft } from '@/lib/chatDraft';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { CHATS_EDITED, chatHref, chatsStale, newChatHref, setChatNav, type ChatsEditedDetail } from '@/lib/chatNav';
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 import { setViewingChat } from '@/lib/chatPresence';
@@ -1175,12 +1175,17 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
   // it — a stale key could point at a deleted session or a task-run session
   // (which must never open as a chat thread).
   const restoredForAgent = useRef<string | null>(null);
+  // Chill mode opened with ?new=1 (from the Home page or another page that
+  // isn't a chat): start blank, even after chill settles on its assistant.
+  const { search: startSearch } = useLocation();
+  const freshStartRef = useRef(chill && new URLSearchParams(startSearch).get('new') === '1');
+  useEffect(() => { if (activeSessionId) freshStartRef.current = false; }, [activeSessionId]);
   useEffect(() => {
     if (!agentId || !convosReady) return;
     if (restoredForAgent.current === agentId) return;
     restoredForAgent.current = agentId;
     const stored = localStorage.getItem(sessionKey(agentId));
-    if (stored === '') {
+    if (stored === '' || freshStartRef.current) {
       // Sentinel: the user deliberately left a blank new thread.
       setActiveSessionId(null);
       resetThreadState();

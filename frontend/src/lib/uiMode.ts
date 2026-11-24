@@ -7,6 +7,10 @@ const KEY = 'uiMode';
 
 export const CHILL_PATH = '/chill';
 
+/** Chill mode on a new, empty chat: used when switching from a page that
+ *  isn't a chat, so the last chat doesn't come back by surprise. */
+export const CHILL_NEW_PATH = `${CHILL_PATH}?new=1`;
+
 export function getUiMode(): UiMode {
   try {
     return localStorage.getItem(KEY) === 'chill' ? 'chill' : 'full';

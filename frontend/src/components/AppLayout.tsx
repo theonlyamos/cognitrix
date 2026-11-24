@@ -10,7 +10,7 @@ import WhatsNew from '@/components/WhatsNew';
 import { NotificationsProvider } from '@/context/NotificationsContext';
 import { isDesktop, onDesktopEvent, invokeDesktop } from '@/lib/desktop';
 import { tr } from '@/lib/i18n';
-import { CHILL_PATH, getUiMode, isLandingPath, isModeSwitchKey } from '@/lib/uiMode';
+import { CHILL_NEW_PATH, CHILL_PATH, getUiMode, isLandingPath, isModeSwitchKey } from '@/lib/uiMode';
 
 /** Persistent shell: the sidebar (with every chat) and alerts mount once;
  *  pages swap through the Outlet. */
@@ -38,13 +38,13 @@ function AppShell() {
     if (start && getUiMode() === 'chill' && isLandingPath(start.pathname, start.search)) navigate(CHILL_PATH, { replace: true });
   }, [navigate]);
 
-  // Ctrl+Shift+. switches to chill mode from any page. The chat screens
-  // handle it themselves so the open chat comes along.
+  // Ctrl+Shift+. switches to chill mode from any page, on a new chat. The
+  // chat screens handle it themselves so the open chat comes along.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!isModeSwitchKey(event) || pathname === '/home' || pathname === CHILL_PATH) return;
       event.preventDefault();
-      navigate(CHILL_PATH);
+      navigate(CHILL_NEW_PATH);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
