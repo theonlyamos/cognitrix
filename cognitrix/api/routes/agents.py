@@ -562,6 +562,8 @@ async def save_agent(request: Request, agent: Agent,
     try:
         if 'reasoning_effort' in llm_data:
             llm_data['reasoning_effort'] = normalize_reasoning_effort(llm_data['reasoning_effort'])
+        if 'fast_mode' in llm_data:
+            llm_data['fast_mode'] = llm_data['fast_mode'] is True
         if llm_data.get('harness_mode') is not None:
             from ...providers.harness import normalize_mode
             llm_data['harness_mode'] = normalize_mode(llm_data['harness_mode'])
@@ -766,6 +768,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'bypass_permissions': bool(data.get('bypass_permissions')),
                 **({'swarm': True} if data.get('swarm') else {}),
                 'reasoning_effort': normalize_reasoning_effort(data.get('reasoning_effort')),
+                **({'fast_mode': data['fast_mode']} if isinstance(data.get('fast_mode'), bool) else {}),
                 **({'chat_model': chat_model} if chat_model else {}),
                 'execution_mode': execution_mode.value,
                 'timezone': _request_timezone(),

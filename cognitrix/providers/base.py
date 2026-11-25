@@ -476,6 +476,10 @@ REASONING_EFFORTS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')
 turn_reasoning_effort: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     'turn_reasoning_effort', default=None
 )
+# The chat window's fast mode switch for this turn (None = the agent's setting).
+turn_fast_mode: contextvars.ContextVar[bool | None] = contextvars.ContextVar(
+    'turn_fast_mode', default=None
+)
 
 
 # A per-turn model picked in the chat window: (id of the agent's own LLM, the
@@ -654,6 +658,9 @@ class LLM(Model):
     reasoning_effort: str = ''
     """How hard the model thinks: none, minimal, low, medium, high or xhigh.
     Empty = the provider's default. Sent as the OpenAI `reasoning_effort` param."""
+    fast_mode: bool = False
+    """For a coding agent CLI that has a fast mode (harness.FAST_HARNESSES): turn it on.
+    Off leaves the CLI on its own setting."""
 
     def __init__(self, provider: str | None = None, **data: Any):
         if provider is not None or any(k in data for k in ('base_url', 'api_key', 'model')):

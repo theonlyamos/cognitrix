@@ -16,6 +16,7 @@ const EyeOffIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M17.94 1
 const BoxIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" /></>, size);
 const SwarmIcon = ({ size = 15 }: { size?: number }) => svg(<><circle cx="12" cy="5" r="2.2" /><circle cx="5" cy="18" r="2.2" /><circle cx="12" cy="18" r="2.2" /><circle cx="19" cy="18" r="2.2" /><path d="M12 7.2v8.6M12 11H5v4.8M12 11h7v4.8" /></>, size);
 const WavesIcon = () => svg(<path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" />);
+const FastIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M13 19l9-7-9-7v14z" /><path d="M2 19l9-7-9-7v14z" /></>, size);
 const ClockIcon = ({ size = 15 }: { size?: number }) => svg(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>, size);
 
 function Switch({ on, tone }: { on: boolean; tone: 'danger' | 'warn' | 'accent' }) {
@@ -51,6 +52,8 @@ interface Props {
   swarm?: { on: boolean; onToggle: () => void };
   /** Run in sandbox: shown when the sandboxed computer is on (or the chat already uses it). */
   sandbox?: { on: boolean; available: boolean; onToggle: () => void; /** The computer chip already shows it. */ hideTag?: boolean };
+  /** Fast mode for agents on a coding agent CLI that has one (Claude Code, Codex). */
+  fast?: { on: boolean; onToggle: () => void };
   /** Shown between the + button and the on/off indicators (who the chat is with, its project). */
   children?: ReactNode;
   /** The chat's settings chips (model, computer, folders). Beside the + button on a
@@ -212,6 +215,21 @@ export default function ComposerMenu(p: Props) {
                   <Switch on={p.sandbox.on} tone="accent" />
                 </button>
               )}
+              {p.fast && (
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={p.fast.on}
+                  aria-label={tr('ui.composerMenu.fastMode')}
+                  title={tr('ui.composerMenu.runsTheCodingAgentIn')}
+                  className={item}
+                  onClick={p.fast.onToggle}
+                >
+                  <FastIcon />
+                  <span className="min-w-0 flex-1">{tr('ui.composerMenu.fastMode')}<span className={sub}>{tr('ui.composerMenu.quickerRepliesCostsMore')}</span></span>
+                  <Switch on={p.fast.on} tone="accent" />
+                </button>
+              )}
               <div className="mx-1 my-1 h-px bg-line" />
               <div title={tr('ui.composerMenu.howHardTheModelThinks')}>
                 <div className="flex items-center gap-2.5 px-2.5 pb-1.5 pt-2 text-[14px] text-fg md:text-[13px]">
@@ -250,6 +268,18 @@ export default function ComposerMenu(p: Props) {
         <button type="button" onClick={() => setOpen(true)} title={tr('ui.composerMenu.reasoningReasoninglabelClickToChange', { reasoningLabel: reasoningLabel(p.reasoning).toLowerCase() })} aria-label={tr('ui.composerMenu.reasoningReasoninglabelChange', { reasoningLabel: reasoningLabel(p.reasoning).toLowerCase() })} className={cn(composerBtn)}>
           <ClockIcon size={15} />
           <span className="hidden sm:inline">{reasoningLabel(p.reasoning)}</span>
+        </button>
+      )}
+      {p.fast?.on && (
+        <button
+          type="button"
+          onClick={p.fast.onToggle}
+          title={tr('ui.composerMenu.fastModeIsOnClick')}
+          aria-label={tr('ui.composerMenu.turnOffFastMode')}
+          className={cn(composerBtn, 'text-accent-ink')}
+        >
+          <FastIcon size={15} />
+          <span className="hidden sm:inline">{tr('ui.composerMenu.fast')}</span>
         </button>
       )}
       {p.swarm?.on && (

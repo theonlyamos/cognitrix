@@ -63,6 +63,15 @@ PLACEHOLDER_KEY = 'signed-in-cli'
 """Stands in for an API key in agent configs: the CLI signs itself in."""
 WHOLE_MESSAGES = frozenset({'codex', 'opencode'})
 """CLIs that send whole messages, not deltas: the last one is the answer."""
+FAST_HARNESSES = frozenset({'claude-code', 'codex'})
+"""CLIs with a fast mode Cognitrix can turn on for a run. Claude Code takes
+``{"fastMode": true}`` in ``--settings`` (Opus and Fable models, billed as
+extra usage); Codex takes ``service_tier=fast`` (GPT-6.x when signed in with
+ChatGPT, uses the plan faster). Gemini CLI, Copilot CLI and OpenCode have
+none, and the Antigravity CLI removed its /fast in 1.1.0."""
+FAST_SETTINGS_NAME = 'claude-code-fast.json'
+"""Claude Code's --settings file for fast mode, in the data folder. A file,
+not inline JSON: quotes don't survive the .cmd wrappers on Windows."""
 NO_TOOL_HARNESSES: frozenset[str] = frozenset()
 """CLIs that can't be handed the agent's Cognitrix tools for one run."""
 AGY_TOOLS_DIR_PREFIX = '.agy-tools-'
@@ -165,6 +174,17 @@ def installed() -> dict[str, str]:
         if program:
             found[key] = program
     return found
+
+
+def fast_mode_for(llm: Any) -> bool:
+    """Whether this turn runs in the CLI's fast mode: the chat window's switch
+    if it was used, else the agent's setting. Only for FAST_HARNESSES."""
+    from cognitrix.providers.base import turn_fast_mode
+
+    if str(getattr(llm, 'provider', '') or '').lower() not in FAST_HARNESSES:
+        return False
+    chosen = turn_fast_mode.get()
+    return bool(getattr(llm, 'fast_mode', False)) if chosen is None else bool(chosen)
 
 
 # --- what to send ----------------------------------------------------------------
@@ -312,6 +332,7 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
                   resume: str | None, new_session: str | None, cwd: str,
                   tools_url: str | None = None, settings_file: str | None = None,
                   extra_dirs: list[str] | tuple[str, ...] = (),
+                  fast: bool = False, fast_settings_file: str | None = None,
                   ) -> tuple[list[str], dict[str, str]]:
     """(argv, extra environment). The message itself always goes on stdin.
 
@@ -350,6 +371,12 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
         argv += [f'--add-dir={d}' for d in extra_dirs]
         if model:
             argv += ['--model', model]
+        if fast:
+            if fast_settings_file:
+                Path(fast_settings_file).write_text(json.dumps({'fastMode': True}), encoding='utf-8')
+                argv += ['--settings', fast_settings_file]
+            else:
+                argv += ['--settings', json.dumps({'fastMode': True})]
         if resume:
             argv += ['--resume', resume]
         return argv, env
@@ -366,6 +393,9 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
             argv += ['-m', model]
         if effort in ('minimal', 'low', 'medium', 'high', 'xhigh'):
             argv += ['-c', f'model_reasoning_effort="{effort}"']
+        if fast:
+            # No quotes (see below): Codex reads a bare word as a string.
+            argv += ['-c', 'service_tier=fast']
         if tools_url:
             # Cognitrix does its own asking for these tools, so Codex needn't.
             # No quotes (they don't survive .cmd wrappers): Codex reads a value
@@ -832,10 +862,16 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
         if bridge is not None and lent and not resume:
             text = tools_note(harness.label, bridge.tool_names()) + text
 
+        fast = fast_mode_for(llm)
+        fast_file = None
+        if fast and key == 'claude-code':
+            _store_file().parent.mkdir(parents=True, exist_ok=True)
+            fast_file = str(_store_file().parent / FAST_SETTINGS_NAME)
         argv, env_extra = build_command(key, program, mode=mode, model=model, effort=effort,
                                         resume=resume, new_session=new_session, cwd=cwd,
                                         tools_url=bridge.url if bridge is not None else None,
-                                        settings_file=settings_file, extra_dirs=extra_dirs)
+                                        settings_file=settings_file, extra_dirs=extra_dirs,
+                                        fast=fast, fast_settings_file=fast_file)
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
         proc = _spawn(argv, stdin_message(key, text), cwd, env_extra, loop, queue)

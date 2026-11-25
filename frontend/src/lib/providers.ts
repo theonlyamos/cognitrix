@@ -37,6 +37,14 @@ export const HARNESS_MODES = [
 /** CLIs that can send their permission prompts to Cognitrix (ASK_HARNESSES in harness.py). */
 export const ASK_HARNESSES = ['claude-code'];
 
+/** CLIs with a fast mode Cognitrix can turn on (FAST_HARNESSES in harness.py):
+ *  Claude Code's fastMode setting and Codex's fast service tier. */
+export const FAST_HARNESSES = ['claude-code', 'codex'];
+
+export function hasFastMode(provider: string | null | undefined): boolean {
+  return FAST_HARNESSES.includes((provider || '').toLowerCase());
+}
+
 /** CLIs that can't be lent the agent's Cognitrix tools (NO_TOOL_HARNESSES in harness.py). */
 export const NO_TOOL_HARNESSES: string[] = [];
 

@@ -10,7 +10,7 @@ import { useResource } from '@/hooks/useResource';
 import { api, errorMessage } from '@/lib/api';
 import { desktop } from '@/lib/desktop';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
-import { AGENTS_CHANGED_EVENT } from '@/lib/providers';
+import { AGENTS_CHANGED_EVENT, hasFastMode } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
@@ -623,6 +623,40 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
       if (next) localStorage.setItem(`chatModel:${sid}`, JSON.stringify(next));
       else localStorage.removeItem(`chatModel:${sid}`);
     } catch { /* not persisted */ }
+  };
+  // Fast mode for this chat, for agents on a CLI that has one. null follows
+  // the agent's own setting; a choice here is remembered per chat.
+  const [fastChoice, setFastChoice] = useState<boolean | null>(null);
+  const fastChoiceRef = useRef<boolean | null>(null);
+  fastChoiceRef.current = fastChoice;
+  const fastSidRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = fastSidRef.current;
+    fastSidRef.current = activeSessionId;
+    if (!activeSessionId) {
+      if (previous) setFastChoice(null);
+      return;
+    }
+    let saved: boolean | null = null;
+    try {
+      const raw = localStorage.getItem(`chatFast:${activeSessionId}`);
+      saved = raw === '1' ? true : raw === '0' ? false : null;
+    } catch { /* not remembered */ }
+    if (!previous && saved === null && fastChoiceRef.current !== null) {
+      // A new chat's first message: keep what was picked for it.
+      try { localStorage.setItem(`chatFast:${activeSessionId}`, fastChoiceRef.current ? '1' : '0'); } catch { /* not persisted */ }
+      return;
+    }
+    setFastChoice(saved);
+  }, [activeSessionId]);
+  useEffect(() => {
+    if (!activeRef.current) setFastChoice(null);
+  }, [agentId]);
+  const changeFast = (next: boolean) => {
+    setFastChoice(next);
+    const sid = activeRef.current;
+    if (!sid) return;
+    try { localStorage.setItem(`chatFast:${sid}`, next ? '1' : '0'); } catch { /* not persisted */ }
   };
   const waitingRef = useRef(false);
   waitingRef.current = waiting;
@@ -1617,6 +1651,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
           ...(swarmRef.current && executionMode === 'chat' && !incognitoRef.current ? { swarm: true } : {}),
           ...(reasoningRef.current ? { reasoning_effort: reasoningRef.current } : {}),
           ...(chatModelRef.current ? { model: chatModelRef.current } : {}),
+          ...(fastChoiceRef.current !== null ? { fast_mode: fastChoiceRef.current } : {}),
           ...(!activeRef.current && draftFoldersRef.current ? { folders: draftFoldersRef.current } : {}),
           ...(!activeRef.current && incognitoRef.current ? { incognito: true } : {}),
           ...(!activeRef.current && draftSandboxRef.current !== null ? { run_in_sandbox: draftSandboxRef.current } : {}),
@@ -2052,6 +2087,9 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
   ].filter(Boolean).join(' · ');
   const activeChat = allChats.find((c) => c.id === activeSessionId);
   const currentAgent = agentById.get(agentId);
+  // Fast mode is offered when this chat runs on a CLI that has one.
+  const fastProvider = hasFastMode(chatModel?.provider || currentAgent?.llm?.provider);
+  const fastOn = fastProvider && (fastChoice ?? currentAgent?.llm?.fast_mode === true);
   const chatStarted = parseStamp(activeChat?.datetime || activeChat?.updated_at)?.toLocaleString(dateLocale(), { dateStyle: 'medium', timeStyle: 'short' });
 
 
@@ -2303,6 +2341,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
             reasoning={reasoning}
             onReasoning={changeReasoning}
             swarm={incognito ? undefined : { on: swarmOn, onToggle: () => setSwarmOn((v) => !v) }}
+            fast={fastProvider ? { on: fastOn, onToggle: () => changeFast(!fastOn) } : undefined}
             sandbox={!chatPc && (sandboxOn || runInSandbox) ? {
               on: runInSandbox,
               available: sandboxOn,
