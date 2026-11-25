@@ -11,13 +11,18 @@ const svg = (d: ReactNode, size = 15) => (
 );
 const ClipIcon = () => svg(<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />);
 const TaskIcon = () => svg(<><path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9" /></>);
-const BoltIcon = ({ size = 15 }: { size?: number }) => svg(<path d="M13 2L3 14h9l-1 8 10-12h-9z" />, size);
+/** Auto-approve: approvals are off, so the shield is crossed out. */
+const ShieldOffIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M19.7 14A8.6 8.6 0 0 0 20 12V5l-8-3-3.2 1.2M4.7 4.7 4 5v7c0 6 8 10 8 10a20 20 0 0 0 5.6-4.4" /><path d="M2 2l20 20" /></>, size);
 const EyeOffIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M17.94 17.94A10 10 0 0 1 12 20c-7 0-11-8-11-8a18 18 0 0 1 5.06-5.94M9.9 4.24A9 9 0 0 1 12 4c7 0 11 8 11 8a18 18 0 0 1-2.16 3.19" /><path d="M1 1l22 22" /></>, size);
 const BoxIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" /></>, size);
 const SwarmIcon = ({ size = 15 }: { size?: number }) => svg(<><circle cx="12" cy="5" r="2.2" /><circle cx="5" cy="18" r="2.2" /><circle cx="12" cy="18" r="2.2" /><circle cx="19" cy="18" r="2.2" /><path d="M12 7.2v8.6M12 11H5v4.8M12 11h7v4.8" /></>, size);
 const WavesIcon = () => svg(<path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" />);
 const FastIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M13 19l9-7-9-7v14z" /><path d="M2 19l9-7-9-7v14z" /></>, size);
-const ClockIcon = ({ size = 15 }: { size?: number }) => svg(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>, size);
+/** Reasoning effort: stacked lines, "how much thinking". */
+const EffortIcon = ({ size = 15 }: { size?: number }) => svg(<path d="M4 18h2M4 14h5M4 10h9M4 6h14" />, size);
+const ChevronIcon = ({ open }: { open: boolean }) => (
+  <svg aria-hidden width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className={cn('flex-none transition-transform', open && 'rotate-180')}><path d="M6 9l6 6 6-6" /></svg>
+);
 
 function Switch({ on, tone }: { on: boolean; tone: 'danger' | 'warn' | 'accent' }) {
   return (
@@ -32,6 +37,64 @@ function Switch({ on, tone }: { on: boolean; tone: 'danger' | 'warn' | 'accent' 
     >
       <span className={cn('absolute top-[2px] h-[11px] w-[11px] rounded-full transition-all', on ? 'left-[15px] bg-white' : 'left-[2px] bg-fg-dim')} />
     </span>
+  );
+}
+
+/** The effort tag beside the model chip, with its own small picker. Shown
+ *  only when a level is picked; "default" hides it again. */
+function EffortChip({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  const label = reasoningLabel(value);
+  return (
+    <div ref={rootRef} className="relative flex-none">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title={tr('ui.composerMenu.reasoningReasoninglabelClickToChange', { reasoningLabel: label.toLowerCase() })}
+        aria-label={tr('ui.composerMenu.reasoningReasoninglabelChange', { reasoningLabel: label.toLowerCase() })}
+        className={cn(composerBtn, open && 'bg-panel-2 text-fg')}
+      >
+        <EffortIcon size={15} />
+        <span className="hidden sm:inline">{label}</span>
+        <ChevronIcon open={open} />
+      </button>
+      {open && (
+        <div role="listbox" aria-label={tr('ui.composerMenu.reasoningLevel')} className="absolute bottom-full left-0 z-50 mb-2 min-w-[9.5rem] rounded-xl border border-line bg-panel p-1 shadow-lg">
+          {LEVELS.map((l) => {
+            const on = l.value === value;
+            return (
+              <button
+                key={l.value || 'default'}
+                type="button"
+                role="option"
+                aria-selected={on}
+                onClick={() => { onChange(l.value); setOpen(false); }}
+                className={cn('flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left font-mono text-[12px] hover:bg-panel-2 md:py-1.5 md:text-[11px]', on ? 'text-accent-ink' : 'text-fg-dim hover:text-fg')}
+              >
+                <span aria-hidden className="w-2.5">{on ? '✓' : ''}</span>
+                {l.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -56,7 +119,10 @@ interface Props {
   fast?: { on: boolean; onToggle: () => void };
   /** Shown between the + button and the on/off indicators (who the chat is with, its project). */
   children?: ReactNode;
-  /** The chat's settings chips (model, computer, folders). Beside the + button on a
+  /** The chat's model chip. The effort and fast mode chips follow it, then `settings`.
+   *  Beside the + button on a wide screen; inside the + sheet on a phone. */
+  model?: ReactNode;
+  /** The chat's other settings chips (computer, folders). Beside the + button on a
    *  wide screen; inside the + sheet on a phone, with their names written out. */
   settings?: ReactNode;
   /** A phone-width screen: the row keeps only the + button and what is switched on. */
@@ -122,11 +188,12 @@ export default function ComposerMenu(p: Props) {
               className={cn(composerPopover, 'md:w-80')}
             >
               <div aria-hidden className="mx-auto mb-2 h-1 w-9 rounded-full bg-line md:hidden" />
-              {p.phone && p.settings && (
+              {p.phone && (p.model || p.settings) && (
                 <>
                   <div className="px-2.5 pb-1 pt-1 text-[12px] text-fg-dim">{tr('ui.composerMenu.thisChat')}</div>
                   {/* The chips keep their own pickers; here their names are written out. */}
                   <div data-testid="composer-sheet-settings" className="flex flex-wrap items-center gap-1.5 px-1 pb-1 [&>div>button>span.hidden]:!inline [&>div>button]:border [&>div>button]:border-line [&>div>button]:px-3">
+                    {p.model}
                     {p.settings}
                   </div>
                   <div className="mx-1 my-1 h-px bg-line" />
@@ -164,7 +231,7 @@ export default function ComposerMenu(p: Props) {
                 className={item}
                 onClick={p.onToggleBypass}
               >
-                <BoltIcon />
+                <ShieldOffIcon />
                 <span className="min-w-0 flex-1">{tr('ui.composerMenu.autoApprove')}<span className={sub}>{tr('ui.composerMenu.skipApprovalPromptsInThis')}</span></span>
                 <Switch on={p.bypass} tone="danger" />
               </button>
@@ -215,25 +282,10 @@ export default function ComposerMenu(p: Props) {
                   <Switch on={p.sandbox.on} tone="accent" />
                 </button>
               )}
-              {p.fast && (
-                <button
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={p.fast.on}
-                  aria-label={tr('ui.composerMenu.fastMode')}
-                  title={tr('ui.composerMenu.runsTheCodingAgentIn')}
-                  className={item}
-                  onClick={p.fast.onToggle}
-                >
-                  <FastIcon />
-                  <span className="min-w-0 flex-1">{tr('ui.composerMenu.fastMode')}<span className={sub}>{tr('ui.composerMenu.quickerRepliesCostsMore')}</span></span>
-                  <Switch on={p.fast.on} tone="accent" />
-                </button>
-              )}
               <div className="mx-1 my-1 h-px bg-line" />
               <div title={tr('ui.composerMenu.howHardTheModelThinks')}>
                 <div className="flex items-center gap-2.5 px-2.5 pb-1.5 pt-2 text-[14px] text-fg md:text-[13px]">
-                  <ClockIcon />
+                  <EffortIcon />
                   <span className="flex-1">{tr('ui.composerMenu.reasoning')}</span>
                   <span className="font-mono text-[11px] text-accent-ink">{p.reasoning ? reasoningLabel(p.reasoning).toLowerCase() : tr('ui.composerMenu.default')}</span>
                 </div>
@@ -258,18 +310,28 @@ export default function ComposerMenu(p: Props) {
                   })}
                 </div>
               </div>
+              {p.fast && (
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={p.fast.on}
+                  aria-label={tr('ui.composerMenu.fastMode')}
+                  title={tr('ui.composerMenu.runsTheCodingAgentIn')}
+                  className={item}
+                  onClick={p.fast.onToggle}
+                >
+                  <FastIcon />
+                  <span className="min-w-0 flex-1">{tr('ui.composerMenu.fastMode')}<span className={sub}>{tr('ui.composerMenu.quickerRepliesCostsMore')}</span></span>
+                  <Switch on={p.fast.on} tone="accent" />
+                </button>
+              )}
             </div>
           </>
         )}
       </div>
       {p.children}
-      {!p.phone && p.settings}
-      {p.reasoning && (
-        <button type="button" onClick={() => setOpen(true)} title={tr('ui.composerMenu.reasoningReasoninglabelClickToChange', { reasoningLabel: reasoningLabel(p.reasoning).toLowerCase() })} aria-label={tr('ui.composerMenu.reasoningReasoninglabelChange', { reasoningLabel: reasoningLabel(p.reasoning).toLowerCase() })} className={cn(composerBtn)}>
-          <ClockIcon size={15} />
-          <span className="hidden sm:inline">{reasoningLabel(p.reasoning)}</span>
-        </button>
-      )}
+      {!p.phone && p.model}
+      {p.reasoning && <EffortChip value={p.reasoning} onChange={p.onReasoning} />}
       {p.fast?.on && (
         <button
           type="button"
@@ -282,6 +344,7 @@ export default function ComposerMenu(p: Props) {
           <span className="hidden sm:inline">{tr('ui.composerMenu.fast')}</span>
         </button>
       )}
+      {!p.phone && p.settings}
       {p.swarm?.on && (
         <button
           type="button"
@@ -310,7 +373,7 @@ export default function ComposerMenu(p: Props) {
       )}
       {p.bypass && (
         <button type="button" onClick={p.onToggleBypass} title={tr('ui.composerMenu.autoApproveIsOnTool')} aria-label={tr('ui.composerMenu.turnOffAutoApprove')} className={cn(composerIconBtn, composerDanger)}>
-          <BoltIcon size={15} />
+          <ShieldOffIcon size={15} />
         </button>
       )}
       {p.incognito && (
