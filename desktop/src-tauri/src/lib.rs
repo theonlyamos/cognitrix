@@ -572,7 +572,9 @@ fn show_main_window(app: AppHandle, path: Option<String>) {
 /// The Stop button on the agent cursor's pill (stop.html).
 #[tauri::command]
 async fn overlay_stop(app: AppHandle, agent_id: Option<String>) -> Result<(), String> {
-    overlay::stop(&app, agent_id)
+    tauri::async_runtime::spawn_blocking(move || overlay::stop(&app, agent_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

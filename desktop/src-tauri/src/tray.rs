@@ -73,9 +73,13 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             }
             "restart" => engine::restart(app),
             "stop-agents" => {
-                if let Err(e) = crate::overlay::stop(app, None) {
-                    log::warn!("could not stop the agents: {e}");
-                }
+                // Off the main thread: it waits on the engine.
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = crate::overlay::stop(&app, None) {
+                        log::warn!("could not stop the agents: {e}");
+                    }
+                });
             }
             "logs" => crate::open_engine_log(app),
             "quit" => app.exit(0),
