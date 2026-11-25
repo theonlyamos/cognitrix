@@ -1868,7 +1868,10 @@ def _shared_folders(authority, share) -> tuple[_FolderShare | None, str]:
     for f in mine:
         if folder_paths._norm(f.root) not in shared_keys:
             out.append(Folder(f.path, folder_paths.READ, f.name, False))
-    out = out[:folder_paths.MAX_FOLDERS]
+    if len(out) > folder_paths.MAX_FOLDERS:
+        # Never trim: a dropped read only folder nested in a shared one would
+        # become writable through it.
+        return None, f'that makes more than {folder_paths.MAX_FOLDERS} folders; share fewer'
     summary = ', '.join(f'{f.label} ({f.path})' for f in picked)
     return _FolderShare(folders=tuple(out), summary=summary), ''
 

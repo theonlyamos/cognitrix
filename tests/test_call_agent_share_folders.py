@@ -193,3 +193,21 @@ async def test_a_chat_on_a_paired_pc_can_share_the_pc(tmp_path, monkeypatch):
     out = await _call(_ctx(parent.id, folders, device='pc-1', device_read_only=True),
                       name='Researcher', task='Fix it', share_folders=['primary'])
     assert "can't share those folders" in out
+
+
+async def test_too_many_folders_are_refused_not_trimmed(tmp_path, monkeypatch):
+    seen, parent = await _setup(tmp_path, monkeypatch)
+    project, _docs, folders = _folders(tmp_path)
+    private = project / 'private'
+    private.mkdir()
+    subs = []
+    for i in range(20):
+        (project / f's{i}').mkdir()
+        subs.append(f's{i}')
+    folders = folders + (Folder(str(private), READ, 'private', False),)
+
+    out = await _call(_ctx(parent.id, folders), name='Researcher', task='Fix it',
+                      share_folders=['primary', *subs])
+
+    assert "can't share those folders" in out and 'more than 20 folders' in out
+    assert 'turns' not in seen
