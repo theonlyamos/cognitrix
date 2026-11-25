@@ -1828,12 +1828,22 @@ async def call_agent(name: str, task: str, mode: str = 'wait', wait_minutes: int
             saved = None
 
         if mode == 'handoff':
-            if saved is not None:
+            from cognitrix.sessions import agent_chats  # noqa: WPS433
+
+            # Checked again with no await before the run is registered, so
+            # hand-offs started at the same time can't pass the cap together.
+            if saved is not None and (agent_chats.running_agent_chats(str(authority.user_id))
+                                      >= agent_chats.MAX_RUNNING_PER_USER):
+                note = (f"(Hand-off isn't possible here: {agent_chats.MAX_RUNNING_PER_USER} agent chats are "
+                        'already working. Waited for the answer instead.)\n\n')
+            elif saved is not None:
                 _start_handoff(authority, agent, saved, current, task, child_context, depth)
                 return (f"Handed off to {name} (chat id {saved.id}). It is working in the background, and its "
                         'answer will arrive in this chat as a new message when it is done. Carry on with other '
                         "work, or tell the person what is running and end your turn. Don't wait or poll for it.")
-            note = "(Hand-off isn't possible here: the job's chat could not be saved. Waited for the answer instead.)\n\n"
+            else:
+                note = ("(Hand-off isn't possible here: the job's chat could not be saved. "
+                        'Waited for the answer instead.)\n\n')
 
         async def run_helper():
             if saved is None:
