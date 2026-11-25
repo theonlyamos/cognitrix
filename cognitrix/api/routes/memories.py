@@ -111,6 +111,7 @@ async def list_memories(scope: str | None = None, agent_id: str | None = None, q
         'settings': await _settings_json(owner),
         'limit': saved.MAX_PER_USER,
         'max_chars': saved.MAX_CHARS,
+        'edit_max_chars': saved.STORED_MAX_CHARS,
     }
 
 

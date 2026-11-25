@@ -52,14 +52,14 @@ def _proposal_reason(settings: Any) -> str:
 def _proposed(row: Any, reason: str) -> ToolOutcome:
     where = row.scope if row.scope in ('agent', 'project') else 'global'
     return ToolOutcome.success(
-        f'Memory proposed (id {row.id}, {where}): {row.content}\n'
+        f'Memory proposed (id {saved.short_id(row)}, {where}): {row.content}\n'
         f'{reason} It is waiting for their OK in the chat; it is not saved until they approve it.')
 
 
 def _line(row: Any) -> str:
     where = {'agent': 'this agent only', 'project': 'this project only'}.get(row.scope, 'global')
     until = f', until {row.valid_until}' if getattr(row, 'valid_until', '') else ''
-    return f'- {row.content} (id {row.id}, {where}{until})'
+    return f'- {row.content} (id {saved.short_id(row)}, {where}{until})'
 
 
 _KIND_WORDS = {
@@ -85,7 +85,10 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
     What you already remember is listed in your instructions under "What you remember about the user".
 
     action:
-    - "save": remember one short fact (memory_id is not needed; the app assigns one) (content, at most 300 characters). Save lasting things the person
+    - "save": remember one short fact (memory_id is not needed; the app assigns one) (content, at most 300 characters).
+      Keep one memory per subject: if you already remember something on the same subject (the same routine,
+      project, hobby or person), "update" that memory to include the new detail instead of saving another.
+      Save lasting things the person
       tells you about themselves, their work, their preferences and decisions on ongoing projects, or
       anything they ask you to remember. Don't save one-off task details, things you can look up again,
       passwords or keys, or private details about other people.
@@ -97,7 +100,8 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
       or "the launch is on Friday". After that day it is no longer shown to you.
       Also save commitments and things being waited on ("I'll send Ama the deck on Friday",
       "waiting for Sam's numbers") with a valid_until on the due date: the assistant follows up on them.
-    - "update": replace a memory that changed (memory_id and the new content).
+    - "update": replace a memory that changed, or fold a new detail into it (memory_id and the new content,
+      at most 600 characters; keep every detail it already had unless it is no longer true).
     - "forget": delete a memory (memory_id). Do it when the person asks or a memory turns out wrong.
     - "search": find saved memories that aren't in your instructions (query).
     Search matches by meaning, so "my partner" finds "Married to Ama".
@@ -147,6 +151,13 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
             if chosen == 'agent' and not agent_id:
                 chosen = 'global'
             reason = _proposal_reason(settings)
+            if not reason:
+                grown = await saved.grow_into(user_id, content, scope=chosen, agent_id=agent_id,
+                                              kind=_kind(kind), valid_until=valid_until)
+                if grown is not None:
+                    return ToolOutcome.success(
+                        f'Memory updated (id {saved.short_id(grown)}, {grown.scope}): {grown.content}\n'
+                        'It said part of this already, so it now holds the whole fact.')
             row, created = await saved.add(
                 user_id, content, scope=chosen, agent_id=agent_id,
                 source='agent', session_id=str(ctx.session_id or ''), pending=bool(reason),
@@ -154,13 +165,21 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
             if not created:
                 if row.pending:
                     return ToolOutcome.success(
-                        f'Already proposed (id {row.id}): {row.content}. It is waiting for the person\'s OK.')
+                        f'Already proposed (id {saved.short_id(row)}): {row.content}. '
+                        'It is waiting for the person\'s OK.')
                 return ToolOutcome.success(
-                    f'Already remembered (id {row.id}): {row.content}. '
+                    f'Already remembered (id {saved.short_id(row)}): {row.content}. '
                     'Use action "update" if it needs to change.')
             if reason:
                 return _proposed(row, reason)
-            return ToolOutcome.success(f'Memory saved (id {row.id}, {row.scope}): {row.content}')
+            message = f'Memory saved (id {saved.short_id(row)}, {row.scope}): {row.content}'
+            near = await saved.related(user_id, parent, row.content, exclude=str(row.id))
+            if near:
+                message += ('\nYou also remember, on what may be the same subject:\n'
+                            + '\n'.join(_line(r) for r in near)
+                            + '\nIf one of these is about the same thing, update it to include the new '
+                              'detail and forget the one you just saved, so related details stay in one memory.')
+            return ToolOutcome.success(message)
 
         if action in ('update', 'forget'):
             row = await saved.get_memory(user_id, memory_id)
@@ -169,7 +188,7 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
                     'not_found', f'No memory with id {memory_id!r}. Use action "search" to find its id.')
             if action == 'forget':
                 await saved.delete(row)
-                return ToolOutcome.success(f'Memory forgotten (id {row.id}): {row.content}')
+                return ToolOutcome.success(f'Memory forgotten (id {saved.short_id(row)}): {row.content}')
             reason = _proposal_reason(settings)
             if reason:
                 proposal, _created = await saved.add(
@@ -178,7 +197,8 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
                     session_id=str(ctx.session_id or ''), pending=True, replaces=str(row.id),
                     kind=_kind(kind) or row.kind, valid_until=valid_until or row.valid_until)
                 if not proposal.pending:
-                    return ToolOutcome.success(f'Already remembered (id {proposal.id}): {proposal.content}.')
+                    return ToolOutcome.success(
+                        f'Already remembered (id {saved.short_id(proposal)}): {proposal.content}.')
                 return _proposed(proposal, reason)
             extra: dict[str, Any] = {}
             if kind:
@@ -188,7 +208,7 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
             if not str(content or '').strip() and not extra:
                 return ToolOutcome.failure('content_required', 'Give the new content, kind or valid_until.')
             row = await saved.update(row, content=content or None, **extra)
-            return ToolOutcome.success(f'Memory updated (id {row.id}, {row.scope}): {row.content}')
+            return ToolOutcome.success(f'Memory updated (id {saved.short_id(row)}, {row.scope}): {row.content}')
 
         if action == 'search':
             if not str(query or '').strip():

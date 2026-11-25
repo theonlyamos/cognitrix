@@ -19,8 +19,12 @@ interface AgentLite { id: string; name: string }
 /** Settings › Memory: what agents remember about you, and the switches for it. */
 export function MemorySettings() {
   const location = useLocation();
-  const highlight = new URLSearchParams(location.search).get('memory');
   const [data, setData] = useState<MemoryList | null>(null);
+  const wanted = new URLSearchParams(location.search).get('memory');
+  // Chat notes carry the short id agents see (its first 8 characters).
+  const highlight = wanted && wanted.length >= 6
+    ? (data?.memories.find((m) => m.id === wanted || m.id.startsWith(wanted))?.id ?? wanted)
+    : wanted;
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -203,7 +207,7 @@ export function MemorySettings() {
         ) : (
           <ul className="divide-y divide-line rounded-[12px] border border-line bg-panel">
             {shown.map((m) => (
-              <MemoryRow key={m.id} memory={m} agents={agents} busy={busy} highlighted={m.id === highlight} maxChars={data.max_chars}
+              <MemoryRow key={m.id} memory={m} agents={agents} busy={busy} highlighted={m.id === highlight} maxChars={data.edit_max_chars ?? data.max_chars}
                 onSave={(content, scope, agentId) => run(() => updateMemory(m.id, { content, scope, agent_id: agentId }), tr('ui.settings.memory.couldNotSaveTheMemory'))}
                 onPin={() => void run(() => updateMemory(m.id, { pinned: !m.pinned }), tr('ui.settings.memory.couldNotPinTheMemory'))}
                 onDelete={() => void run(() => deleteMemory(m.id), tr('ui.settings.memory.couldNotDeleteTheMemory'))} />
