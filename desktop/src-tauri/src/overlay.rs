@@ -316,7 +316,7 @@ fn stop_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 
 /// A see-through window. macOS needs Tauri's private-API feature for that,
 /// which this app doesn't enable, so there the windows stay opaque.
-fn see_through<'a>(
+pub(crate) fn see_through<'a>(
     builder: WebviewWindowBuilder<'a, tauri::Wry, AppHandle>,
 ) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
     #[cfg(not(target_os = "macos"))]

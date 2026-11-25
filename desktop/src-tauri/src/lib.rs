@@ -112,17 +112,23 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 fn build_quick_window(app: &AppHandle, base: &str) -> tauri::Result<WebviewWindow> {
     let url = Url::parse(&format!("{base}/quick")).expect("engine url");
     let handle = app.clone();
-    WebviewWindowBuilder::new(app, QUICK, WebviewUrl::External(url))
+    // See-through so the voice pill and its answer cards float on their own
+    // (macOS stays opaque, see overlay::see_through). The page draws its own
+    // shadows, so the window has none.
+    let builder = WebviewWindowBuilder::new(app, QUICK, WebviewUrl::External(url))
         .title("Quick ask")
-        .inner_size(680.0, 440.0)
-        .center()
+        .inner_size(QUICK_WIDTH, QUICK_MIN_HEIGHT)
         .decorations(false)
         .resizable(false)
         .always_on_top(true)
         .skip_taskbar(true)
-        .shadow(true)
-        .visible(false)
-        .background_color(tauri::window::Color(17, 19, 21, 255))
+        .shadow(cfg!(target_os = "macos"))
+        .visible(false);
+    #[cfg(target_os = "macos")]
+    let builder = builder.background_color(tauri::window::Color(17, 19, 21, 255));
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.background_color(tauri::window::Color(0, 0, 0, 0));
+    overlay::see_through(builder)
         .additional_browser_args(BROWSER_ARGS)
         .on_navigation({
             let handle = handle.clone();
@@ -131,6 +137,58 @@ fn build_quick_window(app: &AppHandle, base: &str) -> tauri::Result<WebviewWindo
         .on_new_window(move |url, _| open_new_window(&handle, &url))
         .on_permission_request(|_, kind| permission_for(kind))
         .build()
+}
+
+const QUICK_WIDTH: f64 = 720.0;
+const QUICK_MIN_HEIGHT: f64 = 88.0;
+/// Gap between the pill and the taskbar (or the bottom of the screen).
+const QUICK_BOTTOM_GAP: f64 = 12.0;
+
+/// The monitor the mouse is on, so quick ask opens on the screen in use.
+fn quick_monitor(window: &WebviewWindow) -> Option<tauri::Monitor> {
+    window
+        .cursor_position()
+        .ok()
+        .and_then(|p| window.monitor_from_point(p.x, p.y).ok().flatten())
+        .or_else(|| window.current_monitor().ok().flatten())
+        .or_else(|| window.primary_monitor().ok().flatten())
+}
+
+/// Size the quick ask window to `height` (CSS pixels) and dock it at the
+/// bottom centre of the work area, just above the taskbar, so it grows
+/// upward as answers come in.
+fn dock_quick(window: &WebviewWindow, height: Option<f64>, monitor: Option<tauri::Monitor>) {
+    let Some(monitor) = monitor.or_else(|| quick_monitor(window)) else {
+        let _ = window.center();
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let max_height = (area.size.height as f64 / scale) - QUICK_BOTTOM_GAP * 2.0;
+    let css_height = match height {
+        Some(h) => h,
+        None => window
+            .inner_size()
+            .map(|s| s.height as f64 / window.scale_factor().unwrap_or(scale))
+            .unwrap_or(QUICK_MIN_HEIGHT),
+    }
+    .clamp(QUICK_MIN_HEIGHT, max_height.max(QUICK_MIN_HEIGHT));
+    let width = (QUICK_WIDTH * scale).round() as i32;
+    let height = (css_height * scale).round() as i32;
+    let x = area.position.x + (area.size.width as i32 - width) / 2;
+    let y = area.position.y + area.size.height as i32 - height - (QUICK_BOTTOM_GAP * scale).round() as i32;
+    let _ = window.set_size(tauri::PhysicalSize::new(width as u32, height as u32));
+    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+}
+
+/// The page reports how tall its pill and cards are; the window follows,
+/// keeping its bottom edge where it is.
+#[tauri::command]
+fn fit_quick_ask(app: AppHandle, height: f64) {
+    if let Some(quick) = app.get_webview_window(QUICK) {
+        let monitor = quick.current_monitor().ok().flatten();
+        dock_quick(&quick, Some(height), monitor);
+    }
 }
 
 /// Called by the engine module once the engine answers on its port.
@@ -248,6 +306,7 @@ pub(crate) fn toggle_quick_ask(app: &AppHandle) {
     };
     if quick.is_visible().unwrap_or(false) {
         let _ = quick.hide();
+        let _ = quick.emit("quick-ask-hide", ());
     } else {
         // It may have been sent to the sign-in page (or on to /home after
         // signing in there); always open on quick ask.
@@ -258,7 +317,7 @@ pub(crate) fn toggle_quick_ask(app: &AppHandle) {
                 let _ = quick.navigate(url);
             }
         }
-        let _ = quick.center();
+        dock_quick(&quick, None, None);
         let _ = quick.show();
         let _ = quick.set_focus();
         let _ = quick.emit("quick-ask-open", ());
@@ -520,6 +579,7 @@ async fn overlay_stop(app: AppHandle, agent_id: Option<String>) -> Result<(), St
 fn hide_quick_ask(app: AppHandle) {
     if let Some(quick) = app.get_webview_window(QUICK) {
         let _ = quick.hide();
+        let _ = quick.emit("quick-ask-hide", ());
     }
 }
 
@@ -628,6 +688,7 @@ pub fn run() {
             installed::set_app_tray,
             installed::app_notify,
             hide_quick_ask,
+            fit_quick_ask,
             overlay_stop,
             get_saved_session,
             save_session,
