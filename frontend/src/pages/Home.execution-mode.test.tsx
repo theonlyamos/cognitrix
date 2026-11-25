@@ -88,6 +88,33 @@ describe('Home explicit execution mode', () => {
     }
   });
 
+  it('keeps the quote in the box when sending fails', async () => {
+    harness.messages = [
+      { id: 'a1', role: 'assistant', content: 'Use port 8080 for the server.' },
+    ] as ChatMessage[];
+    apiPost.mockImplementation((url: string) => (url === '/agents/chat' ? Promise.reject(new Error('down')) : Promise.resolve({ data: {} })));
+    try {
+      const user = userEvent.setup();
+      renderHome();
+      await waitFor(() => expect(document.querySelector('[data-reply-source] p')).not.toBeNull());
+      const range = document.createRange();
+      range.selectNodeContents(document.querySelector('[data-reply-source] p')!);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      fireEvent.pointerUp(document);
+      fireEvent.click(await screen.findByRole('button', { name: 'Reply' }));
+      await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'why?{enter}');
+
+      await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/agents/chat', expect.objectContaining({
+        message: '> Use port 8080 for the server.\n\nwhy?',
+      })));
+      expect(await screen.findByRole('button', { name: 'Remove quote' })).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: 'Message the agent' })).toHaveValue('why?');
+    } finally {
+      harness.messages = [];
+    }
+  });
+
   it('uses chat mode for Enter', async () => {
     const user = userEvent.setup();
     renderHome();

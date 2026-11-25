@@ -1080,6 +1080,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
 
   const resetThreadState = useCallback(() => {
     clearStopFallback();
+    setQuotes([]);
     turnGenerationRef.current += 1;
     clearMessages();
     setWaiting(false);
@@ -1135,6 +1136,9 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
           expectedGeneration !== undefined
           && turnGenerationRef.current !== expectedGeneration
         ) return false;
+        // Quotes belong to the chat they were picked in: keep them only
+        // when this is the same chat reloading (a turn just ended).
+        if (activeRef.current !== id) setQuotes([]);
         clearComposerMedia();
         adoptSession(id);
         const run = runs.find((item) => item.session_id === id);
@@ -1767,6 +1771,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
           setInput(text);
           setAttachments(pending);
           setEditSource(pendingEditSource);
+          if (quoted.length) setQuotes(quoted);
         }
         addMessage('assistant', tr('ui.home.unableToReachTheAgent'));
         finishTurn();
