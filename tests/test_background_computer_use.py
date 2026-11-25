@@ -1,4 +1,6 @@
 """Background computer use driver logic, with a fake backend (runs anywhere)."""
+import os
+import sys
 import threading
 import time
 
@@ -273,6 +275,37 @@ async def test_list_shows_why_a_window_cant_be_controlled(driver, monkeypatch):
     out = (await tools.list_windows.run(computer='person')).content
     assert "4: 'PowerShell' (windowsterminal.exe) - can't control: it is a terminal" in out
     assert "1: 'Calc' (calc.exe)" in out
+
+
+async def test_own_window_is_listed_and_can_be_looked_at_but_not_controlled(driver, fake, monkeypatch):
+    fake.windows[6] = WindowInfo(6, 'Cognitrix', 'cognitrix.exe', 15, rect=(0, 0, 800, 600),
+                                 blocked=blocked_reason('cognitrix.exe'))
+    fake.trees[6] = [Element('Button', 'New chat', actions=['invoke'], rect=(10, 10, 90, 40))]
+    monkeypatch.setattr(tools, 'get_driver', lambda: driver)
+    out = (await tools.list_windows.run(search='cognitrix', computer='person')).content
+    assert "6: 'Cognitrix' (cognitrix.exe) - can't control: it is Cognitrix's own window" in out
+    driver.look(6)
+    with pytest.raises(Blocked):
+        driver.type_text(6, 'hi')
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows backend')
+def test_windows_backend_lists_its_own_window(monkeypatch):
+    from cognitrix.computer import windows as win
+
+    backend = win.WindowsBackend()
+    own = WindowInfo(7, 'Cognitrix', 'cognitrix.exe', os.getpid(), blocked=blocked_reason('', own=True))
+    other = WindowInfo(8, 'Notes', 'notepad.exe', 11)
+    infos = {7: own, 8: other, 9: None}
+    monkeypatch.setattr(backend, '_info', lambda hwnd: infos[hwnd])
+
+    def enum(cb, _):
+        for hwnd in infos:
+            cb(hwnd, 0)
+        return True
+
+    monkeypatch.setattr(win.user32, 'EnumWindows', enum)
+    assert backend.list_windows() == [own, other]
 
 
 def test_one_action_per_window_at_a_time(driver, fake):
