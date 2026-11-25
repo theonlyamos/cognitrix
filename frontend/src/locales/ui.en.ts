@@ -3266,6 +3266,8 @@ const uiEn = {
   "ui.sandboxSnapshotsCard.valueGb": "{value} GB",
   "ui.sandboxSnapshotsCard.whatToSave": "What to save",
   "ui.sandboxSnapshotsCard.wholeComputer": "Whole computer",
+  "ui.selectionReply.removeQuote": "Remove quote",
+  "ui.selectionReply.reply": "Reply",
   "ui.sendKeyHint.newline": "newline",
   "ui.sendKeyHint.send": "send",
   "ui.sentTasks.couldNotLoadSentTasks": "Could not load the tasks sent to the web.",

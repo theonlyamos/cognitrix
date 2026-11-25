@@ -10,6 +10,8 @@ import { greetingFor } from '@/components/NewChatGreeting';
 import { cn } from '@/lib/utils';
 import { plainText } from '@/lib/plainText';
 import { tr } from '@/lib/i18n';
+import { SentQuotes } from '@/components/SelectionReply';
+import { splitQuotes } from '@/lib/quoteReply';
 
 const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
 
@@ -186,6 +188,7 @@ export function ChillScreen(props: ChillScreenProps) {
     cards, extras, rail, railActive, onRail, suggestions, onSuggestion, onFullMode,
     turns = [], turnIndex = Math.max(0, turns.length - 1), onTurn, replying = false,
   } = props;
+  const asked = question ? splitQuotes(question) : null;
   const first = (name || '').trim().split(/\s+/)[0];
   const answerRef = useRef<HTMLDivElement>(null);
   // Follow a reply as it streams in.
@@ -297,13 +300,18 @@ export function ChillScreen(props: ChillScreenProps) {
                     {time && <span>{time}</span>}
                   </div>
                 )}
-                {question && (
-                  <p className="mb-4 line-clamp-3 text-[14px] text-fg-dim">
-                    <span className="font-medium">{tr('ui.chill.you')}</span>{' '}{question}
-                  </p>
+                {asked && (
+                  <div className="mb-4 text-[14px] text-fg-dim">
+                    <SentQuotes quotes={asked.quotes} className="max-w-[560px]" />
+                    {asked.text && (
+                      <p className="line-clamp-3">
+                        <span className="font-medium">{tr('ui.chill.you')}</span>{' '}{asked.text}
+                      </p>
+                    )}
+                  </div>
                 )}
                 {answer && (
-                  <div className="md break-words text-[17px] leading-relaxed sm:text-[20px]">
+                  <div className="md break-words text-[17px] leading-relaxed sm:text-[20px]" data-reply-source="">
                     <Suspense fallback={<p className="whitespace-pre-wrap">{answer}</p>}>
                       <MarkdownMessage content={answer} />
                     </Suspense>

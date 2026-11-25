@@ -3267,6 +3267,8 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.sandboxSnapshotsCard.valueGb": "{value} Go",
   "ui.sandboxSnapshotsCard.whatToSave": "Que enregistrer",
   "ui.sandboxSnapshotsCard.wholeComputer": "Tout l'ordinateur",
+  "ui.selectionReply.removeQuote": "Retirer la citation",
+  "ui.selectionReply.reply": "Répondre",
   "ui.sendKeyHint.newline": "nouvelle ligne",
   "ui.sendKeyHint.send": "envoyer",
   "ui.sentTasks.couldNotLoadSentTasks": "Impossible de charger les tâches envoyées sur le web.",

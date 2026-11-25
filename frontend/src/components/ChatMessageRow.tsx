@@ -8,6 +8,8 @@ import { AppCard } from '@/components/hosted-apps/AppCard';
 import { FileCards } from '@/components/files/FileCards';
 import { FilesShelf } from '@/components/files/FilesShelf';
 import { MemoryNotice } from '@/components/MemoryNotice';
+import { SentQuotes } from '@/components/SelectionReply';
+import { splitQuotes } from '@/lib/quoteReply';
 import { ThemeNotice } from '@/components/ThemeNotice';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import {
@@ -49,6 +51,17 @@ interface ChatMessageRowProps {
   onNextStep?: (step: string) => void;
   /** Tool call ids (comma separated) whose page card a later version in the same turn replaces. */
   supersededCards?: string;
+}
+
+/** The person's words, with any quoted reply text shown as a quote above them. */
+function UserText({ content }: { content: string }) {
+  const { quotes, text } = splitQuotes(content);
+  return (
+    <>
+      <SentQuotes quotes={quotes} />
+      {text && <div className="whitespace-pre-wrap break-words leading-relaxed">{text}</div>}
+    </>
+  );
 }
 
 const actionClass =
@@ -287,7 +300,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
         {blockedUrl && <BlockedEndpointNotice url={blockedUrl} />}
         {isUser ? (
           <>
-            <div className="whitespace-pre-wrap break-words leading-relaxed">{guestAuthor ? guest?.text : message.content}</div>
+            <UserText content={(guestAuthor ? guest?.text : message.content) ?? ''} />
             {message.steered && (
               <div className="mt-1 font-mono text-[10.5px] text-fg-dim">{tr('ui.chatMessageRow.sentWhileTheAgentWas')}</div>
             )}
@@ -296,7 +309,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
           <>
             {(reasoning || thinkingNow) && <ThinkingBlock text={reasoning} live={thinkingNow || !reply} />}
             {(reply || !thinkingNow) && (
-              <div className="whitespace-pre-wrap break-words leading-relaxed">
+              <div className="whitespace-pre-wrap break-words leading-relaxed" data-reply-source="">
                 {reply}
                 <span className="caret" />
               </div>
@@ -305,7 +318,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
         ) : (
           <>
             {reasoning && <ThinkingBlock text={reasoning} live={false} />}
-            <div className="md break-words">
+            <div className="md break-words" data-reply-source="">
               <Suspense fallback={<div className="whitespace-pre-wrap break-words leading-relaxed">{reply}</div>}>
                 <MarkdownMessage content={step ? step.rest : reply} />
               </Suspense>

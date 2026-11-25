@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { AppWindow, FileText, SquareStack } from 'lucide-react';
 import { turnTime, visibleMarks, type ChillTurn } from '@/lib/chillTurns';
 import { cn } from '@/lib/utils';
+import { askLabel } from '@/lib/quoteReply';
 import { tr } from '@/lib/i18n';
 
 function MadeIcon({ made, size = 11 }: { made: NonNullable<ChillTurn['made']>; size?: number }) {
@@ -44,7 +45,7 @@ export function ChillTurnMarks({ turns, current, replying, onPick }: Props) {
             return (
               <li key={turn.key} className="relative">
                 <button type="button" onClick={() => { setHover(null); onPick(index); }} aria-current={on ? 'true' : undefined}
-                  aria-label={`${label}: ${turn.question}`}
+                  aria-label={`${label}: ${askLabel(turn.question)}`}
                   onMouseEnter={() => setHover(index)} onFocus={() => setHover(index)} onBlur={() => setHover(null)}
                   className="group flex h-[22px] w-7 items-center justify-end gap-1.5 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent md:h-[17px] md:w-11">
                   {turn.made && (
@@ -62,7 +63,7 @@ export function ChillTurnMarks({ turns, current, replying, onPick }: Props) {
                     <div className="mb-0.5 font-mono text-[10.5px] uppercase tracking-wide text-fg-dim">
                       {label}{time && ` · ${time}`}
                     </div>
-                    <div className="line-clamp-3">{turn.question || tr('ui.chill.noQuestion')}</div>
+                    <div className="line-clamp-3">{askLabel(turn.question) || tr('ui.chill.noQuestion')}</div>
                     {turn.made && turn.madeName && (
                       <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-fg-dim">
                         <MadeIcon made={turn.made} size={12} />
