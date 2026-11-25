@@ -129,12 +129,37 @@ describe('Home explicit execution mode', () => {
       auto_submit_at: null,
     }));
 
-    await user.click(screen.getByRole('button', { name: /Run in background/i }));
+    await user.click(screen.getByRole('radio', { name: /Run in background/i }));
+    await user.click(screen.getByRole('button', { name: 'Submit answer' }));
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/agents/question', {
       request_id: 'question-1',
       action: 'answer',
-      option_id: 'background',
+      answers: [{ question_id: 'q1', option_ids: ['background'] }],
     }));
     expect(screen.queryByRole('group', { name: 'Run this in the background?' })).not.toBeInTheDocument();
+  });
+  it('answers an open question with words typed in the chat box', async () => {
+    const user = userEvent.setup();
+    renderHome();
+    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Help me choose');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    act(() => harness.onMessage?.({
+      type: 'question_request',
+      request_id: 'question-2',
+      session_id: 'session-1',
+      prompt: 'Which one?',
+      options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+      allow_free_text: false,
+      recommended_option_id: null,
+    }));
+    const box = await screen.findByRole('combobox', { name: 'Message the agent' });
+    expect(box).toHaveAttribute('placeholder', 'Answer above, or type here to reply instead…');
+    await user.type(box, 'Neither, try C');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/agents/question', {
+      request_id: 'question-2',
+      action: 'answer',
+      text: 'Neither, try C',
+    }));
   });
 });

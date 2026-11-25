@@ -1,6 +1,8 @@
 from cognitrix.questions.models import (
     QuestionAction,
+    ItemAnswer,
     QuestionAnswer,
+    QuestionItem,
     QuestionOption,
     QuestionSpec,
     QuestionValidationError,
@@ -8,7 +10,9 @@ from cognitrix.questions.models import (
 
 __all__ = [
     'QuestionAction',
+    'ItemAnswer',
     'QuestionAnswer',
+    'QuestionItem',
     'QuestionOption',
     'QuestionSpec',
     'QuestionValidationError',

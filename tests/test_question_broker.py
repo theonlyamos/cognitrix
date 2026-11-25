@@ -90,7 +90,7 @@ async def test_option_answer_is_owner_scoped_single_use_and_cleans_up():
 
 
 @pytest.mark.asyncio
-async def test_free_text_requires_permission_and_is_bounded():
+async def test_free_text_is_always_accepted_and_bounded():
     task, events = await _start(QuestionSpec.from_tool_args(
         prompt='Explain', allow_free_text=True,
     ))
@@ -100,14 +100,18 @@ async def test_free_text_requires_permission_and_is_bounded():
     ) is True
     assert (await task).text == 'My answer'
 
+    # The card offers "Something else" on every question, and a reply typed
+    # in the chat box answers the card, so words are always an answer.
     task, events = await _start(_choice())
     request_id = events[0]['request_id']
     assert await resolve_question(
-        request_id, 'user-1', QuestionAction.ANSWER, text='not allowed',
+        request_id, 'user-1', QuestionAction.ANSWER, text='x' * 4001,
     ) is False
-    cancel_questions_for_stream('user-1', 'stream-1')
-    with pytest.raises(QuestionTurnCancelled):
-        await task
+    assert await resolve_question(
+        request_id, 'user-1', QuestionAction.ANSWER, text='Neither, wait a day',
+    ) is True
+    answer = await task
+    assert answer.answer_type == 'text' and answer.text == 'Neither, wait a day'
 
 
 @pytest.mark.asyncio

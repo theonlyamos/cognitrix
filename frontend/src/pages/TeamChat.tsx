@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, errorMessage } from '@/lib/api';
 import { useEventStream } from '@/hooks/useEventStream';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
-import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
+import { QuestionCard, type QuestionAnswer, type QuestionRequest } from '@/components/QuestionCard';
 import { LoadingState, ErrorState } from '@/components/list-ui';
 import { ChatHorizon } from '@/components/ThemeArtwork';
 import { AgentBadge } from '@/components/StartChat';
@@ -449,7 +449,7 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
   const questionAction = useCallback(async (
     current: QuestionRequest,
     action: 'answer' | 'cancel' | 'stop_timer',
-    answer?: { option_id: string } | { text: string },
+    answer?: QuestionAnswer,
   ) => {
     await api.post('/agents/question', { request_id: current.request_id, action, ...answer });
     if (action === 'stop_timer') {

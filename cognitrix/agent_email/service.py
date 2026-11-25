@@ -481,6 +481,12 @@ class EmailService:
                 if options:
                     body += '\n\n' + '\n'.join(f'{i}. {o.get("label")}' for i, o in enumerate(options, 1))
                 body += '\n\nReply with the number or your answer.' if options else '\n\nReply with your answer.'
+                from cognitrix.questions.models import batch_text
+                several = batch_text(event)
+                if several:
+                    # Several questions at once: list them; the reply is taken as words.
+                    body = several
+                    self._question_options[sid] = []
                 await self.reply(thread, body)
 
         approval_token = web_turn_ctx.set({

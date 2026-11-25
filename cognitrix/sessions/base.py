@@ -1186,6 +1186,13 @@ class Session(Model):
             except Exception:
                 logger.debug('Artifact guidance unavailable', exc_info=True)
 
+        # Ask User: questions for the person go on a question card, not in
+        # the reply text (questions/guidance.py).
+        from cognitrix.questions.guidance import GUIDANCE as _ask_guidance, has_ask_user
+        from cognitrix.safety.permissions import visible_tools as _visible
+        if interface == 'web' and has_ask_user(_visible(agent, agent.tools)):
+            artifact_block = f'{artifact_block}\n\n{_ask_guidance}' if artifact_block else _ask_guidance
+
         # Build the context-aware prompt using the manager
         turn_note = ''
         try:

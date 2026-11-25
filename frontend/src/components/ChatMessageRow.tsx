@@ -1,5 +1,6 @@
 import { lazy, memo, Suspense, useState } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
+import { AnsweredQuestions, answeredSummary } from '@/components/AnsweredQuestions';
 import { ArtifactCard } from '@/components/artifacts/ArtifactCard';
 import { AppViewCard } from '@/components/appviews/AppViewCard';
 import { InfoCard, InfoCardPending } from '@/components/cards/InfoCard';
@@ -151,7 +152,17 @@ export const ChatMessageRow = memo(function ChatMessageRow({
       <div className="mx-auto w-full max-w-3xl px-4 py-1.5 sm:px-6">
         <span className="sr-only">{tr('ui.chatMessageRow.toolSteps')}</span>
         <div className="flex min-w-0 flex-col items-start gap-1.5">
-          {message.tools.map((tool, index) => (
+          {message.tools.map((tool, index) => {
+            // An answered question stays in the chat as what was asked and chosen.
+            const answered = tool.status === 'done' ? answeredSummary(tool.name, tool.params, tool.result) : null;
+            if (answered) {
+              return (
+                <div key={tool.id || index} className="w-full max-w-2xl py-1">
+                  <AnsweredQuestions summary={answered} />
+                </div>
+              );
+            }
+            return (
             <div key={tool.id || index} className="w-full max-w-2xl space-y-2">
               <details className="group w-full">
               <summary className="relative inline-flex min-h-11 list-none cursor-pointer select-none items-center gap-1.5 rounded-full px-1 py-1 text-[12.5px] text-fg-dim transition-colors hover:text-fg sm:min-h-0 [&::-webkit-details-marker]:hidden">
@@ -209,7 +220,8 @@ export const ChatMessageRow = memo(function ChatMessageRow({
                 />
               ))}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     );
