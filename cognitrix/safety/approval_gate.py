@@ -339,7 +339,7 @@ class ApprovalGate:
             result = await self._cli_approval(tool_call, risk, timeout)
         elif interface in ('web', 'ws', 'websocket'):
             result = await self._web_approval(tool_call, risk, timeout, person_only=person_only, must_ask=always_ask,
-                                              scope=scope, no_bypass=own_app)
+                                              scope=scope, **({'no_bypass': True} if own_app else {}))
         elif interface == 'acp':
             approver = acp_approver.get(None)
             if approver is None:
