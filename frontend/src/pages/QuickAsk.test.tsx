@@ -39,6 +39,16 @@ vi.mock('@/components/VoiceInput', () => ({
   },
 }));
 
+const desktopEvents = vi.hoisted(() => new Map<string, () => void>());
+
+vi.mock('@/lib/desktop', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/desktop')>()),
+  onDesktopEvent: async (event: string, handler: () => void) => {
+    desktopEvents.set(event, handler);
+    return () => desktopEvents.delete(event);
+  },
+}));
+
 import QuickAsk from './QuickAsk';
 
 function sse(...events: Array<[string, Record<string, string>]>) {
@@ -123,5 +133,27 @@ describe('QuickAsk', () => {
     expect(await screen.findByText('Fresh answer.')).toBeInTheDocument();
     const bodies = fetchMock.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string).session_id);
     expect(bodies).toEqual([null, 'old', null]);
+  });
+
+  it('starts a new chat on every Alt+Space, but keeps it for follow-ups', async () => {
+    let calls = 0;
+    const fetchMock = vi.fn(async () => {
+      calls += 1;
+      return sse(['chunk', { content: `Answer ${calls}.`, session_id: calls < 3 ? 'first' : 'second' }]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<QuickAsk />);
+    await act(async () => voice.onText?.('One'));
+    expect(await screen.findByText('Answer 1.')).toBeInTheDocument();
+    await act(async () => voice.onText?.('Two'));
+    expect(await screen.findByText('Answer 2.')).toBeInTheDocument();
+    await act(async () => desktopEvents.get('quick-ask-open')?.());
+    expect(screen.queryByText('Answer 1.')).toBeNull();
+    await act(async () => voice.onText?.('Three'));
+    expect(await screen.findByText('Answer 3.')).toBeInTheDocument();
+    await act(async () => voice.onText?.('Four'));
+    expect(await screen.findByText('Answer 4.')).toBeInTheDocument();
+    const sessions = fetchMock.mock.calls.map((c) => JSON.parse(((c as unknown as [string, RequestInit])[1]).body as string).session_id);
+    expect(sessions).toEqual([null, 'first', null, 'second']);
   });
 });

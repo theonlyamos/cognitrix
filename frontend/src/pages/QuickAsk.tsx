@@ -121,6 +121,8 @@ export default function QuickAsk() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
   const turnId = useRef(0);
+  // Bumped on every Alt+Space: each opening is a new conversation (a new chat).
+  const conversation = useRef(0);
   const vad = useRef<VoiceActivityDetector | null>(null);
   const heard = useRef(false);
   const idleMs = useRef(0);
@@ -239,6 +241,15 @@ export default function QuickAsk() {
   useEffect(() => {
     const stops: Array<() => void> = [];
     void onDesktopEvent('quick-ask-open', () => {
+      // A fresh Alt+Space starts a new chat. A reply still streaming keeps
+      // going into its own chat, it just no longer shows here.
+      conversation.current += 1;
+      abortRef.current = null;
+      setSessionId(null);
+      setTurns([]);
+      setOpened(new Set());
+      setQuestion('');
+      setMenuOpen(false);
       setShown(true);
       setPaused(false);
       voiceRef.current.dismiss();
@@ -317,6 +328,8 @@ export default function QuickAsk() {
   const ask = async (text: string) => {
     const message = text.trim();
     if (!message || !agentId || busy) return;
+    const thisConversation = conversation.current;
+    const current = () => conversation.current === thisConversation;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -339,7 +352,7 @@ export default function QuickAsk() {
       // The quick ask chat was deleted (or belongs to another agent now):
       // start a new one instead of failing every question until a restart.
       if (response.status === 404 && sessionId) {
-        setSessionId(null);
+        if (current()) setSessionId(null);
         response = await send(null);
       }
       if (!response.ok) {
@@ -355,7 +368,7 @@ export default function QuickAsk() {
         }
         if (event === 'chunk' && payload.content) updateTurn(id, (t) => ({ answer: t.answer + payload.content }));
         else if (event === 'error') updateTurn(id, () => ({ error: payload.detail || tr('ui.quickAsk.somethingWentWrong') }));
-        if (payload.session_id) setSessionId(payload.session_id);
+        if (payload.session_id && current()) setSessionId(payload.session_id);
       });
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
