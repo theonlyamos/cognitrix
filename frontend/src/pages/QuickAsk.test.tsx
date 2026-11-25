@@ -16,6 +16,7 @@ const voice = vi.hoisted(() => ({
   start: vi.fn(async () => undefined),
   cancel: vi.fn(),
   status: 'idle' as string,
+  needsSetup: false,
 }));
 
 vi.mock('@/components/VoiceInput', () => ({
@@ -29,7 +30,7 @@ vi.mock('@/components/VoiceInput', () => ({
       maxSeconds: 600,
       analyser: null,
       error: null,
-      needsSetup: false,
+      needsSetup: voice.needsSetup,
       dismiss: vi.fn(),
       start: voice.start,
       stop: vi.fn(async () => undefined),
@@ -54,6 +55,7 @@ describe('QuickAsk', () => {
   beforeEach(() => {
     localStorage.clear();
     voice.status = 'idle';
+    voice.needsSetup = false;
     voice.start.mockClear();
     voice.cancel.mockClear();
   });
@@ -94,5 +96,32 @@ describe('QuickAsk', () => {
     expect(await screen.findByText(/open pull requests/)).toBeInTheDocument();
     const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
     expect(body.message).toBe('How many open PRs?');
+  });
+
+  it('keeps the voice pill and offers setup when speech-to-text is not set up', () => {
+    voice.needsSetup = true;
+    render(<QuickAsk />);
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByRole('button', { name: /set up voice/i })).toBeInTheDocument();
+    expect(voice.start).not.toHaveBeenCalled();
+  });
+
+  it('starts a new chat when the one it was using is gone', async () => {
+    let calls = 0;
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      calls += 1;
+      const sent = JSON.parse(init.body as string);
+      if (calls === 1) return sse(['chunk', { content: 'First answer.', session_id: 'old' }]);
+      if (sent.session_id === 'old') return new Response(JSON.stringify({ detail: 'Session not found' }), { status: 404 });
+      return sse(['chunk', { content: 'Fresh answer.', session_id: 'new' }]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<QuickAsk />);
+    await act(async () => voice.onText?.('One'));
+    expect(await screen.findByText('First answer.')).toBeInTheDocument();
+    await act(async () => voice.onText?.('Two'));
+    expect(await screen.findByText('Fresh answer.')).toBeInTheDocument();
+    const bodies = fetchMock.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string).session_id);
+    expect(bodies).toEqual([null, 'old', null]);
   });
 });

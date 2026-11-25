@@ -22,6 +22,7 @@ const COMMANDS: &[&str] = &[
     "set_app_tray",
     "app_notify",
     "hide_quick_ask",
+    "fit_quick_ask",
     "overlay_stop",
     "get_saved_session",
     "save_session",

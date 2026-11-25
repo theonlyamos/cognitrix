@@ -3183,6 +3183,7 @@ const uiEn = {
   "ui.quickAsk.escDismiss": "Esc dismiss",
   "ui.quickAsk.listening": "Listening…",
   "ui.quickAsk.requestFailedStatus": "Request failed ({status})",
+  "ui.quickAsk.setUpVoice": "Set up voice to talk",
   "ui.quickAsk.somethingWentWrong": "Something went wrong.",
   "ui.quickAsk.speakToFollowUp": "Speak to follow up",
   "ui.quickAsk.talkInstead": "Talk instead",

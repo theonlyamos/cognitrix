@@ -39,6 +39,7 @@
     "allow-set-app-tray",
     "allow-app-notify",
     "allow-hide-quick-ask",
+    "allow-fit-quick-ask",
     "allow-get-saved-session",
     "allow-save-session",
     "allow-clear-session",

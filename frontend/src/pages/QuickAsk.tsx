@@ -158,7 +158,9 @@ export default function QuickAsk() {
   voiceRef.current = voice;
 
   // Voice can't be used until a speech-to-text provider is set up: type instead.
-  const effectiveMode: QuickAskMode = mode === 'voice' && !voice.needsSetup ? 'voice' : 'keyboard';
+  // Without a speech-to-text provider the pill stays, offering to set one up
+  // (switching to the keyboard on its own looked like voice mode was broken).
+  const effectiveMode: QuickAskMode = mode;
   const listening = effectiveMode === 'voice' && voice.status === 'recording' && !stopping;
 
   useEffect(() => {
@@ -175,7 +177,7 @@ export default function QuickAsk() {
   // Listen whenever voice mode is showing and idle: on open, and again after each answer.
   useEffect(() => {
     if (effectiveMode !== 'voice' || !shown || paused || busy || stopping) return;
-    if (voice.status !== 'idle' || voice.error) return;
+    if (voice.status !== 'idle' || voice.error || voice.needsSetup) return;
     vad.current = null;
     heard.current = false;
     idleMs.current = 0;
@@ -228,6 +230,11 @@ export default function QuickAsk() {
     },
     [agentId, sessionId, hide],
   );
+
+  const openVoiceSettings = () => {
+    hide();
+    void desktop.showMain('/settings/voice');
+  };
 
   useEffect(() => {
     const stops: Array<() => void> = [];
@@ -317,7 +324,7 @@ export default function QuickAsk() {
     setTurns((all) => [...all, { id, question: message, answer: '', error: null, busy: true }]);
     setQuestion('');
     try {
-      const response = await fetch(`${API_BASE}/agents/${agentId}/generate`, {
+      const send = (session: string | null) => fetch(`${API_BASE}/agents/${agentId}/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -325,9 +332,16 @@ export default function QuickAsk() {
           Authorization: `Bearer ${localStorage.getItem('token') ?? ''}`,
           ...(browserTimezone() ? { 'X-Timezone': browserTimezone() } : {}),
         },
-        body: JSON.stringify({ message, stream: true, session_id: sessionId }),
+        body: JSON.stringify({ message, stream: true, session_id: session }),
         signal: controller.signal,
       });
+      let response = await send(sessionId);
+      // The quick ask chat was deleted (or belongs to another agent now):
+      // start a new one instead of failing every question until a restart.
+      if (response.status === 404 && sessionId) {
+        setSessionId(null);
+        response = await send(null);
+      }
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.detail || tr('ui.quickAsk.requestFailedStatus', { status: response.status }));
@@ -464,7 +478,6 @@ export default function QuickAsk() {
   // What sits right above the pill besides the answer cards.
   let note: { text: string; tone: 'dim' | 'danger'; action?: () => void } | null = null;
   if (noAgents) note = { text: tr('ui.quickAsk.createAnAgentInThe'), tone: 'dim' };
-  else if (voice.needsSetup && mode === 'voice') note = { text: tr('ui.quickAsk.voiceNeedsSetup'), tone: 'dim', action: () => openInChat('/settings/voice') };
   else if (effectiveMode === 'voice' && voice.error) note = { text: voice.error, tone: 'danger' };
 
   return (
@@ -529,6 +542,15 @@ export default function QuickAsk() {
               {avatar}
               {thinking ? (
                 <ThinkingDots />
+              ) : voice.needsSetup ? (
+                <button
+                  type="button"
+                  onClick={openVoiceSettings}
+                  title={tr('ui.quickAsk.voiceNeedsSetup')}
+                  className="h-10 min-w-0 flex-1 truncate rounded-full px-3 text-[13px] text-fg-dim hover:bg-panel-2 hover:text-fg"
+                >
+                  {tr('ui.quickAsk.setUpVoice')}
+                </button>
               ) : listening ? (
                 <div className="min-w-0 flex-1" role="status" aria-label={tr('ui.quickAsk.listening')}>
                   <Waveform analyser={voice.analyser} className="h-8 text-accent-ink" />
@@ -567,17 +589,15 @@ export default function QuickAsk() {
                 autoComplete="off"
                 className="min-w-0 flex-1 border-0 bg-transparent text-[17px] outline-none placeholder:text-fg-dim"
               />
-              {!voice.needsSetup && (
-                <button
-                  type="button"
-                  onClick={() => setMode('voice')}
-                  aria-label={tr('ui.quickAsk.talkInstead')}
-                  title={tr('ui.quickAsk.talkInstead')}
-                  className="grid h-[38px] w-[38px] flex-none place-items-center rounded-full bg-accent text-accent-foreground transition hover:brightness-105"
-                >
-                  <MicIcon />
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setMode('voice')}
+                aria-label={tr('ui.quickAsk.talkInstead')}
+                title={tr('ui.quickAsk.talkInstead')}
+                className="grid h-[38px] w-[38px] flex-none place-items-center rounded-full bg-accent text-accent-foreground transition hover:brightness-105"
+              >
+                <MicIcon />
+              </button>
             </form>
           )}
         </div>
