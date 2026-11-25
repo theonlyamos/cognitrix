@@ -21,19 +21,22 @@ this server.
 from __future__ import annotations
 
 import logging
+import time
 
 logger = logging.getLogger('cognitrix.log')
 
-# user id -> setting. Filled on first look and on every change. In-process,
-# like the gate's other per-turn state.
-_CACHE: dict[str, bool] = {}
+# user id -> (setting, when read). The web app and task workers can be
+# separate processes, so a reading only holds for a few seconds: turning it
+# off reaches every process almost at once.
+_CACHE: dict[str, tuple[bool, float]] = {}
+FRESH_FOR = 5.0
 
 # What the setting never answers (see module docstring).
 NEVER_CATEGORIES = frozenset({'person_takeover'})
 
 
 def remember(user_id: str, on: bool) -> None:
-    _CACHE[str(user_id)] = bool(on)
+    _CACHE[str(user_id)] = (bool(on), time.monotonic())
 
 
 def forget() -> None:
@@ -45,8 +48,9 @@ async def is_on(user_id: str | None) -> bool:
     key = str(user_id or '').strip()
     if not key:
         return False
-    if key in _CACHE:
-        return _CACHE[key]
+    cached = _CACHE.get(key)
+    if cached is not None and time.monotonic() - cached[1] < FRESH_FOR:
+        return cached[0]
     try:
         from cognitrix.models.user import User
 
@@ -55,7 +59,7 @@ async def is_on(user_id: str | None) -> bool:
     except Exception:
         logger.debug('Could not read auto-approve for %s', key, exc_info=True)
         return False
-    _CACHE[key] = on
+    remember(key, on)
     return on
 
 

@@ -279,6 +279,10 @@ class ApprovalGate:
         if _auto_approve_enabled():
             return ApprovalResult(approved=True, auto=True)
 
+        # Auto-approve low risk
+        if risk.risk_level == RiskLevel.LOW and not person_only:
+            return ApprovalResult(approved=True, auto=True)
+
         # The person's "Auto-approve everything": a Yes on every card they
         # would be shown (see safety/auto_approve_all.py for what it skips).
         from cognitrix.safety import auto_approve_all
@@ -287,10 +291,6 @@ class ApprovalGate:
         if not (categories & auto_approve_all.NEVER_CATEGORIES) and await auto_approve_all.answers_for(interface):
             return ApprovalResult(approved=True, standing=True,
                                   grant='chat' if 'access_request' in categories else None)
-
-        # Auto-approve low risk
-        if risk.risk_level == RiskLevel.LOW and not person_only:
-            return ApprovalResult(approved=True, auto=True)
 
         # Durable workers have no interactive principal at execution time.
         # Interactive caches are intentionally ignored; a future durable

@@ -137,3 +137,20 @@ def test_unknown_person_reads_as_off():
 
     assert asyncio.run(run()) is False
     assert asyncio.run(auto_approve_all.is_on('')) is False
+
+
+def test_turning_it_off_reaches_other_processes_within_seconds():
+    # A task worker read "on" earlier; the web app then saved "off".
+    auto_approve_all.remember('u1', True)
+    key = 'u1'
+    on, _ = auto_approve_all._CACHE[key]
+    auto_approve_all._CACHE[key] = (on, auto_approve_all.time.monotonic() - auto_approve_all.FRESH_FOR - 1)
+
+    class Row:
+        auto_approve_all = False
+
+    async def run():
+        with patch('cognitrix.models.user.User.get', new_callable=AsyncMock, return_value=Row()):
+            return await auto_approve_all.is_on('u1')
+
+    assert asyncio.run(run()) is False

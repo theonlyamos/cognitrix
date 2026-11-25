@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiGet, apiPut } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPut: vi.fn() }));
 vi.mock('@/lib/api', () => ({ api: { get: apiGet, put: apiPut } }));
+const { who } = vi.hoisted(() => ({ who: { id: 'u1' } }));
+vi.mock('@/context/AppContext', () => ({ useOptionalUser: () => ({ id: who.id, name: '', email: '' }) }));
 
 import AutoApproveConfirm from './AutoApproveConfirm';
 import { resetAutoApprove, setAutoApprove, useAutoApprove } from '@/lib/autoApprove';
@@ -44,6 +46,18 @@ describe('Auto-approve everything', () => {
     expect(localStorage.getItem('bypassPermissions')).toBeNull();
     await setAutoApprove(true);
     expect(apiPut).toHaveBeenCalledWith('/account/auto-approve', { on: true });
+    await waitFor(() => expect(screen.getByText('on')).toBeInTheDocument());
+  });
+
+  it('fetches the new account\'s setting after signing in as someone else', async () => {
+    apiGet.mockResolvedValueOnce({ data: { on: false } }).mockResolvedValueOnce({ data: { on: true } });
+    who.id = 'u1';
+    const { rerender } = render(<Probe />);
+    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('off')).toBeInTheDocument();
+    who.id = 'u2';
+    rerender(<Probe key="u2" />);
+    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByText('on')).toBeInTheDocument());
   });
 });
