@@ -75,6 +75,7 @@ class WindowInfo:
     rect: tuple[int, int, int, int] = (0, 0, 0, 0)  # screen left, top, right, bottom
     kind: str = 'win32'  # 'win32' | 'uwp' | 'chromium' | 'console'
     blocked: str | None = None  # why the agent may not act on it
+    own: bool = False  # a window of Cognitrix itself (see own_app_busy)
 
 
 @dataclass
@@ -233,12 +234,45 @@ OWN_APPS = frozenset({'cognitrix-desktop.exe', 'cognitrix-engine.exe', 'cognitri
 SECURE_APPS = frozenset({'consent.exe', 'logonui.exe', 'lockapp.exe'})
 
 
-def blocked_reason(app: str, kind: str = 'win32', title: str = '', own: bool = False,
-                   elevated: bool = False) -> str | None:
+def is_own_app(app: Any) -> bool:
+    """Cognitrix itself: the desktop app, its engine, or an app it installed."""
+    app = str(app or '').strip().lower()
+    return app in OWN_APPS or app.startswith('cognitrix')
+
+
+OWN_APP_BUSY = (
+    "an approval or question card is waiting for the person, and agents can't use Cognitrix while one is "
+    "open, so no agent can answer it for them. Wait until they have answered, then try again")
+
+
+def own_app_busy() -> str | None:
+    """Why agents may not act in Cognitrix's own window right now, or None.
+
+    Agents may drive the app like any other, but never while it shows a card
+    that only the person may answer (an approval or a question): a click
+    there would approve an agent's action on their behalf."""
+    try:
+        from cognitrix.safety.approval_gate import _WEB_PENDING
+
+        for entry in list(_WEB_PENDING.values()):
+            future = (entry or {}).get('future')
+            if future is None or not future.done():
+                return OWN_APP_BUSY
+    except Exception:
+        logger.debug('computer-use: approval check failed', exc_info=True)
+    try:
+        from cognitrix.questions import broker
+
+        if any(not pending.future.done() for pending in list(broker._PENDING.values())):
+            return OWN_APP_BUSY
+    except Exception:
+        logger.debug('computer-use: question check failed', exc_info=True)
+    return None
+
+
+def blocked_reason(app: str, kind: str = 'win32', title: str = '', elevated: bool = False) -> str | None:
     """Why the agent may not act on a window, or None."""
     app = (app or '').lower()
-    if own or app in OWN_APPS:
-        return "it is Cognitrix's own window"
     if kind == 'console' or app in TERMINAL_APPS:
         return 'it is a terminal; use the shell tool instead'
     if app in PASSWORD_MANAGERS:
@@ -365,6 +399,8 @@ class Driver:
             raise DriverError(f'No window with id {window_id}. Call list_windows to see open windows.')
         if acting and win.blocked:
             raise Blocked(f"Can't control '{win.title}' because {win.blocked}.")
+        if acting and win.own and (busy := own_app_busy()):
+            raise Blocked(f"Can't control '{win.title}' right now: {busy}.")
         return win
 
     def open(self, target: str, timeout_s: float = 12.0, args: str | None = None) -> WindowInfo | None:

@@ -164,7 +164,7 @@ class MacBackend:
     # -- windows --------------------------------------------------------
     def _blocked(self, app: str, pid: int) -> str | None:
         if pid == os.getpid() or app.startswith('cognitrix'):
-            return "it is Cognitrix's own window"
+            return None  # Cognitrix itself: see own_app_busy
         if app in TERMINAL_APPS:
             return 'it is a terminal; use the shell tool instead'
         if app in PASSWORD_MANAGERS:
@@ -196,7 +196,7 @@ class MacBackend:
                     out.append(WindowInfo(
                         number, str(self._attr(ax, 'AXTitle', '') or ''), app, pid,
                         bool(self._attr(ax, 'AXMinimized', False)), self._rect(ax), 'cocoa',
-                        self._blocked(app, pid)))
+                        self._blocked(app, pid), pid == os.getpid() or app.startswith('cognitrix')))
             self._windows = seen
             return out
 

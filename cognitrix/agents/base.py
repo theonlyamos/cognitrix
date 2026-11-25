@@ -11,6 +11,7 @@ from cognitrix import audit
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 from cognitrix.app_settings import get as app_setting
 from cognitrix.common.encoding import status_print
+from cognitrix.computer import OWN_APP_BUSY, own_app_busy
 from cognitrix.computer import apps as computer_apps
 from cognitrix.errors import ExecutionControlError
 from cognitrix.models import Agent, Message, Tool
@@ -719,6 +720,24 @@ class AgentManager:
                                 'run', risk, 'app',
                                 f"{computer_apps.app_label(app)} is always allowed for background actions")
                         else:
+                            tool_call.app = app
+                    if 'own_app' in (decision.risk.categories or []):
+                        # Cognitrix's own window: never while a card only the
+                        # person may answer is open, and each action is theirs
+                        # to approve unless they always allow Cognitrix.
+                        busy = own_app_busy()
+                        if busy is None:
+                            from cognitrix.tasks.approvals import any_waiting
+
+                            busy = OWN_APP_BUSY if await any_waiting() else None
+                        if busy:
+                            audit.record_tool(self.agent, assigned_tool.name, args, 'blocked',
+                                              risk=risk.risk_level.value, note='a card is waiting for the person')
+                            results_by_index[i] = _tool_result_entry(
+                                tc_id, ToolOutcome.failure('computer_use', f"Can't control Cognitrix right now: {busy}."))
+                            continue
+                        if decision.action == 'run' and decision.source != 'app':
+                            decision = ToolDecision('ask', decision.risk, decision.source, decision.reason)
                             tool_call.app = app
 
                 # A full-shell Bash command runs only when a person approved

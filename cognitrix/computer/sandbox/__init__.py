@@ -24,7 +24,7 @@ import io
 import os
 import re
 import time
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from typing import Any
 
 from cognitrix.computer import ActionEvent, ActionResult, Element, Snapshot, WindowInfo
@@ -81,7 +81,9 @@ def window_to_dict(w: WindowInfo | None) -> dict | None:
 def window_from_dict(d: dict | None) -> WindowInfo | None:
     if not d:
         return None
-    d = dict(d)
+    # Only known fields: the sandbox image and this app can be different versions.
+    known = {f.name for f in fields(WindowInfo)}
+    d = {k: v for k, v in d.items() if k in known}
     d['rect'] = tuple(d.get('rect') or (0, 0, 0, 0))
     return WindowInfo(**d)
 
