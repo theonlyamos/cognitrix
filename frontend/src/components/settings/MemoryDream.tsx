@@ -294,7 +294,7 @@ export function NotionBackupSection({ memoryOn, refresh, onChanged }: { memoryOn
               onClick={() => void act('backup', async () => {
                 const next = await notionBackupNow();
                 setState(next);
-                if (next.status === 'ok' && (!next.skills || next.skills.status === 'ok')) {
+                if (next.status === 'ok' && (!next.skills || next.skills.status === 'ok' || next.skills.status === '')) {
                   setNotice(tr('ui.settings.memoryNotion.backedUpWithSkills', { count: next.count, skills: next.skills?.count ?? 0 }));
                 } else setError(tr('ui.settings.memoryDream.theBackupToNotionDid'));
               }, tr('ui.settings.memoryDream.couldNotBackUpTo'))}>

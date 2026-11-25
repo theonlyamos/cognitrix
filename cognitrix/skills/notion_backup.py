@@ -283,8 +283,9 @@ async def restore(user_id: str) -> dict[str, Any]:
         raise BackupError(f"There is no '{PAGE_TITLE}' page in your Notion yet.")
 
     mine = {row.name: row for row in await personal.skills_of(user_id)}
-    restored = already = kept = left_out = 0
-    for item in data.get('skills') or []:
+    restored = already = kept = left_out = not_fitted = 0
+    items = data.get('skills') or []
+    for index, item in enumerate(items):
         if not isinstance(item, dict):
             continue
         name = str(item.get('name') or '').strip()
@@ -304,6 +305,7 @@ async def restore(user_id: str) -> dict[str, Any]:
             row = await personal.create(user_id, name, description, body, author=str(item.get('author') or ''))
         except DraftError as exc:
             if 'a lot of skills' in str(exc):
+                not_fitted = len(items) - index
                 break
             if 'already exists' in str(exc):
                 kept += 1  # a shared skill has the name
@@ -312,9 +314,17 @@ async def restore(user_id: str) -> dict[str, Any]:
             continue
         mine[row.name] = row
         restored += 1
-    await _set(state, page_id=page_id or state.page_id, page_url=page_url or state.page_url, owned=True,
-               status=OK, last_at=saved.now_str(), message=f'Restored {restored} skills from Notion.')
-    return {'restored': restored, 'already': already, 'kept': kept, 'left_out': left_out,
+    if not_fitted:
+        # Some skills are still only in Notion: keep the page safe from automatic backups.
+        await _set(state, page_id=page_id or state.page_id, page_url=page_url or state.page_url, owned=False,
+                   status=RESTORE_FIRST, last_at=saved.now_str(),
+                   message=(f"Restored {restored} skills, but {not_fitted} didn't fit (you can keep "
+                            f'{personal.MAX_PER_PERSON}). Delete some you no longer use and restore again. '
+                            'Until then the Notion page is kept as it is.'))
+    else:
+        await _set(state, page_id=page_id or state.page_id, page_url=page_url or state.page_url, owned=True,
+                   status=OK, last_at=saved.now_str(), message=f'Restored {restored} skills from Notion.')
+    return {'restored': restored, 'already': already, 'kept': kept, 'left_out': left_out, 'not_fitted': not_fitted,
             'saved': data.get('saved') or '', 'page_url': page_url or state.page_url}
 
 

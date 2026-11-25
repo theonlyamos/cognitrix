@@ -151,6 +151,27 @@ async def test_fresh_install_does_not_wipe_skills_it_could_restore(db, notion): 
     assert 'monthly-export' in page and 'write-post' in page
 
 
+async def test_a_restore_that_runs_out_of_room_keeps_the_page(db, notion, monkeypatch):  # noqa: F811
+    from cognitrix.skills import notion_backup as sb
+    from cognitrix.skills import personal
+
+    old = await _user('Amos', 'amos@example.com')
+    for name in ('monthly-export', 'write-post', 'deploy-site'):
+        await personal.create(str(old.id), name, f'Use when doing {name}.', FENCED)
+    await sb.backup(str(old.id), trigger='manual')
+
+    monkeypatch.setattr(personal, 'MAX_PER_PERSON', 2)
+    new = await _user('Amos', 'amos@example.org')
+    nid = str(new.id)
+    result = await sb.restore(nid)
+    assert result['restored'] == 2 and result['not_fitted'] == 1
+    state = await sb.get_state(nid)
+    assert state.status == sb.RESTORE_FIRST and not state.owned
+    await personal.delete(await personal.get(nid, 'monthly-export'))
+    assert (await sb.backup(nid, trigger='review')).status == sb.RESTORE_FIRST
+    assert 'deploy-site' in notion.page(sb.PAGE_TITLE) and 'monthly-export' in notion.page(sb.PAGE_TITLE)
+
+
 async def test_routes_do_memories_and_skills_together(db, notion):  # noqa: F811
     from cognitrix.api.routes import memories as routes
     from cognitrix.memory import saved

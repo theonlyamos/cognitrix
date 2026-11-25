@@ -343,7 +343,7 @@ export interface NotionRestoreResult {
   saved: string;
   page_url: string | null;
   /** Skills: added, already here, kept (this install's own copy, or a shared skill, has the name), left out. */
-  skills?: { restored: number; already: number; kept: number; left_out: number };
+  skills?: { restored: number; already: number; kept: number; left_out: number; not_fitted?: number };
   state: NotionBackupState;
 }
 
