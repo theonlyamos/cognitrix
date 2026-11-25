@@ -1627,7 +1627,7 @@ _CALL_AGENT_DEPTH = contextvars.ContextVar('call_agent_depth', default=0)
 MAX_AGENT_CALL_DEPTH = 3
 
 
-async def _helper_chat(authority, agent, parent):
+async def _helper_chat(authority, agent, parent, folders: tuple[Any, ...] = ()):
     """A new saved chat for a Call Agent helper, owned by the person the
     calling turn works for, so they can find it in their chat list (Recent
     and By agent) and read what the helper did.
@@ -1635,6 +1635,8 @@ async def _helper_chat(authority, agent, parent):
     None (the helper runs unsaved) for API-key callers, turns with no
     signed-in person, and calls from an incognito chat. Every call gets its
     own fresh chat, so nothing is shared across people or conversations.
+    ``folders`` are the folders the caller shared with the helper: the chat
+    shows them, so the person can see what the helper was let work in.
     """
     if authority.restricted or not authority.user_id:
         return None
@@ -1652,7 +1654,9 @@ async def _helper_chat(authority, agent, parent):
         'report_back': False,
         'via': 'call_agent',
     }
-    return await agent_chats.create_chat(str(authority.user_id), agent, started_by)
+    return await agent_chats.create_chat(
+        str(authority.user_id), agent, started_by,
+        folders=folder_paths.folders_to_dicts(folders) if folders else None)
 
 
 # How long Call Agent waits by default, and at most, before it gives up on
@@ -1753,18 +1757,148 @@ def _start_handoff(authority, agent, saved, current, task: str, child_context, d
         user_key, agent, saved, task, on_done=done, setup=setup, tool_context=child_context)
 
 
+_SHARE_ALL = ('all', '*', 'everything')
+_SHARE_PRIMARY = ('primary', '.', './', 'this', 'current')
+
+
+@dataclass(frozen=True)
+class _FolderShare:
+    """What a caller shares with the agent it calls: the helper's folder
+    list (shared ones read & write, the rest read only), a line for the
+    caller, and whether the helper may work on the caller's paired PC."""
+
+    folders: tuple[Any, ...] = ()
+    summary: str = ''
+    device: bool = False
+
+
+def _share_entries(share) -> list[str]:
+    if share is None:
+        return []
+    if isinstance(share, str):
+        share = [share]
+    try:
+        items = list(share)
+    except TypeError:
+        items = [share]
+    return [str(x).strip() for x in items if str(x or '').strip()]
+
+
+def _shared_folders(authority, share) -> tuple[_FolderShare | None, str]:
+    """Work out what the caller shares with the agent it calls.
+
+    The caller can only share what it may change itself in this chat: a
+    folder it has read & write (or a folder inside one), never a read only
+    one, and nothing at all when it is itself a read-only helper. The shared
+    folders become read & write for the helper; everything else the caller
+    can see stays read only. Returns (None, '') when nothing is shared, or
+    (None, why) when the request can't be met.
+    """
+    entries = _share_entries(share)
+    if not entries:
+        return None, ''
+    if getattr(authority, 'device_read_only', False):
+        return None, "you can only look at these files yourself, so you can't share them for changes"
+    if getattr(authority, 'device', None):
+        # A chat on the person's paired PC: the PC's own shared folders and
+        # powers decide what anyone may do there, the helper included.
+        return _FolderShare(
+            folders=folder_paths.read_only(authority.folders) if authority.folders else (),
+            summary="the person's PC, with the same folders and powers you have there", device=True), ''
+
+    from cognitrix.common.folders import WRITE, Folder, is_blocked, legacy_default_folders
+
+    mine = tuple(authority.folders) or legacy_default_folders()
+    primary = next((f for f in mine if f.primary), mine[0])
+    writable = [f for f in mine if f.writable]
+    picked: list[Any] = []
+
+    def add(folder) -> None:
+        if all(folder_paths._norm(f.root) != folder_paths._norm(folder.root) for f in picked):
+            picked.append(folder)
+
+    for entry in entries:
+        low = entry.lower()
+        if low in _SHARE_ALL:
+            if not writable:
+                return None, 'none of your working folders are read & write in this chat'
+            for f in writable:
+                add(f)
+            continue
+        named = [f for f in mine if low in (f.label.lower(), (f.name or '').lower())]
+        if low in _SHARE_PRIMARY:
+            named = [primary]
+        if named:
+            folder = named[0]
+        else:
+            try:
+                path = folder_paths.lexical_path(entry, primary.root)
+            except Exception:
+                return None, f"'{entry}' is not a folder path"
+            outer = folder_paths.folder_for(path, mine)
+            if outer is None:
+                return None, (f"'{entry}' is not in your working folders "
+                              f"({', '.join(f.label for f in mine)}); you can only share folders you work in")
+            # Symlinks are followed, as for any file tool: a link can't lead
+            # the helper somewhere the caller can't change.
+            real = Path(os.path.realpath(os.fspath(path)))
+            real_outer = folder_paths.folder_for(real, mine)
+            if real_outer is None:
+                return None, f"'{entry}' leads outside your working folders"
+            for f in (outer, real_outer):
+                if not f.writable:
+                    return None, f"'{f.label}' is read only for you, so you can't share it for changes"
+            if folder_paths._norm(path) == folder_paths._norm(outer.root):
+                folder = outer
+            else:
+                if not real.is_dir():
+                    return None, f"'{entry}' is not a folder"
+                if is_blocked(real) and not is_blocked(real_outer.root):
+                    return None, f"'{entry}' is in a protected location"
+                folder = Folder(path=str(real), access=WRITE, name=real.name or str(real))
+        if not folder.writable:
+            return None, f"'{folder.label}' is read only for you, so you can't share it for changes"
+        add(folder)
+
+    if not picked:
+        return None, ''
+    shared_keys = {folder_paths._norm(f.root) for f in picked}
+    lead = folder_paths._norm(picked[0].root)
+    out: list[Any] = [Folder(f.path, WRITE, f.name, folder_paths._norm(f.root) == lead) for f in picked]
+    for f in mine:
+        if folder_paths._norm(f.root) not in shared_keys:
+            out.append(Folder(f.path, folder_paths.READ, f.name, False))
+    out = out[:folder_paths.MAX_FOLDERS]
+    summary = ', '.join(f'{f.label} ({f.path})' for f in picked)
+    return _FolderShare(folders=tuple(out), summary=summary), ''
+
+
+def _sharing_context(child_context, authority, share: _FolderShare):
+    """The helper's authority with the shared folders: read & write there and
+    the caller's own right to run commands (never more), approvals as usual."""
+    import dataclasses
+
+    return dataclasses.replace(
+        child_context,
+        folders=share.folders,
+        host_process_mode=authority.host_process_mode,
+        device_read_only=False if share.device else child_context.device_read_only,
+    )
+
+
 # Waits for another agent's whole reply, whose own tool calls need slots:
 # holding one here could leave both waiting on each other.
 @tool(category='system', occupies_execution_slot=False)
 async def call_agent(name: str, task: str, mode: str = 'wait', wait_minutes: int = CALL_AGENT_WAIT_MINUTES,
-                     *, interface: str = 'task', parent=None):
-    """Give a job to another agent, who can read the working folders but cannot change files or run commands. Pick the mode by how long the job takes. mode 'wait' (default): the answer is this tool's result; use it for quick asks you need before you can go on, like a lookup, a short question, a second opinion or a quick review. mode 'handoff': returns at once while the agent works in the background, and its answer arrives in this chat as a new message when it is done; use it for anything that takes more than a few minutes (research, a long document, a big review) or to run several jobs at the same time. After a hand-off, carry on with other work, or tell the person what is running and end your turn; don't wait or poll for it.
+                     share_folders: list[str] | None = None, *, interface: str = 'task', parent=None):
+    """Give a job to another agent. It can read your working folders but cannot change files or run commands, unless you share folders with it: share_folders lets it change files and run commands there, like you (for example give a coder the project folder you are working in). You can only share folders you can change yourself in this chat, and its risky actions still ask the person. Pick the mode by how long the job takes. mode 'wait' (default): the answer is this tool's result; use it for quick asks you need before you can go on, like a lookup, a short question, a second opinion or a quick review. mode 'handoff': returns at once while the agent works in the background, and its answer arrives in this chat as a new message when it is done; use it for anything that takes more than a few minutes (research, a long document, a big review) or to run several jobs at the same time. After a hand-off, carry on with other work, or tell the person what is running and end your turn; don't wait or poll for it.
 
     Args:
         name (str): Name of the agent to call
         task (str): The job, with everything the agent needs to know: it sees only this
         mode (str): 'wait' (default) or 'handoff'
         wait_minutes (int): In wait mode, how long to wait for the answer before the job is stopped (default 10, at most 30)
+        share_folders (list[str]): Folders the agent may change and run commands in: paths or names of your read & write working folders, a folder inside one, 'primary' for your primary folder, or 'all'. Leave empty for read only
 
     Returns:
         str: The agent's answer (wait), or a note that the job was handed off (handoff)
@@ -1807,17 +1941,23 @@ async def call_agent(name: str, task: str, mode: str = 'wait', wait_minutes: int
         if not authority.agent_allowed(str(agent.id)):
             # Keep target existence opaque to restricted credentials.
             return f"Error calling agent: {name} was not found or is not allowed"
+        share, why_not = _shared_folders(authority, share_folders)
+        if why_not:
+            return f"Error calling agent: can't share those folders: {why_not}"
         child_context = delegated_execution_context(authority)
         # Preserve identity when there is no turn-scoped authority to drop.
         if child_context == authority:
             child_context = authority
+        if share is not None:
+            child_context = _sharing_context(child_context, authority, share)
+            note = f'({name} could change files and run commands in: {share.summary}.)\n\n'
 
         current = None
         if mode == 'handoff':
             current, why = await _handoff_chat(authority)
             if current is None:
                 mode = 'wait'
-                note = f"(Hand-off isn't possible here: {why}. Waited for the answer instead.)\n\n"
+                note += f"(Hand-off isn't possible here: {why}. Waited for the answer instead.)\n\n"
 
         chunks: list[str] = []
 
@@ -1840,7 +1980,7 @@ async def call_agent(name: str, task: str, mode: str = 'wait', wait_minutes: int
                 else 'task'
             )
         try:
-            saved = await _helper_chat(authority, agent, parent)
+            saved = await _helper_chat(authority, agent, parent, share.folders if share is not None else ())
         except Exception:
             logger.exception('Could not save a chat for Call Agent; running it unsaved')
             saved = None
@@ -1852,15 +1992,15 @@ async def call_agent(name: str, task: str, mode: str = 'wait', wait_minutes: int
             # hand-offs started at the same time can't pass the cap together.
             if saved is not None and (agent_chats.running_agent_chats(str(authority.user_id))
                                       >= agent_chats.MAX_RUNNING_PER_USER):
-                note = (f"(Hand-off isn't possible here: {agent_chats.MAX_RUNNING_PER_USER} agent chats are "
+                note += (f"(Hand-off isn't possible here: {agent_chats.MAX_RUNNING_PER_USER} agent chats are "
                         'already working. Waited for the answer instead.)\n\n')
             elif saved is not None:
                 _start_handoff(authority, agent, saved, current, task, child_context, depth)
-                return (f"Handed off to {name} (chat id {saved.id}). It is working in the background, and its "
+                return (f"{note}Handed off to {name} (chat id {saved.id}). It is working in the background, and its "
                         'answer will arrive in this chat as a new message when it is done. Carry on with other '
                         "work, or tell the person what is running and end your turn. Don't wait or poll for it.")
             else:
-                note = ("(Hand-off isn't possible here: the job's chat could not be saved. "
+                note += ("(Hand-off isn't possible here: the job's chat could not be saved. "
                         'Waited for the answer instead.)\n\n')
 
         async def run_helper():

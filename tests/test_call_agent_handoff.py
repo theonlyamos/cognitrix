@@ -161,7 +161,7 @@ def test_call_agent_schema_offers_both_modes():
     from cognitrix.tools.misc import call_agent
 
     fn = call_agent.to_dict_format()['function']
-    assert set(fn['parameters']['properties']) == {'name', 'task', 'mode', 'wait_minutes'}
+    assert set(fn['parameters']['properties']) == {'name', 'task', 'mode', 'wait_minutes', 'share_folders'}
     assert fn['parameters']['required'] == ['name', 'task']
     assert "'handoff'" in fn['description'] and "'wait'" in fn['description']
 
