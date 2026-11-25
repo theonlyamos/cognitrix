@@ -800,8 +800,8 @@ class AgentManager:
                             tool_call.app = app
 
                 # A full-shell Bash command runs only when a person approved
-                # it (now, or for this session), so the gate must ask them even
-                # when the chat's auto-approve is on.
+                # it (now, or for this session, or by their own "Auto-approve
+                # everything" setting), so it always goes to the gate.
                 full_shell = needs_person((assigned_tool, tool), args)
                 if full_shell and decision.action == 'run':
                     decision = ToolDecision('ask', risk, decision.source, decision.reason)

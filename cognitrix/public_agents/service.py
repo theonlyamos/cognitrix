@@ -428,7 +428,7 @@ async def _turn(link: PublicAgentLink, agent: Any, owner: str, session: Any, tex
         return None
 
     approval_token = web_turn_ctx.set({
-        'emit': emit, 'session_id': sid, 'bypass': False, 'user_key': owner,
+        'emit': emit, 'session_id': sid, 'bypass': False, 'auto_approve': False, 'user_key': owner,
         'agent_name': getattr(agent, 'name', '') or '', 'origin': f'public:{link.id}',
     })
     try:

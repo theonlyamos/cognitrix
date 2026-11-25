@@ -39,6 +39,8 @@ import { SideQuestionButton, SideQuestionsPanel } from '@/components/SideQuestio
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
 import ComposerMenu from '@/components/ComposerMenu';
+import AutoApproveConfirm from '@/components/AutoApproveConfirm';
+import { useAutoApprove } from '@/lib/autoApprove';
 import { SwarmCard } from '@/components/SwarmCard';
 import { useChatSwarms } from '@/lib/swarms';
 import ChatModelPicker, { type ChatModel } from '@/components/ChatModelPicker';
@@ -300,12 +302,14 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     });
   }, []);
 
-  // Web tool-approval prompts + a per-browser bypass (auto-approve) toggle.
+  // Web tool-approval prompts + the account's auto-approve everything switch.
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [question, setQuestion] = useState<QuestionRequest | null>(null);
-  const [bypass, setBypass] = useState(() => localStorage.getItem('bypassPermissions') === '1');
-  const bypassRef = useRef(bypass);
-  bypassRef.current = bypass;
+  // Auto-approve everything: saved on the account, so the server answers
+  // every card itself (browser, desktop app, chat apps, tasks).
+  const autoApprove = useAutoApprove();
+  const bypass = autoApprove.on;
+  const [confirmAutoApprove, setConfirmAutoApprove] = useState(false);
   // Swarm: the agent splits the next messages' jobs across parallel workers.
   const [swarmOn, setSwarmOn] = useState(false);
   const swarmRef = useRef(swarmOn);
@@ -362,13 +366,12 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     }
   }, []);
 
+  const setAutoApproveOn = autoApprove.set;
   const toggleBypass = useCallback(() => {
-    setBypass((b) => {
-      const next = !b;
-      localStorage.setItem('bypassPermissions', next ? '1' : '0');
-      return next;
-    });
-  }, []);
+    // Turning it on is asked first; turning it off is immediate.
+    if (bypass) void setAutoApproveOn(false).catch(() => { /* stays on; the icon still shows it */ });
+    else setConfirmAutoApprove(true);
+  }, [bypass, setAutoApproveOn]);
 
   // Agent selection — chat + SSE must share one agent_id (they rendezvous on a
   // per-(user, agent) manager on the backend).
@@ -1742,7 +1745,6 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
           ...(editSourceImageIndex >= 0
             ? { edit_source_image_index: editSourceImageIndex }
             : {}),
-          ...(bypassRef.current ? { bypass_permissions: true } : {}),
           ...(swarmRef.current && executionMode === 'chat' && !incognitoRef.current ? { swarm: true } : {}),
           ...(reasoningRef.current ? { reasoning_effort: reasoningRef.current } : {}),
           ...(chatModelRef.current ? { model: chatModelRef.current } : {}),
@@ -2422,6 +2424,9 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
         />
         <div className={cn('flex min-w-0 items-center gap-0.5 px-2 pb-2 pt-1', voice.active && '!hidden')}>
           <div className="min-w-0">
+          {confirmAutoApprove && (
+            <AutoApproveConfirm onConfirm={() => setAutoApproveOn(true)} onClose={() => setConfirmAutoApprove(false)} />
+          )}
           <ComposerMenu
             onAttach={() => fileInputRef.current?.click()}
             onRunTask={() => void send(input, 'task')}

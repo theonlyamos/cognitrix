@@ -162,7 +162,7 @@ async def _guest_turn(owner_key: str, agent: Any, session: Any, text: str, run: 
         run.record({**event, 'session_id': sid})
 
     approval_token = web_turn_ctx.set({
-        'emit': emit, 'session_id': sid, 'bypass': False, 'user_key': owner_key,
+        'emit': emit, 'session_id': sid, 'bypass': False, 'auto_approve': False, 'user_key': owner_key,
         'agent_name': getattr(agent, 'name', '') or '', 'origin': f'shared-chat:{sid}',
     })
     terminal: dict[str, Any] = {'type': 'turn_complete', 'content': '', 'session_id': sid}

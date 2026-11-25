@@ -38,7 +38,7 @@ describe('ComposerMenu', () => {
     const user = userEvent.setup();
     const p = setup();
     await user.click(screen.getByRole('button', { name: 'More options' }));
-    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Auto-approve' }));
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Auto-approve everything' }));
     await user.click(screen.getByRole('radio', { name: 'medium' }));
     expect(p.onToggleBypass).toHaveBeenCalled();
     expect(p.onReasoning).toHaveBeenCalledWith('medium');

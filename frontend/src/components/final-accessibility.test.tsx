@@ -325,7 +325,7 @@ describe('final accessibility contracts', () => {
       'min-h-12',
       'md:min-h-0',
     );
-    expect(screen.getByRole('menuitemcheckbox', { name: 'Auto-approve' })).toHaveClass(
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Auto-approve everything' })).toHaveClass(
       'min-h-12',
       'md:min-h-0',
     );
