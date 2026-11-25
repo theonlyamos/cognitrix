@@ -14,7 +14,7 @@ from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import EntityRef, ToolOutcome, current_execution_context
 
 ARTIFACT_TOOL_CATEGORY = 'artifacts'
-ARTIFACT_TOOL_NAMES = ('publish_artifact', 'read_artifact', 'artifact_comments', 'list_artifacts')
+ARTIFACT_TOOL_NAMES = ('publish_artifact', 'read_artifact', 'check_artifact', 'artifact_comments', 'list_artifacts')
 LIST_LIMIT = 30
 READ_LIMIT = 60_000
 
@@ -139,6 +139,73 @@ async def read_artifact(artifact_id: str, version: int = 0, *, parent=None) -> T
     lines.append('Source:' + (' (cut short)' if cut else ''))
     lines.append(source[:READ_LIMIT])
     return ToolOutcome.success('\n'.join(lines))
+
+
+@tool(category=ARTIFACT_TOOL_CATEGORY, retryable=False, max_attempts=1,
+      supported_interfaces=['web', 'ws', 'task'])
+async def check_artifact(artifact_id: str, views: list[str] | None = None, full_page: bool = True,
+                         scroll_y: int = 0, *, parent=None) -> ToolOutcome:
+    """Look at an artifact the way people will see it: it is opened in a headless browser at each
+    view you ask for and you get a screenshot of each, plus any script errors, console errors and
+    failed requests. Use it after publishing anything visual (a design draft, dashboard, report with
+    charts, interactive tool), fix what it shows, publish again, and only then tell the person it's ready.
+    Check that text is readable in dark mode, nothing overflows or is cut off on a phone, and the
+    layout matches what you meant. Never asks for approval.
+
+    Args:
+        artifact_id (str): The artifact id.
+        views (list[str] | None): Any of "desktop-light", "desktop-dark", "phone-light", "phone-dark"
+            (desktop is 1280 wide, phone 390). Empty for all four.
+        full_page (bool): Capture the whole page from scroll_y down (up to 2400 px tall) instead of one screen.
+        scroll_y (int): Where the screenshot starts, in px from the top, to see further down a long page.
+    """
+    user_key = _owner()
+    if not user_key:
+        return ToolOutcome.failure('no_owner', 'Checking artifacts needs a signed-in person.')
+    from cognitrix.artifact_pages import check
+
+    try:
+        page, role = await store.page_for(str(artifact_id or '').strip(), user_key)
+        shown = store.viewer_version(page, role)
+        source = store.read_source(page, shown)
+        wanted = check.clean_views(views)
+        results = await check.look(page, source, user_key, views=wanted, full_page=bool(full_page),
+                                   scroll_y=int(scroll_y or 0))
+    except store.PageError as exc:
+        return _failure(exc)
+    from cognitrix.tools.misc import queue_image
+
+    lines = [f'Checked "{page.title}" (artifact_id {page.id}, version {shown}).']
+    shown_any = False
+    for out in results:
+        view = out.get('view') or '?'
+        if not out.get('ok'):
+            lines.append(f'{view}: did not load: {out.get("error") or "no answer"}')
+            continue
+        size = f'{out.get("width")}x{out.get("height")}'
+        top, tall = int(out.get('shot_top') or 0), int(out.get('shot_height') or 0)
+        height = int(out.get('page_height') or 0)
+        line = f'{view} ({size}): page is {height} px tall; screenshot shows {top}-{top + tall}.'
+        if height > top + tall:
+            line += f' More below: check again with scroll_y={top + tall}.'
+        if int(out.get('page_width') or 0) > int(out.get('width') or 0):
+            line += f' The page is {out["page_width"]} px wide, wider than the screen: something overflows sideways.'
+        if not out.get('text_length'):
+            line += ' The page shows no text: it may be blank.'
+        lines.append(line)
+        for label, key in (('script errors', 'errors'), ('console errors', 'console'), ('failed requests', 'failed')):
+            items = out.get(key) or []
+            if items:
+                lines.append(f'  {label}:\n' + '\n'.join(f'  - {item}' for item in items))
+        shot = out.get('screenshot') or ''
+        if shot and queue_image('data:image/png;base64,' + shot):
+            shown_any = True
+    if not any(out.get(k) for out in results for k in ('errors', 'console', 'failed')):
+        lines.append('No script errors, console errors or failed requests.')
+    lines.append('Screenshots attached in the order above: look at each before you call it done.'
+                 if shown_any else '(This chat cannot show you the screenshots.)')
+    return ToolOutcome.success('\n'.join(lines), entities=[EntityRef(type='artifact_page', id=str(page.id),
+                                                                     name=page.title)])
 
 
 @tool(category=ARTIFACT_TOOL_CATEGORY, retryable=False, max_attempts=1,

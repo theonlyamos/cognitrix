@@ -15,7 +15,7 @@ from typing import Any
 # Tools whose results are text from outside the person's own words.
 UNTRUSTED_TOOLS = frozenset({
     'webfetch', 'web_fetch', 'search', 'tavily_search', 'http_request', 'open_website',
-    'read', 'grep', 'search_knowledge', 'learn_from_website', 'read_artifact', 'artifact_comments',
+    'read', 'grep', 'search_knowledge', 'learn_from_website', 'read_artifact', 'check_artifact', 'artifact_comments',
     'look_at_window', 'take_screenshot', 'use_screen', 'computer', 'browser',
 })
 UNTRUSTED_CATEGORIES = frozenset({'web', 'mcp', 'mcp_dynamic', 'browser', 'computer'})

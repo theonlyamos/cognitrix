@@ -379,6 +379,75 @@ def check_page(url: str, *, browser: str, phone: bool = False, headers: dict[str
         raise PageCheckError(f'Could not drive the browser: {exc}') from None
 
 
+# ------------------------------------------------------------------ several screens, light and dark
+
+VIEWS = ('desktop-light', 'desktop-dark', 'phone-light', 'phone-dark')
+MAX_SHOT_HEIGHT = 2400
+PHONE_AGENT = ('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 '
+               '(KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1')
+
+
+def parse_view(view: str) -> tuple[bool, bool]:
+    """``'phone-dark'`` -> (phone, dark). Raises ValueError for anything else."""
+    clean = str(view or '').strip().lower()
+    if clean not in VIEWS:
+        raise ValueError(f'view is one of {", ".join(VIEWS)}')
+    size, theme = clean.split('-')
+    return size == 'phone', theme == 'dark'
+
+
+def check_views(url: str, views: list[str] | tuple[str, ...] = VIEWS, *, browser: str, full_page: bool = True,
+                scroll_y: int = 0, timeout: float = 30, settle: float = 1.5, no_sandbox: bool = False) -> list[dict]:
+    """Load ``url`` once per view (desktop or phone size, light or dark colour scheme) in one
+    headless browser. Returns one ``{view, ok, title, text_length, page_height, shot_top,
+    screenshot, errors, console, failed, width, height}`` per view. With ``full_page`` the
+    shot runs from ``scroll_y`` down to the end of the page, at most MAX_SHOT_HEIGHT tall."""
+    results: list[dict] = []
+    try:
+        with _Page(browser, timeout=timeout, no_sandbox=no_sandbox) as page:
+            dt = page.dt
+            desktop_agent = str(dt.call('Browser.getVersion').get('userAgent') or '')
+            for view in views:
+                phone, dark = parse_view(view)
+                width, height = PHONE if phone else DESKTOP
+                page.call('Emulation.setDeviceMetricsOverride', {
+                    'width': width, 'height': height, 'deviceScaleFactor': 1, 'mobile': phone})
+                if phone or desktop_agent:
+                    page.call('Emulation.setUserAgentOverride', {'userAgent': PHONE_AGENT if phone else desktop_agent})
+                page.call('Emulation.setEmulatedMedia', {'features': [
+                    {'name': 'prefers-color-scheme', 'value': 'dark' if dark else 'light'}]})
+                start = len(dt.events)
+                nav = page.call('Page.navigate', {'url': url})
+                if nav.get('errorText'):
+                    results.append({'view': view, 'ok': False, 'error': f"The page didn't load: {nav['errorText']}",
+                                    'errors': [], 'console': [], 'failed': []})
+                    continue
+                dt.wait_for('Page.loadEventFired', timeout)
+                dt.pump(settle)
+                info = page.call('Runtime.evaluate', {
+                    'expression': "JSON.stringify({title: document.title, text: document.body ? "
+                                  "document.body.innerText.trim().length : 0, h: Math.max("
+                                  "document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0),"
+                                  " w: document.documentElement.scrollWidth})",
+                    'returnByValue': True})
+                seen = json.loads(((info.get('result') or {}).get('value')) or '{}')
+                page_height = max(int(seen.get('h') or height), height)
+                top = max(0, min(int(scroll_y or 0), max(0, page_height - height)))
+                shot_height = min(page_height - top, MAX_SHOT_HEIGHT) if full_page else height
+                shot = page.call('Page.captureScreenshot', {
+                    'format': 'png', 'captureBeyondViewport': bool(full_page),
+                    'clip': {'x': 0, 'y': top, 'width': width, 'height': shot_height, 'scale': 1}}).get('data', '')
+                out = _summarise(dt.events[start:], url)
+                out.update({'view': view, 'ok': True, 'title': _short(seen.get('title', ''), 120),
+                            'text_length': int(seen.get('text') or 0), 'screenshot': shot,
+                            'page_height': page_height, 'page_width': int(seen.get('w') or width),
+                            'shot_top': top, 'shot_height': shot_height, 'width': width, 'height': height})
+                results.append(out)
+    except (OSError, ValueError) as exc:
+        raise PageCheckError(f'Could not drive the browser: {exc}') from None
+    return results
+
+
 # ------------------------------------------------------------------ no browser: a text check
 
 class _Links(HTMLParser):

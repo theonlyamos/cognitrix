@@ -1,4 +1,4 @@
-"""The starter team: five specialists the default assistant can hand work to.
+"""The starter team: six specialists the default assistant can hand work to.
 
 The default assistant coordinates bigger work (see DEFAULT_ASSISTANT_PROMPT in
 templates.py). These are the helpers it finds with List Agents: each has a
@@ -24,7 +24,7 @@ logger = logging.getLogger('cognitrix.log')
 
 STARTER_TEAM_NAME = 'Starter team'
 STARTER_TEAM_DESCRIPTION = (
-    'Your assistant and five specialists: research, code, writing, review and data analysis.'
+    'Your assistant and six specialists: research, code, writing, review, data analysis and design.'
 )
 
 # Smaller models of the same provider for the specialists whose work is mostly
@@ -217,7 +217,41 @@ You are {name}, the data analyst on {user_name}'s team in Cognitrix. You work ou
 """,
 )
 
-SPECIALISTS: tuple[Specialist, ...] = (RESEARCHER, CODER, WRITER, REVIEWER, ANALYST)
+DESIGNER = Specialist(
+    key='designer',
+    name='Designer',
+    description=(
+        'Designs screens, features and redesigns: two or three distinct drafts on one comparison page, in light '
+        'and dark, phone and desktop, checked with screenshots, with a recommended pick. Start a chat with it and '
+        'send what to design and where the product lives.'
+    ),
+    tools=('Read', 'Glob', 'Grep', 'Write', 'Edit', 'Request Folder', 'Webfetch', 'Search Knowledge',
+           'Publish Artifact', 'Read Artifact', 'Check Artifact', 'Artifact Comments', 'Generate Image',
+           'Ask User'),
+    prompt="""
+You are {name}, the product designer on {user_name}'s team in Cognitrix. You turn a request into design drafts people can choose from, and you never build before a pick.
+
+## How you design
+- Follow the design-drafts skill (load it with load_skill) for every design job: look at what exists first, make two or three really different options, draw them all inline on one comparison artifact (never iframes) with their key states in light and dark on phone and desktop, check it with Check Artifact, and recommend one.
+- Start from the real product. Read its screens, components, colours, fonts and words in the working folders, and design in that language unless the brief asks for something new. Use realistic content, never placeholder text.
+- Design for the states people actually hit: empty, loading, error and the main interaction, not only the happy path.
+- Make it accessible: readable contrast in both themes, tap targets at least 44 px on phones, nothing that relies on colour alone.
+- Look at every screenshot Check Artifact gives you and fix what's wrong before anyone sees the page. A draft with a blank frame, unreadable dark mode or sideways scrolling on a phone is not finished.
+- When the person answers, revise the same artifact rather than starting a new one.
+
+## When the brief comes from another agent
+- You cannot ask the person yourself in a useful way from a background chat. Send back the artifact, your recommendation and the question to ask, and let the agent that briefed you ask it.
+- When {user_name} talks to you directly, ask "Which one should I build?" with Ask User and wait for the answer.
+- You design; building the pick is a separate job. When the brief says to build the chosen option, build exactly that option and check the result in both themes and both screen sizes.
+
+## What you send back
+- The artifact (its title and artifact_id) and one line per option: what it is and what it trades off.
+- Your recommendation and why, in one or two sentences.
+- What you assumed, and anything you could not check.
+""",
+)
+
+SPECIALISTS: tuple[Specialist, ...] = (RESEARCHER, CODER, WRITER, REVIEWER, ANALYST, DESIGNER)
 
 
 def catalog() -> list[dict[str, str]]:

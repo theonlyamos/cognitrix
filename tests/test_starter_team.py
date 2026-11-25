@@ -1,4 +1,4 @@
-"""The starter team: five specialists the default assistant hands work to."""
+"""The starter team: six specialists the default assistant hands work to."""
 import pytest
 from fastapi import HTTPException
 
@@ -21,10 +21,10 @@ async def test_setup_creates_the_specialists_and_their_team(db, monkeypatch):  #
     from cognitrix.teams.base import Team
 
     user, result = await _setup(monkeypatch)
-    assert result['starter_team'] == 5
+    assert result['starter_team'] == 6
 
     agents = {a.name: a for a in await Agent.find({'owner_id': user.id})}
-    assert set(agents) == {'Assistant', 'Researcher', 'Coder', 'Writer', 'Reviewer', 'Analyst'}
+    assert set(agents) == {'Assistant', 'Researcher', 'Coder', 'Writer', 'Reviewer', 'Analyst', 'Designer'}
     # Text-only work runs on the provider's smaller model; the rest on the assistant's.
     assert agents['Researcher'].llm.model == agents['Writer'].llm.model == 'claude-haiku-5-5'
     assert agents['Coder'].llm.model == agents['Reviewer'].llm.model == 'claude-sonnet-5-5'
@@ -36,6 +36,9 @@ async def test_setup_creates_the_specialists_and_their_team(db, monkeypatch):  #
         assert agent.can_create_sub_agents is False
     # The reviewer can look but not touch.
     assert not {'Write', 'Edit', 'Bash'} & {t.name for t in agents['Reviewer'].tools}
+    # The designer checks its drafts and asks which one before anything is built.
+    assert {'Check Artifact', 'Ask User'} <= {t.name for t in agents['Designer'].tools}
+    assert 'design-drafts' in agents['Designer'].system_prompt
 
     teams = await Team.find({'owner_id': user.id})
     assert len(teams) == 1 and teams[0].name == starter_team.STARTER_TEAM_NAME
@@ -65,20 +68,20 @@ async def test_the_team_can_be_added_later_and_only_fills_gaps(db, monkeypatch):
 
     status = await onboarding.onboarding_status(_ctx(user))
     assert [s['name'] for s in status['starter_team'] if s['missing']] == [
-        'Researcher', 'Coder', 'Reviewer', 'Analyst']
+        'Researcher', 'Coder', 'Reviewer', 'Analyst', 'Designer']
 
     made = await onboarding.add_starter_team(_ctx(user))
-    assert [a['name'] for a in made['created']] == ['Researcher', 'Coder', 'Reviewer', 'Analyst']
+    assert [a['name'] for a in made['created']] == ['Researcher', 'Coder', 'Reviewer', 'Analyst', 'Designer']
     agents = {a.name: a for a in await Agent.find({'owner_id': user.id})}
     assert agents['Writer'].system_prompt == 'Mine.'
     assert agents['Coder'].llm.provider == 'anthropic'
     team = (await Team.find({'owner_id': user.id}))[0]
-    assert team.leader_id == str(agents['Assistant'].id) and len(team.assigned_agents) == 6
+    assert team.leader_id == str(agents['Assistant'].id) and len(team.assigned_agents) == 7
 
     # A second click adds nothing.
     again = await onboarding.add_starter_team(_ctx(user))
     assert again['created'] == [] and again['team_id'] == made['team_id']
-    assert len(await Agent.find({'owner_id': user.id})) == 6
+    assert len(await Agent.find({'owner_id': user.id})) == 7
     assert all(not s['missing'] for s in (await onboarding.onboarding_status(_ctx(user)))['starter_team'])
 
 
