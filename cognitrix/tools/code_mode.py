@@ -42,7 +42,7 @@ RUN_CODE = 'Run Code'
 # Always sent in on-demand mode: the meta tools and the ones that steer the
 # chat itself (asking the person, folders, skills, cards).
 CORE_TOOL_NAMES = frozenset({
-    'find tools', 'run code', 'ask user', 'request folder', 'load skill', 'show card',
+    'find tools', 'run code', 'ask user', 'request folder', 'request access', 'load skill', 'show card',
     # Artifacts are how agents hand over work, so they are always at hand.
     'publish artifact', 'read artifact', 'list artifacts', 'share file',
 })
@@ -271,9 +271,17 @@ async def find_tools(query: str = '', names: list[str] | None = None, *, parent=
     schemas = [s for s in _agent_schemas(parent) if _key(_schema_name(s)) not in CORE_TOOL_NAMES]
     matches = _search(schemas, query, names, limit=8)
     if not matches:
-        return ToolOutcome.success(
-            'No matching tools. Your tools are: '
-            + ', '.join(sorted(js_name(_schema_name(s)) for s in schemas)))
+        text = 'No matching tools. Your tools are: ' + ', '.join(sorted(js_name(_schema_name(s)) for s in schemas))
+        if any(_key(getattr(t, 'name', '')) == 'request access' for t in getattr(parent, 'tools', None) or []):
+            # Tools that exist but this agent doesn't have: it can ask for them.
+            from cognitrix.tools.access import suggest_tools
+
+            mine = {_key(getattr(t, 'name', '')) for t in getattr(parent, 'tools', None) or []}
+            other = [n for n in suggest_tools(query or ' '.join(names)) if _key(n) not in mine]
+            if other:
+                text += ('. Tools you don\'t have that may fit: ' + ', '.join(other)
+                         + '. Ask the person for one with Request Access.')
+        return ToolOutcome.success(text)
     loaded = loaded_this_turn.get()
     if loaded is not None:
         loaded.update(_schema_name(s) for s in matches)

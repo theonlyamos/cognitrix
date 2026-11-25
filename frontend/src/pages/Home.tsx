@@ -25,6 +25,7 @@ import { ChangesPanel } from '@/components/changes/ChangesPanel';
 import { FileViewer } from '@/components/files/FileViewer';
 import { listFiles, onOpenFile, parseFileRefs, type ProducedFileDetails } from '@/lib/producedFiles';
 import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
+import { AccessRequestCard, type AccessGrant, type AccessRequest } from '@/components/AccessRequestCard';
 import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
 import { desktopName, getChatSandbox, sandboxStatus, setChatSandbox, type ChatSandbox, type SandboxDesktop } from '@/lib/sandbox';
 import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, type SidebarWaiting } from '@/components/ChatSidebar';
@@ -152,6 +153,8 @@ interface ApprovalRequest {
   always_ask?: boolean;
   /** "Always allow": the tool for this agent, or commands starting like this one on this computer. */
   always?: { kind: 'tool' | 'command'; label: string; computer?: string };
+  /** Request Access: the agent asks for a tool or connected app it doesn't have. */
+  access?: AccessRequest & { agent?: string };
   /** The agent asks you to take over its computer (Ask To Take Over). */
   takeover?: { desktop: string; reason: string };
 }
@@ -307,10 +310,10 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
 
   useApprovalSeen(approvals);
 
-  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always', always = false) => {
+  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always', always = false, grant?: AccessGrant) => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));
     try {
-      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}), ...(rememberApp ? { remember_app: rememberApp } : {}), ...(always ? { always: true } : {}) });
+      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}), ...(rememberApp ? { remember_app: rememberApp } : {}), ...(always ? { always: true } : {}), ...(grant ? { grant } : {}) });
     } catch {
       /* best-effort — the turn times out server-side if this never lands */
     }
@@ -2808,7 +2811,15 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
               onUndoAll={(src) => void chatChanges.act({ action: 'reject', source: src.key })}
             />
           );
-  const approvalCards = approvals.map((a) => a.takeover ? (
+  const approvalCards = approvals.map((a) => a.access ? (
+            <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
+              <AccessRequestCard
+                access={a.access}
+                agentName={a.access.agent || currentAgent?.name}
+                onAnswer={(grant) => void respondApproval(a.request_id, !!grant, false, false, undefined, false, grant ?? undefined)}
+              />
+            </div>
+          ) : a.takeover ? (
             <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
               <PanelCard
                 tag={<>{tr('ui.takeover.tag')}</>}

@@ -21,6 +21,7 @@ import { useApprovalSeen } from '@/hooks/useApprovalSeen';
 import { setViewingChat } from '@/lib/chatPresence';
 import { CHATS_EDITED, chatsStale, setChatNav, type ChatsEditedDetail } from '@/lib/chatNav';
 import { tr } from '@/lib/i18n';
+import { AccessRequestCard, type AccessGrant, type AccessRequest } from '@/components/AccessRequestCard';
 
 interface Member { id: string; name: string; handle: string; lead: boolean; provider?: string | null; model?: string | null }
 interface ChatSummary { id: string; title: string; updated_at?: string | null; running: boolean }
@@ -41,6 +42,8 @@ interface ApprovalRequest {
   /** Takes over the screen: asked every time, so nothing to remember. */
   always_ask?: boolean;
   always?: { kind: 'tool' | 'command'; label: string; computer?: string };
+  /** Request Access: the agent asks for a tool or connected app it doesn't have. */
+  access?: AccessRequest & { agent?: string };
 }
 
 interface RunEvent {
@@ -434,10 +437,10 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
     return () => window.removeEventListener(CHATS_EDITED, onEdited);
   }, [loadInfo, setParams]);
 
-  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always', always = false) => {
+  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always', always = false, grant?: AccessGrant) => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));
     try {
-      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}), ...(rememberApp ? { remember_app: rememberApp } : {}), ...(always ? { always: true } : {}) });
+      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}), ...(rememberApp ? { remember_app: rememberApp } : {}), ...(always ? { always: true } : {}), ...(grant ? { grant } : {}) });
     } catch {
       /* the turn times out server-side if this never lands */
     }
@@ -763,7 +766,15 @@ export default function TeamChat({ teamId: teamProp }: { teamId?: string } = {})
             />
           )}
 
-          {approvals.map((a) => (
+          {approvals.map((a) => a.access ? (
+            <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
+              <AccessRequestCard
+                access={a.access}
+                agentName={a.access.agent || undefined}
+                onAnswer={(grant) => void respondApproval(a.request_id, !!grant, false, false, undefined, false, grant ?? undefined)}
+              />
+            </div>
+          ) : (
             <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
               <PanelCard
                 tone="danger"

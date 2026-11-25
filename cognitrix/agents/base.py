@@ -3,6 +3,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import weakref
 from collections.abc import Callable
 from enum import Enum
@@ -170,6 +171,10 @@ def tool_timeout_seconds() -> float | None:
         value = _DEFAULT_TOOL_TIMEOUT_SECONDS
     return value if value > 0 else None
 
+
+
+def _normal_tool_key(name: Any) -> str:
+    return re.sub(r'[\s\-_]+', '_', str(name or '').strip()).lower()
 
 class ToolBatchCancelled(asyncio.CancelledError):
     """Cancellation carrying the completed and still-outstanding batch state."""
@@ -657,10 +662,13 @@ class AgentManager:
                 # checks or execution.
                 assigned_tool = self.get_tool_by_name(name)
                 if not assigned_tool:
+                    hint = (" If you need it, ask the person for it with Request Access."
+                            if self.get_tool_by_name('Request Access') else '')
                     results_by_index[i] = _tool_result_entry(
                         tc_id,
                         ToolOutcome.failure(
-                            'tool_not_assigned', f"Error: Tool '{name}' is not assigned to this agent", denied=True
+                            'tool_not_assigned', f"Error: Tool '{name}' is not assigned to this agent.{hint}",
+                            denied=True,
                         ),
                     )
                     continue
@@ -696,6 +704,17 @@ class AgentManager:
                 # Set only when a person approved this exact call (not auto
                 # approval); Bash needs it before using the full shell.
                 person_approved = False
+                # Request Access: what the person allowed ('chat' / 'agent').
+                access_grant = None
+                if _normal_tool_key(assigned_tool.name) == 'request_access':
+                    from cognitrix.tools import access as access_mod
+
+                    checked = await access_mod.precheck(self.agent, args)
+                    if checked.answer is not None:
+                        # Nothing to ask (already has it, unknown, ruled out).
+                        results_by_index[i] = _tool_result_entry(tc_id, checked.answer)
+                        continue
+                    tool_call.access = checked.card
                 risk = self.detector.analyze(assigned_tool.name, args)
                 mcp_risk = await self._mcp_write_risk(assigned_tool, args)
                 if mcp_risk is not None and _RISK_ORDER[mcp_risk.risk_level] > _RISK_ORDER[risk.risk_level]:
@@ -789,7 +808,8 @@ class AgentManager:
                 # So does anything that takes over the person's screen, and a
                 # request for the person to take over the agent's computer
                 # (they press Take over or Skip; "always allow" can't do it).
-                if decision.action == 'run' and {'screen_takeover', 'person_takeover'} & set(
+                # Request Access too: only a person gives an agent more access.
+                if decision.action == 'run' and {'screen_takeover', 'person_takeover', 'access_request'} & set(
                         decision.risk.categories or []):
                     decision = ToolDecision('ask', decision.risk, decision.source, decision.reason)
 
@@ -853,6 +873,7 @@ class AgentManager:
                     person_approved = not getattr(approval, "auto", False) and (
                         full_shell or not getattr(approval, "cached", False)
                     )
+                    access_grant = getattr(approval, 'grant', None)
 
                 status_print(f"\nRunning tool '{tool.name.title()}' with parameters: {args}")
 
@@ -867,6 +888,8 @@ class AgentManager:
                     args['interface'] = interface
                 if 'approved' in internal_params:
                     args['approved'] = person_approved
+                if 'access_grant' in internal_params:
+                    args['access_grant'] = access_grant
 
                 jobs.append(
                     (

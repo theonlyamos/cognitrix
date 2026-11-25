@@ -444,7 +444,7 @@ _MEETING_MIGRATION_COLUMNS = (
 
 _AGENT_MIGRATION_COLUMNS = (
     ('owner_id', 'TEXT'),
-    ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'),
+    ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'), ('can_request_access', 'BOOLEAN'),
     ('permission_level', 'TEXT'),
     ('tool_permissions', 'TEXT'),
     ('description', 'TEXT'), ('avatar', 'TEXT'), ('reviewer', 'TEXT'), ('coding_agents', 'TEXT'),
@@ -471,6 +471,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('pending_messages', 'TEXT'),
     ('public_link_id', 'TEXT'), ('visitor_key', 'TEXT'),
     ('loaded_tools', 'TEXT'),
+    ('granted_access', 'TEXT'),
     ('project_id', 'TEXT'),
     ('auto_title', 'TEXT'),
 )

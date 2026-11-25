@@ -100,6 +100,15 @@ export default function ToolsTab({ draft, update, options, catalog, agent }: Tab
         <p className="mt-3 text-[12.5px] text-fg-dim">{tr('ui.agent.toolsTab.fullShellCommandsCodingAgent')}</p>
       </Card>
 
+      <Card title={tr('ui.agent.toolsTab.askingForMore')}>
+        <Check
+          checked={draft.canRequestAccess}
+          onChange={(canRequestAccess) => update({ canRequestAccess })}
+          label={tr('ui.agent.toolsTab.letTheAgentAskForTools')}
+          detail={tr('ui.agent.toolsTab.itAsksWithAReason')}
+        />
+      </Card>
+
       <Card title={tr('ui.agent.toolsTab.savingTokens')} description={tr('ui.agent.toolsTab.forLongJobsAndAgents')}>
         <Check
           checked={draft.codeMode}

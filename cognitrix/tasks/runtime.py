@@ -447,6 +447,7 @@ class AgentRuntimeSnapshot(BaseModel):
     # The agent's working-folder policy (Agent.folders / can_request_folders).
     folders: tuple[dict[str, Any], ...] | None = None
     can_request_folders: bool = True
+    can_request_access: bool = True
     # The agent's permission levels (see cognitrix/safety/permissions.py).
     permission_level: Literal["auto", "ask", "allow"] = "auto"
     tool_permissions: tuple[tuple[str, Literal["allow", "ask", "told", "handoff", "deny"]], ...] = ()
@@ -730,6 +731,7 @@ def build_runtime_snapshot(
             else tuple(copy.deepcopy(dict(f)) for f in agent.folders)
         ),
         can_request_folders=bool(getattr(agent, "can_request_folders", True)),
+        can_request_access=bool(getattr(agent, "can_request_access", True)),
         agent_policy=agent_policy(agent),
         tool_policies=tuple(
             CapabilityPolicySnapshot(
@@ -831,6 +833,7 @@ def instantiate_runtime(
         is_sub_agent=False,
         folders=None if snapshot.folders is None else [dict(f) for f in snapshot.folders],
         can_request_folders=snapshot.can_request_folders,
+        can_request_access=snapshot.can_request_access,
         permission_level=snapshot.permission_level,
         tool_permissions=dict(snapshot.tool_permissions),
         **copy.deepcopy(dict(snapshot.agent_policy or {})),

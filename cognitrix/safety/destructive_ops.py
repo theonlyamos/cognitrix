@@ -424,6 +424,11 @@ class DestructiveOpDetector:
                 RiskLevel.MEDIUM, ['folder_access'],
                 f"Wants {access} access to the folder '{params.get('path', '')}'",
             )
+        if name == 'request_access':
+            # Giving an agent a tool or connected app it doesn't have is the
+            # person's call, every time (approval_gate.ALWAYS_ASK_CATEGORIES).
+            from cognitrix.tools.access import ACCESS_CATEGORY, risk_details
+            return RiskAssessment(RiskLevel.MEDIUM, [ACCESS_CATEGORY], risk_details(params))
         if name == 'join_meeting':
             # Joining a call and recording what people say is the person's call.
             url = str(params.get('url') or '')[:300]

@@ -99,6 +99,10 @@ class Agent(Model):
     can_request_folders: bool = True
     """Whether the agent may ask (with approval) for more folders or write access."""
 
+    can_request_access: bool = True
+    """Whether the agent may ask the person for a tool or connected app it
+    doesn't have (Request Access, cognitrix/tools/access.py)."""
+
     run_in_sandbox: bool = False
     """New chats with this agent run code in the sandboxed computer (its shell,
     files and tests work there); each chat can change it. With this and
@@ -216,7 +220,7 @@ class Agent(Model):
                 return None
         return [str(v) for v in value] if isinstance(value, list) else None
 
-    @field_validator('can_request_folders', mode='before')
+    @field_validator('can_request_folders', 'can_request_access', mode='before')
     @classmethod
     def _can_request_folders_default(cls, value):
         # Agents saved before this column existed load it as NULL.

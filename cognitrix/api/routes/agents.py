@@ -385,6 +385,8 @@ def _check_folders(agent: Agent, data: dict, existing: Agent | None) -> None:
             raise HTTPException(status_code=400, detail=str(exc)) from None
     if 'can_request_folders' not in data and existing is not None:
         agent.can_request_folders = existing.can_request_folders
+    if 'can_request_access' not in data and existing is not None:
+        agent.can_request_access = existing.can_request_access
 
 
 _POLICY_DEFAULTS = {
@@ -475,7 +477,7 @@ def _check_policy(agent: Agent, data: dict, existing: Agent | None) -> None:
 # edit changes its instructions, model, tools and approval rules; these stay
 # as stored, because they decide whose apps, files and sign-ins it reaches.
 _OWNER_ONLY_FIELDS = (
-    'mcp_servers', 'folders', 'can_request_folders', 'knowledge', 'credentials',
+    'mcp_servers', 'folders', 'can_request_folders', 'can_request_access', 'knowledge', 'credentials',
     'coding_agents', 'automation', 'memory',
 )
 
