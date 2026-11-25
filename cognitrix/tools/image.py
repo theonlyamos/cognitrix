@@ -76,18 +76,45 @@ def _current_media_ownership() -> MediaOwnership:
     )
 
 
+def _save_target(raw: str):
+    """Where ``save_to`` points, if it's an image file inside the apps folder
+    (every agent may write there); otherwise a failure to return."""
+    from pathlib import Path
+
+    from cognitrix.common.folders import _apps_folder_allowed, apps_root, in_apps_root
+
+    if not _apps_folder_allowed():  # e.g. calls made with an API key
+        return ToolOutcome.failure('bad_path', 'This chat cannot write to the apps folder.')
+    path = Path(raw.strip()).expanduser()
+    if not path.is_absolute():
+        path = apps_root() / path
+    if path.suffix.lower() not in ('.png', '.jpg', '.jpeg', '.webp'):
+        return ToolOutcome.failure('bad_path', 'save_to must end in .png, .jpg or .webp.')
+    path = path.resolve()  # follows any link, so a link out of the apps folder is caught below
+    if path.parent == apps_root() or not in_apps_root(path):
+        return ToolOutcome.failure('bad_path', f"save_to must be inside an app's folder in the apps folder "
+                                   f'({apps_root()}/<app name>/).')
+    return path
+
+
 @tool(category='media', retryable=False, max_attempts=1,
       approval_mode='assigned_only', supported_interfaces=['web', 'ws', 'cli', 'task', 'tui'])
 async def generate_image(prompt: str, source_artifact_id: str | None = None,
-                         aspect_ratio: str | None = None) -> ToolOutcome:
+                         aspect_ratio: str | None = None, save_to: str | None = None) -> ToolOutcome:
     """Generate one 1K image, or edit one image from this conversation.
 
     Args:
         prompt (str): The desired image or the edit instructions.
         source_artifact_id (str | None): Exact artifact ID to edit. Omit it when the UI has selected an image; never use a filename or provider image label.
         aspect_ratio (str | None): Optional output ratio such as 1:1, 16:9, or 9:16.
+        save_to (str | None): Also save the image as a file inside the apps folder, e.g. ~/.cognitrix/apps/todo-list/icon.png (an app's icon).
     """
     prompt_text = prompt.strip()
+    target = None
+    if save_to and str(save_to).strip():
+        target = _save_target(str(save_to))
+        if isinstance(target, ToolOutcome):
+            return target
     if not prompt_text:
         return ToolOutcome.failure(
             'invalid_prompt',
@@ -150,7 +177,15 @@ async def generate_image(prompt: str, source_artifact_id: str | None = None,
             },
             ownership,
         )
-        return ToolOutcome.success('Image generated.', artifacts=[artifact])
+        saved = ''
+        if target is not None:
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(provider_image.data)
+                saved = f' Saved to {target}.'
+            except OSError as exc:
+                saved = f' It could not be saved to {target}: {exc}.'
+        return ToolOutcome.success('Image generated.' + saved, artifacts=[artifact])
     except GeminiImageError as exc:
         return ToolOutcome.failure(exc.code, str(exc))
     except MediaError as exc:

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AppWindow, LayoutGrid, Pin, Rows3, Search } from 'lucide-react';
 import { AccessLabel, AppStatusBadge, AppThumbnail, Sparkline } from '@/components/hosted-apps/parts';
+import { AppIcon } from '@/components/hosted-apps/InstallApp';
+import { refreshShortcutIcons, useInstalledApps } from '@/lib/installedApps';
 import { EmptyState, ErrorState, LoadingState } from '@/components/list-ui';
 import { api, errorMessage } from '@/lib/api';
 import { ago } from '@/lib/artifactPages';
@@ -47,6 +49,7 @@ function AppCard({ app }: { app: AppSummary }) {
       </div>
       <div className="flex min-w-0 flex-col gap-1.5 p-3">
         <div className="flex items-center gap-2">
+          <AppIcon title={app.title} slug={app.slug} src={app.icon_url} size={24} />
           <h3 className="min-w-0 flex-1 truncate text-[14px] font-semibold group-hover:text-accent-ink" title={app.title}>{app.title}</h3>
           {app.branch && <span className="flex-none rounded border border-line px-1.5 font-mono text-[10px] text-fg-dim">{app.branch}</span>}
         </div>
@@ -77,7 +80,7 @@ function AppTable({ apps }: { apps: AppSummary[] }) {
             <tr key={app.id} className="cursor-pointer hover:bg-panel-2" onClick={() => navigate(`/apps/${app.id}`)}>
               <td className="border-b border-line px-3 py-2.5">
                 <Link to={`/apps/${app.id}`} className="flex min-w-0 items-center gap-3" onClick={(e) => e.stopPropagation()}>
-                  <AppThumbnail app={app} className="h-9 w-14 flex-none rounded-[5px] border border-line" />
+                  <AppIcon title={app.title} slug={app.slug} src={app.icon_url} size={32} />
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{app.title}{app.pinned && <Pin size={11} className="ml-1.5 inline text-fg-dim" aria-label={tr('ui.apps.pinned')} />}</span>
                     <span className="block truncate font-mono text-[11px] text-fg-dim">/apps/open/{app.slug}{app.branch ? tr('ui.apps.branchBranch', { branch: app.branch }) : ''}</span>
@@ -103,7 +106,7 @@ function AppTable({ apps }: { apps: AppSummary[] }) {
 function PhoneRow({ app }: { app: AppSummary }) {
   return (
     <Link to={`/apps/${app.id}`} className="flex items-center gap-3 border-b border-line px-1 py-3">
-      <AppThumbnail app={app} className="h-10 w-16 flex-none rounded-[6px] border border-line" />
+      <AppIcon title={app.title} slug={app.slug} src={app.icon_url} size={40} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[14px] font-medium">{app.title}</span>
         <span className="mt-0.5 flex items-center gap-2"><AppStatusBadge app={app} /><span className="font-mono text-[11px] text-fg-dim">{ago(app.updated)}</span></span>
@@ -118,6 +121,7 @@ function AppsTab() {
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
   const [view, setView] = useState<AppsView>(savedAppsView);
+  const { apps: installed } = useInstalledApps();
 
   const load = async () => {
     try {
@@ -134,6 +138,10 @@ function AppsTab() {
     const timer = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(timer);
   }, []);
+  // Shortcuts on this computer follow the app's icon when it changes.
+  useEffect(() => {
+    if (data) void refreshShortcutIcons(data.apps, installed);
+  }, [data, installed]);
 
   const apps = useMemo(() => {
     const needle = query.trim().toLowerCase();

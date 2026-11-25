@@ -35,6 +35,10 @@ export interface AppSummary {
   thumb_url?: string;
   /** The last Check App screenshot, shown while the app sleeps. */
   shot_url?: string;
+  /** 'custom': its own image; 'generated': its initials, until someone makes one. */
+  icon?: 'custom' | 'generated';
+  /** The app's icon (every app has one); also its shortcut icon when installed. */
+  icon_url?: string;
   created: string;
   updated: string;
 }

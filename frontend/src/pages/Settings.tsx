@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
+import type { AppList } from '@/lib/hostedApps';
 import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import { desktop, isDesktop, type DesktopSettings, type UpdateInfo } from '@/lib/desktop';
@@ -333,6 +334,15 @@ function UpdateRow() {
 function InstalledAppsGroup() {
   const { apps, reload } = useInstalledApps();
   const [error, setError] = useState('');
+  const [icons, setIcons] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (apps.length === 0) return;
+    let live = true;
+    api.get<AppList>('/hosted-apps')
+      .then(({ data }) => { if (live) setIcons(Object.fromEntries(data.apps.map((a) => [a.slug, a.icon_url ?? '']))); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [apps.length]);
   const remove = async (slug: string) => {
     setError('');
     try {
@@ -350,7 +360,7 @@ function InstalledAppsGroup() {
         {apps.length === 0 ? (
           <p className="px-3.5 py-3 text-[13px] text-fg-dim">{tr('ui.settings.noneYetOpenAnApp')}</p>
         ) : apps.map((a) => (
-          <SettingRow key={a.slug} label={a.title} lead={<AppIcon title={a.title} slug={a.slug} size={28} />}
+          <SettingRow key={a.slug} label={a.title} lead={<AppIcon title={a.title} slug={a.slug} src={icons[a.slug] || undefined} size={28} />}
             detail={`${a.place}${a.tray_allowed ? ' · tray icon' : ''}`}>
             <button type="button" onClick={() => void openAppWindow(a)} className={quietButtonClass}>{tr('ui.settings.open')}</button>
             <button type="button" onClick={() => void remove(a.slug)} className={buttonClass}>{tr('ui.settings.uninstall')}</button>

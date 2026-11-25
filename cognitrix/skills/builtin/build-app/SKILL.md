@@ -11,7 +11,7 @@ args:
     required: true
 tags: [apps, web, build, publish, dashboard]
 category: development
-version: "1.2.0"
+version: "1.3.0"
 author: cognitrix
 safety:
   risk-level: low
@@ -59,18 +59,29 @@ a second one: edit its folder and publish again with its `app_id`.
      (Gmail, Calendar, ...) as them: reads run, changes ask the person each time.
      Use these only when the user wants that; they're all optional.
    - Don't commit `node_modules` or `.venv`; install them with the install command.
-4. **Try it** if you can run commands: start it with `PORT=8765 APP_DATA_DIR=./.data` and fetch a page.
+4. **Make its icon. Every app needs one.** It shows on the Apps page and becomes the shortcut icon
+   (Start menu, Dock, desktop) when someone installs the app. Save a square `icon.svg` in the app's
+   folder (Publish App picks up `icon.svg` or `icon.png` by itself; pass `icon` for another file):
+   - `viewBox="0 0 256 256"`, a full-bleed rounded tile (`<rect width="256" height="256" rx="56">`) in
+     a colour that suits the app, and one bold, simple symbol of what the app does (a checkmark for a
+     todo list, bars for a dashboard), centred, about half the tile. No text beyond one or two letters,
+     no thin lines or tiny details: it must read at 16 px. No scripts or event handlers.
+   - Or, for a picture-style icon, use `Generate Image` with `aspect_ratio: "1:1"` and
+     `save_to: "~/.cognitrix/apps/<name>/icon.png"` (a flat app icon on a plain background, no text).
+   - Link it as the page's favicon too: `<link rel="icon" href="icon.svg">` (relative).
+   Without one the app shows a placeholder with its initials, and Publish App will remind you.
+5. **Try it** if you can run commands: start it with `PORT=8765 APP_DATA_DIR=./.data` and fetch a page.
    Skip this when the shell isn't available; publishing reports start errors with the log.
-5. **Publish** with `Publish App`: `title` (2-5 words), `folder` = the app's folder, `start_command`
+6. **Publish** with `Publish App`: `title` (2-5 words), `folder` = the app's folder, `start_command`
    (e.g. `python3 app.py`, `node server.js`), `install_command` when needed (e.g.
    `pip install -r requirements.txt`, `npm ci`), a one-line `note`, and `description`.
    Only set `use_cognitrix_api` when the app itself must run agents or read tasks.
-6. **If it fails**, read the log in the result (or `App Status`), fix the code and publish again with the
+7. **If it fails**, read the log in the result (or `App Status`), fix the code and publish again with the
    same `app_id`. The previous live version keeps serving meanwhile.
-7. **Look at it** with `Check App` (its `app_id`): you get a screenshot plus script errors, console errors
+8. **Look at it** with `Check App` (its `app_id`): you get a screenshot plus script errors, console errors
    and failed requests. Check the main pages (`path`) and once with `phone: true`. Fix anything broken
    or ugly, publish again and check again.
-8. **Click through it** with `Test App`: write the steps a person would take for each thing the app is
+9. **Click through it** with `Test App`: write the steps a person would take for each thing the app is
    for, and check the result after each action. For a todo list, for example:
    `[{"fill": "Title", "with": "Buy milk"}, {"click": "Add"}, {"see": "Buy milk"},
    {"reload": true}, {"see": "Buy milk"}, {"click": "Delete"}, {"not_see": "Buy milk"}]`.
@@ -88,11 +99,11 @@ a second one: edit its folder and publish again with its `app_id`.
    - Give each test a `name` and `save: true`: once it passes it is kept in the app's
      `app-tests.json` (you can also edit that file directly).
    Don't tell the user it's done while Check App shows errors or a test fails.
-9. **Tell the user** in two or three sentences what the app does, which flows you tested, and that the
+10. **Tell the user** in two or three sentences what the app does, which flows you tested, and that the
    card in the chat opens it. It is private to them until they share it.
 
 ## Updating later
 
-Edit the files in the same folder, publish again with the app's `app_id` and a `note` saying what
+Edit the files in the same folder (keep `icon.svg`; make one if the app has none), publish again with the app's `app_id` and a `note` saying what
 changed, then run `Check App` and `Test App` with no steps (it re-runs every saved test). Add a saved test
 for what you changed. Never start a new app for a change to an existing one.

@@ -4,7 +4,7 @@ import { ArrowLeft, Check, Copy, ExternalLink, Maximize2, Pause, Pencil, Pin, Pl
 import { AccessLabel, AppStatusBadge, Sparkline } from '@/components/hosted-apps/parts';
 import { AppShareDialog } from '@/components/hosted-apps/AppShareDialog';
 import { AppBridgeDialogs, useAppBridge } from '@/components/hosted-apps/AppBridge';
-import { AppPermissionsPanel, InstallAppButton } from '@/components/hosted-apps/InstallApp';
+import { AppIcon, AppPermissionsPanel, InstallAppButton } from '@/components/hosted-apps/InstallApp';
 import { DeleteAppDialog } from '@/components/hosted-apps/DeleteAppDialog';
 import { ErrorState, LoadingState } from '@/components/list-ui';
 import { api, errorMessage } from '@/lib/api';
@@ -12,9 +12,50 @@ import { ago } from '@/lib/artifactPages';
 import { CHAT_DRAFT_KEY } from '@/lib/chatDraft';
 import { APP_FRAME_SANDBOX, appLink, openAppWindow, openUrl, type AppDetail as Detail } from '@/lib/hostedApps';
 import { desktop, type InstalledApp } from '@/lib/desktop';
-import { installedChanged, useInstalledApp } from '@/lib/installedApps';
+import { installedChanged, refreshShortcutIcons, useInstalledApp } from '@/lib/installedApps';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
+
+/** The app's icon, and (for people who can change the app) a way to pick another. */
+function IconPicker({ app, canEdit, busy, act }: {
+  app: Detail;
+  canEdit: boolean;
+  busy: string;
+  act: (name: string, work: () => Promise<Detail | void>) => Promise<void>;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const upload = (file: File) => act('icon', async () => {
+    if (file.size > 512 * 1024) throw new Error(tr('ui.appDetail.iconTooBig'));
+    const data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+      reader.readAsDataURL(file);
+    });
+    return (await api.put<Detail>(`/hosted-apps/${app.id}/icon`, { data })).data;
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <AppIcon title={app.title} slug={app.slug} src={app.icon_url} size={32} />
+      {canEdit && (
+        <>
+          <input ref={input} type="file" accept="image/png,image/svg+xml,image/jpeg,image/webp" className="hidden"
+            onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void upload(file); }} />
+          <button type="button" className={cn(button, 'h-8')} disabled={busy !== ''} onClick={() => input.current?.click()}>
+            {busy === 'icon' ? tr('ui.appDetail.saving') : tr('ui.appDetail.changeIcon')}
+          </button>
+          {app.icon === 'custom' && (
+            <button type="button" className="text-[12px] text-fg-dim underline hover:text-fg" disabled={busy !== ''}
+              onClick={() => void act('icon', async () => (await api.delete<Detail>(`/hosted-apps/${app.id}/icon`)).data)}>
+              {tr('ui.appDetail.useInitials')}
+            </button>
+          )}
+        </>
+      )}
+      {app.icon !== 'custom' && <span className="w-full text-[11.5px] text-fg-dim">{tr('ui.appDetail.noIconYet')}</span>}
+    </div>
+  );
+}
 
 type SideTab = 'overview' | 'versions' | 'logs';
 type PhoneTab = 'app' | SideTab;
@@ -144,6 +185,8 @@ function Overview({ app, onChanged, onDeleted, installed, onInstalledChanged }: 
       </div>
       {app.description && <p className="text-[13px] text-fg-dim">{app.description}</p>}
       <dl className="grid grid-cols-[100px_1fr] gap-x-3 gap-y-2 text-[12.5px]">
+        <dt className="self-center font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.icon')}</dt>
+        <dd><IconPicker app={app} canEdit={canEdit} busy={busy} act={act} /></dd>
         <dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.whoCanOpen')}</dt><dd><AccessLabel access={app.access} /></dd>
         <dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.builtBy')}</dt>
         <dd>{app.agent?.name || tr('ui.appDetail.anAgent')}{owner && app.session_id ? <> · <Link className="underline" to="/home" onClick={() => openChat(app)}>{tr('ui.appDetail.openChat')}</Link></> : ''}</dd>
@@ -232,6 +275,11 @@ export default function AppDetail() {
     return () => { on = false; };
   }, [app?.id, app?.version, live]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The shortcut on this computer follows the app's icon when it changes.
+  useEffect(() => {
+    if (app && installed) void refreshShortcutIcons([app], [installed]).then((n) => { if (n) void reloadInstalled(); });
+  }, [app?.icon_url, installed]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Building apps finish on their own.
   useEffect(() => {
     if (app?.status !== 'building') return;
@@ -270,6 +318,7 @@ export default function AppDetail() {
     <div className="flex h-full min-h-0 flex-col">
       <header className="app-page-header flex flex-none items-center gap-2 border-b border-line bg-panel py-2 pl-16 pr-3 md:gap-3 md:px-4">
         <Link to="/apps" aria-label={tr('ui.appDetail.allApps')} className="grid h-9 w-9 flex-none place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg"><ArrowLeft size={16} /></Link>
+        <AppIcon title={app.title} slug={app.slug} src={app.icon_url} size={28} />
         <h1 className="min-w-0 truncate text-[15px] font-semibold">{app.title}</h1>
         <AppStatusBadge app={app} className="hidden sm:inline-flex" />
         <button type="button" onClick={() => void copy()} title={tr('ui.appDetail.copyTheLink')}

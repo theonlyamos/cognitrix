@@ -25,6 +25,7 @@ import jwt
 from cognitrix.artifact_pages.models import EVERYONE, SHARE_ROLES
 from cognitrix.artifact_pages.store import ROLE_OWNER, can_edit, names, role_of, shares, task_info  # noqa: F401
 from cognitrix.computer.sandbox.apps import AppHostError, pack_folder, unpack
+from cognitrix.hosted_apps import icons
 from cognitrix.hosted_apps.models import POWERS, HostedApp, HostedAppGrant, HostedAppVersion
 from cognitrix.hosted_apps.runner import RunnerError, default_runtime, runner_for
 
@@ -221,9 +222,12 @@ async def publish(
     session_id: str = '',
     task_id: str = '',
     runtime: str | None = None,
+    icon: str = '',
 ) -> tuple[HostedApp, HostedAppVersion, bool]:
     """Create an app or add a version to one, and start it. Returns (app, version, created).
-    A version that fails to start is recorded as failed; the live one keeps serving."""
+    A version that fails to start is recorded as failed; the live one keeps serving.
+    ``icon`` names the icon file in the folder (default: icon.svg, icon.png, ...); see
+    :func:`icon_note` for what the agent should hear about it."""
     if not user_key:
         raise AppError('no_owner', 'Apps need a signed-in person to belong to.')
     if not str(folder or '').strip() and app_id:
@@ -302,6 +306,10 @@ async def publish(
             changes['task_id'] = task_id
         if session_id and not app.session_id:
             changes['session_id'] = session_id
+        icon_state, note_text = await asyncio.to_thread(
+            icons.adopt, str(app.id), home if not pack_error else None, explicit=icon, current=app.icon)
+        changes['icon'] = icon_state
+        _icon_notes[str(app.id)] = note_text
         await _set(app, **changes)
 
         run_env = dict(app.env)
@@ -341,6 +349,42 @@ async def publish(
             if new_key:
                 await _revoke_api_key(app, new_key)
         return app, row, created
+
+
+_icon_notes: dict[str, str] = {}
+
+
+def icon_note(app: HostedApp) -> str:
+    """What the last publish found out about the app's icon (for the agent), once."""
+    return _icon_notes.pop(str(app.id), '')
+
+
+async def backfill_icons() -> int:
+    """Once at startup: apps made before icons pick up an icon file in their
+    folder, or show a generated one. Returns how many changed."""
+    changed = 0
+    for app in await HostedApp.all() or []:
+        try:
+            state = await asyncio.to_thread(icons.backfill, str(app.id), app.folder, app.icon)
+        except Exception as exc:
+            logger.info('app %s: could not look for its icon: %s', app.slug, exc)
+            continue
+        if state is not None:
+            await _set(app, icon=state)
+            changed += 1
+    return changed
+
+
+async def set_icon(app: HostedApp, data: bytes | None) -> HostedApp:
+    """An icon a person chose on the app's page (``None``: back to the generated one)."""
+    if data is None:
+        await asyncio.to_thread(icons.remove, str(app.id))
+        return await _set(app, icon=icons.GENERATED, updated=now())
+    try:
+        await asyncio.to_thread(icons.save, str(app.id), data)
+    except icons.IconError as exc:
+        raise AppError('bad_icon', str(exc)) from None
+    return await _set(app, icon=icons.CUSTOM, updated=now())
 
 
 def apps_root() -> Path:
@@ -484,6 +528,7 @@ async def delete_app(app: HostedApp) -> None:
         import shutil
 
         shutil.rmtree(shots_dir() / app.slug, ignore_errors=True)
+    icons.remove(str(app.id))
     await HostedAppVersion.delete_many({'app_id': str(app.id)})
     await HostedAppGrant.delete_many({'app_id': str(app.id)})
     await HostedApp.delete_many({'id': str(app.id)})
@@ -873,6 +918,7 @@ def project(app: HostedApp, role: str | None, *, people: dict[str, str], agents:
         'install': app.install if can_edit(role) else '',
         'folder': app.folder if owner else '',
         'link': f'/apps/open/{app.slug}',
+        'icon': icons.CUSTOM if app.icon == icons.CUSTOM else icons.GENERATED,
         'created': app.created,
         'updated': app.updated,
     }

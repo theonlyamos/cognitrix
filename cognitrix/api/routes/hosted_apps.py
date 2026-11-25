@@ -4,6 +4,7 @@
     GET    /api/v1/hosted-apps/{id}                 one app, its versions
     PATCH  /api/v1/hosted-apps/{id}                 title, pinned, sleep_after
     PUT    /api/v1/hosted-apps/{id}/sharing         people / everyone on this server
+    PUT    /api/v1/hosted-apps/{id}/icon            a new icon (PNG/SVG/JPEG/WebP); DELETE: back to its initials
     POST   /api/v1/hosted-apps/{id}/open            a link to open it with (12 h)
     POST   /api/v1/hosted-apps/{id}/start|stop      wake / sleep
     POST   /api/v1/hosted-apps/{id}/promote         make a kept version live again
@@ -36,7 +37,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from pydantic import BaseModel, Field
 
 from cognitrix.common.security import AuthContext, jwt_only
-from cognitrix.hosted_apps import bridge, store
+from cognitrix.hosted_apps import bridge, icons, store
 from cognitrix.hosted_apps.models import POWERS, HostedApp
 from cognitrix.hosted_apps.runner import RunnerError, default_runtime, runner_for
 from cognitrix.session_ownership import principal_key
@@ -93,6 +94,34 @@ async def app_shot(slug: str, t: str = ''):
     return FileResponse(shot, media_type='image/png', headers={'Cache-Control': 'private, max-age=3600'})
 
 
+def _icon_url(app: HostedApp, viewer: str) -> str:
+    """The app's icon for an <img> (a thumbnail token: no sign-in header). Every app
+    has one: its own image, or its initials drawn on a tile."""
+    found = icons.icon_file(str(app.id)) if app.icon == icons.CUSTOM else None
+    stamp = str(int(found[0].stat().st_mtime)) if found else 'g' + icons.stamp(app.title)
+    return f'/app-icons/{app.slug}?t={store.open_token(app.slug, viewer, thumb=True)}&v={stamp}'
+
+
+_ICON_HEADERS = {
+    'Cache-Control': 'private, max-age=86400',
+    # An SVG opened on its own must never run anything on this origin.
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    'X-Content-Type-Options': 'nosniff',
+}
+
+
+@app_proxy.get('/app-icons/{slug}', include_in_schema=False)
+async def app_icon(slug: str, t: str = ''):
+    read = store.read_open_token(t, slug)
+    app = await store.by_slug(slug)
+    if read is None or app is None or store.role_of(app, read[0]) is None:
+        raise HTTPException(status_code=404, detail='Not found')
+    found = icons.icon_file(str(app.id)) if app.icon == icons.CUSTOM else None
+    if found is not None:
+        return FileResponse(found[0], media_type=found[1], headers=_ICON_HEADERS)
+    return Response(icons.generated_svg(app.title, app.slug), media_type='image/svg+xml', headers=_ICON_HEADERS)
+
+
 @hosted_apps_api.get('')
 async def list_apps(request: Request, ctx: AuthContext = Depends(jwt_only)):
     store.remember_engine_url(str(request.base_url))
@@ -106,6 +135,7 @@ async def list_apps(request: Request, ctx: AuthContext = Depends(jwt_only)):
         row['thumb_url'] = store.app_path(app.slug, store.open_token(app.slug, me, thumb=True)) \
             if app.status == 'online' else ''
         row['shot_url'] = _shot_url(app.slug, me)
+        row['icon_url'] = _icon_url(app, me)
         apps.append(row)
     return {'apps': apps, 'runtime': runtime}
 
@@ -116,6 +146,7 @@ async def get_app(ref: str, ctx: AuthContext = Depends(jwt_only)):
     people, agents = await store.names()
     out = store.project(app, role, people=people, agents=agents)
     out['shot_url'] = _shot_url(app.slug, _me(ctx))
+    out['icon_url'] = _icon_url(app, _me(ctx))
     if store.can_edit(role):
         out['versions'] = [store.project_version(v, agents) for v in await store.versions(app)]
         out['task'] = await store.task_info(app.task_id)
@@ -165,6 +196,38 @@ async def share_app(ref: str, body: Sharing, ctx: AuthContext = Depends(jwt_only
         await store.set_sharing(app, people=body.people, everyone=body.everyone)
     except store.AppError as exc:
         raise _bad(exc) from None
+    return await get_app(ref, ctx)
+
+
+class IconUpload(BaseModel):
+    data: str = Field(max_length=(icons.MAX_ICON_BYTES * 4) // 3 + 200)
+    """The image as a data URL (data:image/png;base64,...) or bare base64."""
+
+
+@hosted_apps_api.put('/{ref}/icon')
+async def put_icon(ref: str, body: IconUpload, ctx: AuthContext = Depends(jwt_only)):
+    import base64
+    import binascii
+
+    app, role = await _app(ref, ctx)
+    _editor_only(role)
+    raw = body.data.split(',', 1)[1] if body.data.startswith('data:') else body.data
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail='The icon is not a valid image') from None
+    try:
+        await store.set_icon(app, data)
+    except store.AppError as exc:
+        raise _bad(exc) from None
+    return await get_app(ref, ctx)
+
+
+@hosted_apps_api.delete('/{ref}/icon')
+async def reset_icon(ref: str, ctx: AuthContext = Depends(jwt_only)):
+    app, role = await _app(ref, ctx)
+    _editor_only(role)
+    await store.set_icon(app, None)
     return await get_app(ref, ctx)
 
 

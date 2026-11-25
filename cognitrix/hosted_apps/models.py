@@ -64,11 +64,14 @@ class HostedApp(Model):
     last_visit: str = ''
     api_key_id: str = ''
     """The Cognitrix API key the app was given, if it asked for one."""
+    icon: str = ''
+    """'custom' (a stored image, see hosted_apps/icons.py) or 'generated' (its initials);
+    '' for apps made before icons, until the startup check looks in their folder."""
     created: str = ''
     updated: str = ''
 
     @field_validator('agent_id', 'session_id', 'task_id', 'description', 'folder', 'command', 'install',
-                     'last_error', 'branch', 'last_visit', 'api_key_id', 'created', 'updated', mode='before')
+                     'last_error', 'branch', 'last_visit', 'api_key_id', 'icon', 'created', 'updated', mode='before')
     @classmethod
     def _text_default(cls, value):
         return _text(value)

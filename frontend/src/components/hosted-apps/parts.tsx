@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AppWindow, Lock, Users } from 'lucide-react';
 import { APP_FRAME_SANDBOX, STATUS_LABEL, type AppAccess, type AppStatus, type AppSummary } from '@/lib/hostedApps';
 import { cn } from '@/lib/utils';
+import { AppIcon } from '@/components/hosted-apps/InstallApp';
 import { tr } from '@/lib/i18n';
 
 const DOT: Record<AppStatus, string> = {
@@ -73,7 +74,8 @@ export function AppThumbnail({ app, className }: { app: AppSummary; className?: 
         <div className={cn('absolute inset-0 grid place-items-center', app.status === 'building' ? 'text-warn-ink' : 'text-fg-dim/50')}>
           {app.status === 'building'
             ? <span className="font-mono text-[12px]">{tr('ui.hostedApps.parts.buildingV')}{Math.max(1, app.latest)}…</span>
-            : <AppWindow size={28} strokeWidth={1.5} />}
+            : app.icon_url ? <AppIcon title={app.title} slug={app.slug} src={app.icon_url} size={56} className="opacity-90" />
+              : <AppWindow size={28} strokeWidth={1.5} />}
         </div>
       )}
     </div>

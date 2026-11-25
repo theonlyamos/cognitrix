@@ -13,10 +13,21 @@ import { tr } from '@/lib/i18n';
 const onMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent);
 const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
 
-/** The app's icon as the shortcut will show it. */
-export function AppIcon({ title, slug, size = 40 }: { title: string; slug: string; size?: number }) {
+/** The app's icon as the shortcut will show it: its own image (``src``), or its
+ *  initials on a coloured tile while it has none or the image can't load. */
+export function AppIcon({ title, slug, src, size = 40, className }: {
+  title: string; slug: string; src?: string; size?: number; className?: string;
+}) {
+  const [broken, setBroken] = useState('');
+  if (src && broken !== src) {
+    return (
+      <img src={src} alt="" aria-hidden draggable={false} loading="lazy" onError={() => setBroken(src)}
+        className={cn('flex-none object-cover', className)}
+        style={{ width: size, height: size, borderRadius: size * 0.22 }} />
+    );
+  }
   return (
-    <span aria-hidden className="grid flex-none place-items-center font-semibold text-[#16181a]"
+    <span aria-hidden className={cn('grid flex-none place-items-center font-semibold text-[#16181a]', className)}
       style={{ width: size, height: size, borderRadius: size * 0.22, background: iconColor(slug), fontSize: size * 0.38 }}>
       {iconLetters(title)}
     </span>
@@ -27,7 +38,7 @@ const button = 'inline-flex h-9 flex-none items-center gap-1.5 rounded-md border
 
 /** "Install" on an app's page (desktop app only): a shortcut that opens it in its own window. */
 export function InstallAppButton({ app, installed, onChanged, className }: {
-  app: { slug: string; title: string };
+  app: { slug: string; title: string; icon_url?: string };
   installed: InstalledApp | null;
   onChanged: () => void;
   className?: string;
@@ -46,7 +57,7 @@ export function InstallAppButton({ app, installed, onChanged, className }: {
 }
 
 function InstallDialog({ app, installed, onClose, onChanged }: {
-  app: { slug: string; title: string };
+  app: { slug: string; title: string; icon_url?: string };
   installed: InstalledApp | null;
   onClose: () => void;
   onChanged: () => void;
@@ -91,7 +102,7 @@ function InstallDialog({ app, installed, onClose, onChanged }: {
       <div role="dialog" aria-modal="true" aria-labelledby="install-app-title"
         className="flex w-full flex-col overflow-hidden rounded-t-2xl border border-line bg-panel shadow-2xl md:w-[460px] md:rounded-2xl">
         <header className="flex items-center gap-3 border-b border-line px-4 py-3.5">
-          <AppIcon title={app.title} slug={app.slug} />
+          <AppIcon title={app.title} slug={app.slug} src={app.icon_url} />
           <span className="min-w-0 flex-1">
             <span id="install-app-title" className="block truncate text-[15px] font-semibold">
               {installed && !done ? tr('ui.hostedApps.installApp.titleIsInstalled', { title: app.title }) : done ? tr('ui.hostedApps.installApp.titleIsInstalled', { title: app.title }) : tr('ui.hostedApps.installApp.installTitle', { title: app.title })}
