@@ -446,7 +446,7 @@ async def test_new_google_apps_and_classroom_setting(db, monkeypatch):
     assert {'google-chat', 'google-contacts', 'google-search'} <= set(ids)
     assert 'google-classroom' not in ids
     assert not any('classroom' in s for s in app_setup.all_scopes('google'))
-    assert 'classroommcp.googleapis.com' not in app_setup.google_apis()
+    assert not set(app_setup.CLASSROOM_APIS) & set(app_setup.google_apis())
     with pytest.raises(HTTPException) as off:
         await connected_apps.connect_app('google-classroom', _request(), _ctx(member))
     assert 'turned off' in off.value.detail
@@ -454,10 +454,11 @@ async def test_new_google_apps_and_classroom_setting(db, monkeypatch):
     monkeypatch.setenv('COGNITRIX_GOOGLE_CLASSROOM', '1')
     listing = await connected_apps.list_apps(_request(), _ctx(member))
     assert 'google-classroom' in [a['id'] for a in listing['apps']]
-    assert 'classroommcp.googleapis.com' in app_setup.google_apis()
+    assert set(app_setup.CLASSROOM_APIS) <= set(app_setup.google_apis())
     assert any('classroom' in s for s in app_setup.all_scopes('google'))
     started = await connected_apps.connect_app('google-classroom', _request(), _ctx(member))
-    assert 'classroom.courses.readonly' in started['authorize_url']
+    scopes = parse_qs(urlparse(started['authorize_url']).query)['scope'][0].split()
+    assert 'https://www.googleapis.com/auth/classroom.courses.readonly' in scopes
 
 
 # --- finding and running app tools -------------------------------------------------------
