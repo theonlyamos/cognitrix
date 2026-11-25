@@ -27,6 +27,7 @@ from cognitrix.tools.computer import (
     show_screenshot,
     type_in_window,
 )
+from cognitrix.tools.access import request_access
 from cognitrix.tools.folders import request_folder
 from cognitrix.tools.hosted_apps import app_status, check_app, publish_app, test_app
 from cognitrix.tools.http import http_request, list_credentials
@@ -117,7 +118,7 @@ __all__ = [
     'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',
     'load_skill', 'propose_skill', 'ask_user',
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me', 'offer_help',
-    'request_folder',
+    'request_folder', 'request_access',
     'start_chat', 'check_chat', 'message_chat',
     'spawn_workers', 'swarm', 'swarm_team', 'board',
     'memory', 'follow_up_later', 'publish_brief', 'search_chats', 'read_chat', 'set_theme', 'search_knowledge', 'learn_from_website', 'send_email',

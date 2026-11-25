@@ -21,7 +21,13 @@ logger = logging.getLogger('cognitrix.log')
 
 # Tools a person must answer even with the browser's auto-approve on:
 # giving an agent a new folder or write access widens what it can touch.
-_NEVER_AUTO_APPROVED = frozenset({'request_folder', 'copy_back_from_sandbox'})
+_NEVER_AUTO_APPROVED = frozenset({'request_folder', 'copy_back_from_sandbox', 'request_access'})
+
+# Risk categories only a person answers, every time: no remembered answer,
+# auto-approve, bypass or reviewer stands in. Taking over the person's
+# screen, the person taking over the agent's computer, and an agent asking
+# for a tool or connected app it doesn't have (Request Access).
+ALWAYS_ASK_CATEGORIES = frozenset({'screen_takeover', 'person_takeover', 'access_request'})
 
 # How long a request to take over the agent's computer waits for Take over or
 # Skip (other approvals wait the gate's usual timeout).
@@ -71,7 +77,8 @@ _web_request_counter = 0
 
 def resolve_web_approval(request_id: str, approved: bool, user_key: str | None = None,
                          remember: bool = False, remember_shell: bool = False,
-                         remember_app: str | None = None, always: bool = False) -> bool:
+                         remember_app: str | None = None, always: bool = False,
+                         grant: str | None = None) -> bool:
     """Resolve a pending browser approval. Returns False if unknown or not the owner.
 
     `remember_app` (only for a background action in an app window) is 'chat'
@@ -83,6 +90,10 @@ def resolve_web_approval(request_id: str, approved: bool, user_key: str | None =
 
     `always` saves the card's "Always allow" offer (``entry['always']``): the
     tool for that agent, or the command's prefix on that computer.
+
+    `grant` (only for Request Access) is 'chat' (allow in this chat) or
+    'agent' (add it to the agent; only offered to its owner). Approving
+    without one, from a notification or a chat app, allows it in the chat.
 
     `user_key` scopes the answer to the user who owns the turn — a different
     authenticated user cannot approve someone else's pending tool call.
@@ -101,8 +112,18 @@ def resolve_web_approval(request_id: str, approved: bool, user_key: str | None =
             remember_app=(remember_app if approved and entry.get('app')
                           and remember_app in ('chat', 'always') else None),
             always=bool(approved and always and entry.get('always')),
+            grant=_grant_answer(entry, approved, grant),
         ))
     return True
+
+
+def _grant_answer(entry: dict, approved: bool, grant: str | None) -> str | None:
+    access = entry.get('access')
+    if not approved or not isinstance(access, dict):
+        return None
+    if grant == 'agent' and access.get('can_add'):
+        return 'agent'
+    return 'chat'
 
 def _app_label(app: str) -> str:
     from cognitrix.computer.apps import app_label
@@ -131,6 +152,9 @@ class ToolCall:
     # Set for a background action in an app window: the app's executable
     # name, so the person can answer for the app instead of the single call.
     app: str | None = None
+    # Request Access: what the agent asks for, as the card shows it
+    # (cognitrix/tools/access.py card_for).
+    access: dict | None = None
 
     def dict(self):
         return {'tool_name': self.tool_name, 'params': self.params}
@@ -150,6 +174,9 @@ class ApprovalResult:
     error: str | None = None
     reviewed: bool = False  # Decided by the reviewer model, not a person
     review: dict | None = None  # The reviewer's verdict, when it was asked
+    # Request Access: what a person allowed ('chat' or 'agent'). Only ever set
+    # from a person's answer, never by auto-approval.
+    grant: str | None = None
 
 
 @dataclass
@@ -262,7 +289,8 @@ class ApprovalGate:
             if ctx and ctx.get('run_id'):
                 earlier = await prior_decision(ctx, tool_call.tool_name, tool_call.params)
                 if earlier is not None:
-                    return ApprovalResult(approved=earlier)
+                    grant = 'chat' if earlier and 'access_request' in (risk.categories or []) else None
+                    return ApprovalResult(approved=earlier, grant=grant)
 
             reviewed = None if own_app else await self._review(tool_call, risk, interface)
             if reviewed is not None:
@@ -275,17 +303,23 @@ class ApprovalGate:
             approved, error = await request_task_approval(
                 ctx, tool_call.tool_name, tool_call.params, risk
             )
-            return ApprovalResult(approved=approved, error=error)
+            # A person's yes on a Request Access allows it for this run.
+            grant = 'chat' if approved and 'access_request' in (risk.categories or []) else None
+            return ApprovalResult(approved=approved, error=error, grant=grant)
 
         # Cache keys are scoped so approvals don't leak across agents/users.
         scoped = f"{scope or 'global'}:{self._hash_operation(tool_call)}"
 
         # Taking over the person's screen, mouse and keyboard is asked every
         # time: no remembered answer, auto-approve or reviewer stands in.
-        always_ask = bool({'screen_takeover', 'person_takeover'} & set(risk.categories or []))
+        always_ask = bool(ALWAYS_ASK_CATEGORIES & set(risk.categories or []))
         # The person may be away for a while before they can take over.
         if 'person_takeover' in (risk.categories or []):
             timeout = max(timeout, TAKEOVER_ANSWER_TIMEOUT)
+        # Connecting an app from the card takes a few minutes.
+        if 'access_request' in (risk.categories or []):
+            from cognitrix.tools.access import ANSWER_TIMEOUT
+            timeout = max(timeout, ANSWER_TIMEOUT)
 
         if not person_only and not always_ask and scoped in self.permanent_cache:
             return ApprovalResult(approved=True, cached=True)
@@ -357,6 +391,12 @@ class ApprovalGate:
         if not result.approved and not result.error:
             # The person said no; the reviewer must not approve it later.
             self.session_denied.add(scoped)
+
+        # Request Access: a person's yes in the terminal or an editor allows
+        # it in this chat. Auto-approval never grants (see tools/access.py).
+        if (result.approved and not result.auto and not result.reviewed and result.grant is None
+                and 'access_request' in (risk.categories or [])):
+            result.grant = 'chat'
 
         if result.approved and getattr(result, 'always', False) and not always_ask:
             saved_for_agent = await self._save_always(tool_call, scope, interface, person_only)
@@ -660,7 +700,7 @@ class ApprovalGate:
         always = self._always_offer(tool_call, scope, person_only, must_ask)
         _WEB_PENDING[request_id] = {
             'future': future, 'user_key': ctx.get('user_key'), 'person_only': person_only,
-            'app': tool_call.app, 'always': always,
+            'app': tool_call.app, 'always': always, 'access': tool_call.access,
             # What the Inbox, notifications and chat apps show about it.
             'tool_name': tool_call.tool_name,
             'params': tool_call.params,
@@ -697,6 +737,9 @@ class ApprovalGate:
                 # card's Take over opens that desktop with them in control.
                 **({'takeover': _takeover_target(tool_call, scope)}
                    if 'person_takeover' in (risk.categories or []) else {}),
+                # Request Access: what the agent asks for, and the choices
+                # (allow in this chat, add to the agent, connect the app).
+                **({'access': tool_call.access} if tool_call.access else {}),
                 # A background action in an app window: the card offers
                 # "allow <app> in this chat" and "always allow <app>".
                 **({'app': {'key': tool_call.app, 'label': _app_label(tool_call.app)}} if tool_call.app else {}),

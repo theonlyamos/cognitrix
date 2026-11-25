@@ -274,3 +274,24 @@ def test_agents_are_told_about_a_picture_and_where_the_files_are():
     assert 'What is in these?' in trigger
     assert '[Attached a picture]' in trigger
     assert 'uploads/chat-1/f_abc.txt' in trigger
+
+
+async def test_request_access_grants_stay_with_each_teammate():
+    seen = []
+
+    async def run_agent(agent, scratch, trigger, emit):
+        seen.append((agent.id, scratch.granted_access))
+        scratch.update_history({'role': 'User', 'type': 'text', 'content': trigger})
+        scratch.update_history({'role': 'assistant', 'type': 'text', 'content': 'ok'})
+        if agent.id == 'a' and not scratch.granted_access:
+            scratch.granted_access = {'tools': ['Bash'], 'apps': []}
+
+    async def emit(event):
+        return None
+
+    session = FakeSession()
+    for text in ('@Alice one', '@Alice two', '@Cara three'):
+        session.update_history(gc.transcript_entry(text))
+        await gc.run_group_turn(session, FakeTeam(), TEAM, text, emit=emit, run_agent=run_agent)
+    assert seen == [('a', None), ('a', {'tools': ['Bash'], 'apps': []}), ('c', None)]
+    assert session.granted_access == {'by_agent': {'a': {'tools': ['Bash'], 'apps': []}}}

@@ -168,6 +168,9 @@ def _needs_person(risk: RiskAssessment) -> bool:
     # Only the person can take over the computer, so only they can answer.
     if 'person_takeover' in categories:
         return True
+    # Giving an agent a tool or app it doesn't have is the person's call.
+    if 'access_request' in categories:
+        return True
     # The full shell only runs after a person approved that exact call, so
     # a reviewer "allow" could never let it run.
     if 'shell' in categories and str(risk.details or '').startswith('Runs in the full shell'):

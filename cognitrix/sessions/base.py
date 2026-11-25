@@ -265,6 +265,11 @@ class Session(Model):
     """Tools Find Tools loaded in this chat (agents with tools on demand,
     tools/code_mode.py). Their schemas are sent on every later step."""
 
+    granted_access: dict[str, Any] | None = None
+    """What the person allowed with Request Access in this chat
+    (cognitrix/tools/access.py): {'tools': [tool names], 'apps': [connection
+    ids]}. Added to the agent on every turn of this chat."""
+
     run_in_sandbox: bool | None = None
     """Run in sandbox: this chat's shell, files and tests work in the person's
     sandboxed computer. None follows the agent's own setting."""
@@ -719,6 +724,21 @@ class Session(Model):
                         agent = agent.model_copy(update={'tools': [*agent.tools, folder_tool]})
             except Exception:
                 logger.debug('Request Folder tool unavailable', exc_info=True)
+
+        # Request Access lets the agent ask the person for a tool or connected
+        # app it doesn't have; what they allowed in this chat comes back on
+        # every turn. Always a copy, so a grant mid-turn changes only this turn.
+        if interface in ('web', 'ws', 'task'):
+            try:
+                from cognitrix.tools import access as _access
+
+                agent = _access.chat_grants(
+                    agent, getattr(self, 'granted_access', None),
+                    request_tool=bool(getattr(agent, 'can_request_access', True))
+                    and getattr(agent.llm, 'supports_tool_use', True),
+                )
+            except Exception:
+                logger.debug('Request Access unavailable', exc_info=True)
 
         # Ask User is a transport capability, not persisted agent
         # configuration. Attach it lazily to every direct web-chat turn so
@@ -1204,8 +1224,24 @@ class Session(Model):
         if on_demand:
             turn_note = _code_mode.find_tools_note(agent)
             prompt = _with_note(prompt, turn_note)
+        if any(str(getattr(t, 'name', '')).lower() == 'request access' for t in agent.tools):
+            from cognitrix.tools.access import PROMPT_NOTE as _ACCESS_NOTE
+            prompt = _with_note(prompt, _ACCESS_NOTE)
+        # Request Access saves what the person allowed on this chat.
+        from cognitrix.tools import access as _access_mod
+        access_token = _access_mod.set_grant_sink(self._access_grant_sink())
+        tools_seen = len(agent.tools)
 
         def _sent_tools() -> list[dict[str, Any]] | None:
+            nonlocal formatted_tools, active_tools, tools_seen
+            if len(agent.tools) != tools_seen:
+                # Request Access gave the agent a tool mid-turn: offer it now.
+                tools_seen = len(agent.tools)
+                formatted_tools = [
+                    tool.to_dict_format() for tool in visible_tools(agent, agent.tools)
+                    if not tool.supported_interfaces or interface in tool.supported_interfaces
+                ]
+                active_tools = formatted_tools if agent.llm.supports_tool_use else None
             if active_tools is None or turn_loaded is None:
                 return active_tools
             if set(self.loaded_tools or []) != turn_loaded:
@@ -1764,6 +1800,7 @@ class Session(Model):
             logger.exception(e)
         finally:
             _code_mode.loaded_this_turn.reset(loaded_token)
+            _access_mod.reset_grant_sink(access_token)
 
     async def _checkpoint(self, interface: str, persist_history: bool) -> None:
         """Save a chat turn's progress so far (sessions/resume.py)."""
@@ -2095,6 +2132,14 @@ class Session(Model):
         """This chat's own scratch folder (the only scratch folder it may list)."""
         from cognitrix.common.folders import scratch_path
         return str(scratch_path(self.scratch_key()))
+
+    def _access_grant_sink(self):
+        """Save what the person allowed with Request Access on this chat."""
+        from cognitrix.tools.access import merge_grant
+
+        def sink(kind: str, name: str) -> None:
+            self.granted_access = merge_grant(getattr(self, 'granted_access', None), kind, name)
+        return sink
 
     def _folder_grant_sink(self, turn_folders: list):
         """Apply an approved Request Folder to this chat (and this turn)."""

@@ -41,6 +41,7 @@ export interface AgentRecord {
   mcp_servers?: string[];
   folders?: WorkFolder[] | null;
   can_request_folders?: boolean;
+  can_request_access?: boolean;
   run_in_sandbox?: boolean;
   code_on_my_computer?: boolean;
   permission_level?: AgentLevel;
@@ -89,6 +90,8 @@ export interface AgentDraft {
   codingMaxMode: CodingMode;
   folders: WorkFolder[] | null;
   canRequestFolders: boolean;
+  /** Request Access: the agent may ask for tools and connected apps it doesn't have. */
+  canRequestAccess: boolean;
   /** Code runs in the sandbox (the default whenever the sandboxed computer is on). */
   runInSandbox: boolean;
   /** The agent was set to run code in the sandbox before it became the default; it also gets the shell tools there. */
@@ -135,6 +138,7 @@ export function draftFrom(agent: AgentRecord): AgentDraft {
     codingMaxMode: (['read_only', 'edit', 'full'].includes(coding.max_mode || '') ? coding.max_mode : '') as CodingMode,
     folders: agent.folders ?? null,
     canRequestFolders: agent.can_request_folders ?? true,
+    canRequestAccess: agent.can_request_access ?? true,
     runInSandbox: !agent.code_on_my_computer,
     sandboxGivesTools: !!agent.run_in_sandbox,
     mcpServers: [...(agent.mcp_servers || [])],
@@ -209,6 +213,7 @@ export function payloadFrom(id: string, draft: AgentDraft, catalog: ToolInfo[], 
     coding_agents: coding,
     folders: draft.folders,
     can_request_folders: draft.canRequestFolders,
+    can_request_access: draft.canRequestAccess,
     run_in_sandbox: draft.runInSandbox && draft.sandboxGivesTools,
     code_on_my_computer: !draft.runInSandbox,
     mcp_servers: draft.mcpServers,

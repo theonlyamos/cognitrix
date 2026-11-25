@@ -91,7 +91,8 @@ async def list_mcp_tools(query: str = '', server: str = '', *, parent: "Agent") 
     from cognitrix.mcp.registry import SIGN_IN_NEEDED, matches, prepare
 
     if not parent.mcp_servers:
-        return "This agent does not have permission to access any MCP servers."
+        return ("This agent does not have permission to access any MCP servers. To use a connected app, "
+                "ask the person for it with Request Access (kind 'app').")
     servers = await _permitted(parent)
     if server:
         servers = [c for c in servers if matches(c, server)]
