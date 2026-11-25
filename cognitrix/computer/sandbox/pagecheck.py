@@ -379,6 +379,127 @@ def check_page(url: str, *, browser: str, phone: bool = False, headers: dict[str
         raise PageCheckError(f'Could not drive the browser: {exc}') from None
 
 
+# ------------------------------------------------------------------ several screens, light and dark
+
+VIEWS = ('desktop-light', 'desktop-dark', 'phone-light', 'phone-dark')
+MAX_SHOT_HEIGHT = 2400
+PHONE_AGENT = ('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 '
+               '(KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1')
+
+
+def parse_view(view: str) -> tuple[bool, bool]:
+    """``'phone-dark'`` -> (phone, dark). Raises ValueError for anything else."""
+    clean = str(view or '').strip().lower()
+    if clean not in VIEWS:
+        raise ValueError(f'view is one of {", ".join(VIEWS)}')
+    size, theme = clean.split('-')
+    return size == 'phone', theme == 'dark'
+
+
+def check_views(url: str, views: list[str] | tuple[str, ...] = VIEWS, *, browser: str, full_page: bool = True,
+                scroll_y: int = 0, timeout: float = 30, settle: float = 1.5, no_sandbox: bool = False) -> list[dict]:
+    """Load ``url`` once per view (desktop or phone size, light or dark colour scheme) in one
+    headless browser. Returns one ``{view, ok, title, text_length, page_height, shot_top,
+    screenshot, errors, console, failed, width, height}`` per view. With ``full_page`` the
+    shot runs from ``scroll_y`` down to the end of the page, at most MAX_SHOT_HEIGHT tall."""
+    results: list[dict] = []
+    try:
+        with _Page(browser, timeout=timeout, no_sandbox=no_sandbox) as page:
+            dt = page.dt
+            desktop_agent = str(dt.call('Browser.getVersion').get('userAgent') or '')
+            for view in views:
+                phone, dark = parse_view(view)
+                width, height = PHONE if phone else DESKTOP
+                page.call('Emulation.setDeviceMetricsOverride', {
+                    'width': width, 'height': height, 'deviceScaleFactor': 1, 'mobile': phone})
+                if phone or desktop_agent:
+                    page.call('Emulation.setUserAgentOverride', {'userAgent': PHONE_AGENT if phone else desktop_agent})
+                page.call('Emulation.setEmulatedMedia', {'features': [
+                    {'name': 'prefers-color-scheme', 'value': 'dark' if dark else 'light'}]})
+                start = len(dt.events)
+                nav = page.call('Page.navigate', {'url': url})
+                if nav.get('errorText'):
+                    results.append({'view': view, 'ok': False, 'error': f"The page didn't load: {nav['errorText']}",
+                                    'errors': [], 'console': [], 'failed': []})
+                    continue
+                dt.wait_for('Page.loadEventFired', timeout)
+                dt.pump(settle)
+                info = page.call('Runtime.evaluate', {
+                    'expression': "JSON.stringify({title: document.title, text: document.body ? "
+                                  "document.body.innerText.trim().length : 0, h: Math.max("
+                                  "document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0),"
+                                  " w: document.documentElement.scrollWidth})",
+                    'returnByValue': True})
+                seen = json.loads(((info.get('result') or {}).get('value')) or '{}')
+                page_height = max(int(seen.get('h') or height), height)
+                top = max(0, min(int(scroll_y or 0), max(0, page_height - height)))
+                shot_height = min(page_height - top, MAX_SHOT_HEIGHT) if full_page else height
+                shot = page.call('Page.captureScreenshot', {
+                    'format': 'png', 'captureBeyondViewport': bool(full_page),
+                    'clip': {'x': 0, 'y': top, 'width': width, 'height': shot_height, 'scale': 1}}).get('data', '')
+                out = _summarise(dt.events[start:], url)
+                out.update({'view': view, 'ok': True, 'title': _short(seen.get('title', ''), 120),
+                            'text_length': int(seen.get('text') or 0), 'screenshot': shot,
+                            'page_height': page_height, 'page_width': int(seen.get('w') or width),
+                            'shot_top': top, 'shot_height': shot_height, 'width': width, 'height': height})
+                results.append(out)
+    except (OSError, ValueError) as exc:
+        raise PageCheckError(f'Could not drive the browser: {exc}') from None
+    return results
+
+
+class _OnePage:
+    """Serve one document on a free local port with the viewer's headers (its
+    Content-Security-Policy, which also sandboxes the page into an opaque
+    origin), so a check sees and blocks what people's viewer does."""
+
+    def __init__(self, html: str, csp: str) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        body = html.encode('utf-8')
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                if self.path.split('?')[0] != '/page':
+                    self.send_response(404)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                if csp:
+                    self.send_header('Content-Security-Policy', csp)
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}/page'
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def check_html(html: str, csp: str, views: list[str] | tuple[str, ...] = VIEWS, *, browser: str,
+               full_page: bool = True, scroll_y: int = 0, no_sandbox: bool = False) -> list[dict]:
+    """:func:`check_views` for one self-contained document, served with ``csp``."""
+    hosting = _OnePage(html, csp)
+    try:
+        return check_views(hosting.url, views, browser=browser, full_page=full_page, scroll_y=scroll_y,
+                           no_sandbox=no_sandbox)
+    finally:
+        hosting.close()
+
+
 # ------------------------------------------------------------------ no browser: a text check
 
 class _Links(HTMLParser):

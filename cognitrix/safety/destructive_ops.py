@@ -107,7 +107,7 @@ _KNOWN_LOW = frozenset({
     'set_theme',
     # artifact pages: a page is private to its owner until they share it
     # themselves, and every version is kept
-    'publish_artifact', 'read_artifact', 'artifact_comments', 'list_artifacts',
+    'publish_artifact', 'read_artifact', 'check_artifact', 'artifact_comments', 'list_artifacts',
     # showing files the agent made in the chat (copied in, private to the person)
     'share_file',
     # cards only show in the chat; a button press is a message to the agent

@@ -485,6 +485,11 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
             if parts[:1] == ['exec'] and method == 'POST':
                 self._exec(parts[1:2])
                 return
+            if parts == ['pagecheck'] and method == 'POST':
+                # Check Artifact: look at one self-contained page (sent whole) at
+                # several screen sizes and colour schemes in a headless Chromium.
+                self._pagecheck()
+                return
             try:
                 if parts == ['desktops'] and method == 'GET':
                     self._reply(200, {'ok': True, 'desktops': [d.info() for d in sup.desktops.values()]})
@@ -702,6 +707,26 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
                     self._reply(500, {'ok': False, 'error': 'os_error', 'message': str(exc)})
                 except OSError:
                     pass
+
+        def _pagecheck(self) -> None:
+            from cognitrix.computer.sandbox import pagecheck
+
+            b = self._body()
+            browser = pagecheck.find_browser()
+            if browser is None:
+                self._reply(200, {'ok': False, 'error': 'no_browser', 'message': 'No Chromium on this computer.'})
+                return
+            views = [str(v) for v in (b.get('views') or pagecheck.VIEWS)]
+            for view in views:
+                pagecheck.parse_view(view)
+            try:
+                results = pagecheck.check_html(str(b.get('html') or ''), str(b.get('csp') or ''), views,
+                                               browser=browser, full_page=bool(b.get('full_page', True)),
+                                               scroll_y=int(b.get('scroll_y') or 0), no_sandbox=True)
+            except pagecheck.PageCheckError as exc:
+                self._reply(200, {'ok': False, 'error': 'browser_failed', 'message': str(exc)})
+                return
+            self._reply(200, {'ok': True, 'views': results})
 
         def _apps(self, method: str, parts: list[str]) -> None:
             from urllib.parse import parse_qs, urlsplit
