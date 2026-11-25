@@ -116,6 +116,8 @@ const sessionKey = (agentId: string) => `chatSession:${agentId}`;
 /** A screen wide enough for panels beside the chat (Tailwind's md). */
 const isWideScreen = () => typeof window === 'undefined' || !window.matchMedia || window.matchMedia('(min-width: 768px)').matches;
 const STOP_RECONCILE_DELAY_MS = 4_000;
+// Quiet seconds in the middle of a reply before "Still working…" shows.
+const QUIET_AFTER_MS = 4_000;
 
 // ── Attachments ──
 /** Id prefix for messages held on the page until a new chat has its id. */
@@ -1250,9 +1252,13 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     }
   }, []);
 
+  // When the open chat last heard anything from its turn (text, a tool, a
+  // status). A long quiet stretch shows "Still working…" (see below).
+  const lastActivityRef = useRef(Date.now());
   const handleSSEEvent = useCallback(
     (event: { type: string; content?: string; action?: string; session_id?: string; tool_name?: string; status?: string; tool_call_id?: string; params?: string; result?: string; artifacts?: ToolArtifact[] }) => {
       const sid = event.session_id;
+      lastActivityRef.current = Date.now();
       // Drop only events that CARRY a mismatched id — untagged events (status,
       // transport errors) always belong to the active turn since switching is
       // disabled while streaming.
@@ -1505,6 +1511,51 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     for (const run of fresh) seenRunsRef.current.add(run.run_id);
     void loadConversation(sid);
   }, [chatRuns, activeSessionId, followSid, busy, approvals.length, loadConversation]);
+
+  // This page's own turn ended on the server but its last event never got
+  // here (the stream dropped or the server restarted mid-turn): the page
+  // would show the agent working forever. Once the run poll has seen the
+  // turn running and then misses it twice in a row, show the saved chat.
+  const ownRunSeenRef = useRef<string | null>(null);
+  const ownRunGoneRef = useRef(0);
+  useEffect(() => {
+    const sid = activeSessionId;
+    if (!sid || !busy || followSid) {
+      ownRunSeenRef.current = null;
+      ownRunGoneRef.current = 0;
+      return;
+    }
+    if (chatRuns.some((run) => run.session_id === sid)) {
+      ownRunSeenRef.current = sid;
+      ownRunGoneRef.current = 0;
+      return;
+    }
+    if (ownRunSeenRef.current !== sid) return;
+    ownRunGoneRef.current += 1;
+    if (ownRunGoneRef.current < 2) return;
+    ownRunSeenRef.current = null;
+    ownRunGoneRef.current = 0;
+    finishTurn();
+    void loadConversation(sid);
+  }, [chatRuns, activeSessionId, busy, followSid, finishTurn, loadConversation]);
+
+  // Mid-reply silence: the model is thinking without showing it, or writing
+  // a long tool call (a whole file for Write). Without a sign of life the
+  // chat looks stuck, so after a few quiet seconds show the moving bars.
+  const [quiet, setQuiet] = useState(false);
+  const lastRow = messages[messages.length - 1];
+  const toolRunning = lastRow?.role === 'tool' && !!lastRow.tools?.some((t) => t.status === 'running');
+  const canGoQuiet = streaming && !waiting && question === null && approvals.length === 0 && !toolRunning;
+  useEffect(() => {
+    if (!canGoQuiet) {
+      setQuiet(false);
+      return;
+    }
+    const check = () => setQuiet(Date.now() - lastActivityRef.current > QUIET_AFTER_MS);
+    check();
+    const timer = window.setInterval(check, 1000);
+    return () => window.clearInterval(timer);
+  }, [canGoQuiet]);
 
   const { isConnected, isConnecting, error, reconnect: reconnectStream, streamId, rotateStream } = useSSE({
     onMessage: handleStreamEvent,
@@ -2997,11 +3048,11 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
                 />
               ))}
 
-              {waiting && (
+              {(waiting || (quiet && canGoQuiet)) && (
                 <div role="status" className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6">
                   <div className="flex items-center gap-2.5 text-[13px] text-fg-dim">
                     <span className="think-bars"><i /><i /><i /><i /></span>
-                    {planning || tr('ui.home.thinking')}
+                    {waiting ? (planning || tr('ui.home.thinking')) : (planning || tr('ui.home.stillWorking'))}
                   </div>
                 </div>
               )}

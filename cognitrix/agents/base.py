@@ -34,7 +34,7 @@ from cognitrix.safety.permissions import (
     visible_tools,
 )
 from cognitrix.tools.base import ToolManager
-from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
+from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager, ToolResult
 from cognitrix.tools.utils import ToolCallResult, ToolOutcome
 from cognitrix.utils import extract_json
 from cognitrix.utils.llm_response import LLMResponse
@@ -122,15 +122,48 @@ def _path_lock_for(params: dict[str, Any]) -> asyncio.Lock | None:
     return lock
 
 
-def _tool_execution_limiter() -> asyncio.Semaphore:
-    """Return the shared limiter for the running loop and current config."""
+def _tool_execution_limiter(owner: str = '') -> asyncio.Semaphore:
+    """Return the limiter shared by one agent's tool calls in one chat.
+
+    It used to be one limiter for the whole server, so every chat, swarm
+    worker and helper agent shared MAX_CONCURRENT_TOOL_CALLS slots: a few slow
+    or hung calls anywhere left every other agent waiting on "running" tool
+    calls that had not started. Batches of the same agent in the same chat
+    still share one limit.
+    """
     loop = asyncio.get_running_loop()
     configured = MAX_CONCURRENT_TOOL_CALLS
     entry = _TOOL_EXECUTION_LIMITERS.get(loop)
     if entry is None or entry[0] != configured:
-        entry = (configured, asyncio.Semaphore(configured))
+        entry = (configured, {})
         _TOOL_EXECUTION_LIMITERS[loop] = entry
-    return entry[1]
+    limiters: dict[str, asyncio.Semaphore] = entry[1]
+    limiter = limiters.get(owner)
+    if limiter is None:
+        if len(limiters) >= _MAX_IDLE_LIMITERS:
+            # Forget limiters nobody is using (all slots free, nobody waiting).
+            for key in [k for k, sem in limiters.items()
+                        if sem._value >= configured and not getattr(sem, '_waiters', None)]:
+                limiters.pop(key, None)
+        limiter = limiters[owner] = asyncio.Semaphore(configured)
+    return limiter
+
+
+_MAX_IDLE_LIMITERS = 256
+
+# A tool call that holds a slot longer than this is stopped, so one hung call
+# (a site that never answers, a stuck program) can't hold the reply forever.
+_DEFAULT_TOOL_TIMEOUT_SECONDS = 900
+
+
+def tool_timeout_seconds() -> float | None:
+    """Most seconds one tool call may run; None for no limit (setting 0)."""
+    raw = app_setting('COGNITRIX_TOOL_TIMEOUT')
+    try:
+        value = float(raw) if raw not in (None, '') else _DEFAULT_TOOL_TIMEOUT_SECONDS
+    except (TypeError, ValueError):
+        value = _DEFAULT_TOOL_TIMEOUT_SECONDS
+    return value if value > 0 else None
 
 
 class ToolBatchCancelled(asyncio.CancelledError):
@@ -827,7 +860,12 @@ class AgentManager:
             slot_jobs = [job for job in jobs if job[5]]
             detached_jobs = [job for job in jobs if not job[5]]
             next_job = 0
-            execution_slots = _tool_execution_limiter()
+            from cognitrix.tools.utils import current_execution_context
+            _ctx = current_execution_context()
+            execution_slots = _tool_execution_limiter(
+                f'{self.agent.id}:{getattr(_ctx, "session_id", None) or ""}'
+            )
+            time_limit = tool_timeout_seconds()
 
             # One lock per MCP server used by 2+ calls in this batch: they run
             # in the order given (asyncio.Lock wakes waiters first-in first-out).
@@ -857,12 +895,25 @@ class AgentManager:
                         lock_held = True
                     if constrained:
                         async with execution_slots:
-                            result = await resilient_manager.run_tool(
-                                tool=tool,
-                                params=params,
-                                max_retries=max_retries,
-                                attempt_recovery=attempt_recovery,
-                            )
+                            try:
+                                async with asyncio.timeout(time_limit):
+                                    result = await resilient_manager.run_tool(
+                                        tool=tool,
+                                        params=params,
+                                        max_retries=max_retries,
+                                        attempt_recovery=attempt_recovery,
+                                    )
+                            except TimeoutError:
+                                logger.warning("Tool %s ran past %ss and was stopped", tool.name, time_limit)
+                                minutes = round((time_limit or 0) / 60, 1)
+                                result = ToolResult(
+                                    success=False,
+                                    error=(
+                                        f"{tool.name} was still running after {minutes:g} minutes and was "
+                                        "stopped. It may have hung (a site or program that never "
+                                        "answered). Try a smaller step, or another way"
+                                    ),
+                                )
                     else:
                         result = await resilient_manager.run_tool(
                             tool=tool,
