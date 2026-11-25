@@ -408,3 +408,25 @@ async def test_a_granted_tool_is_offered_and_used_in_the_same_turn(gate, monkeyp
     assert session.granted_access == {"tools": ["Bash"], "apps": []}
     # The stored agent is unchanged: only this chat has it.
     assert [t.name for t in agent.tools] == ["Read"]
+
+
+async def test_the_approval_endpoint_passes_the_choice_on(monkeypatch):
+    from types import SimpleNamespace
+
+    from cognitrix.api.routes import agents as routes
+    from cognitrix.safety import approval_gate
+
+    got = {}
+
+    def resolve(request_id, approved, **kw):
+        got.update(kw)
+        return True
+
+    monkeypatch.setattr(approval_gate, "resolve_web_approval", resolve)
+
+    class Req:
+        async def json(self):
+            return {"request_id": "r1", "approved": True, "grant": "agent"}
+
+    await routes.approval_endpoint(Req(), user=SimpleNamespace(id="u1"))
+    assert got["grant"] == "agent"

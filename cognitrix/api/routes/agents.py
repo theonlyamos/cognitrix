@@ -856,6 +856,7 @@ async def approval_endpoint(request: Request, user=Depends(get_current_user)):
         remember_shell=bool(data.get("remember_shell")),
         remember_app=data.get("remember_app") if data.get("remember_app") in ("chat", "always") else None,
         always=bool(data.get("always")),
+        grant=data.get("grant") if data.get("grant") in ("chat", "agent") else None,
     )
     if not ok:
         raise HTTPException(status_code=404, detail="Approval request not found or already resolved.")

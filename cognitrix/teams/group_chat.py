@@ -281,6 +281,24 @@ def group_system_prompt(agent: Agent, team: Team, members: Sequence[Agent]) -> s
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
 
 
+def _agent_grants(session: Session, agent_id: str) -> dict | None:
+    by_agent = (getattr(session, 'granted_access', None) or {}).get('by_agent') or {}
+    grants = by_agent.get(agent_id)
+    return dict(grants) if isinstance(grants, dict) else None
+
+
+def _keep_grants(session: Session, agent_id: str, scratch: Any) -> None:
+    """Save a teammate's Request Access grants on the shared team chat."""
+    grants = getattr(scratch, 'granted_access', None)
+    if not grants or grants == _agent_grants(session, agent_id):
+        return
+    stored = dict(getattr(session, 'granted_access', None) or {})
+    by_agent = dict(stored.get('by_agent') or {})
+    by_agent[agent_id] = grants
+    stored['by_agent'] = by_agent
+    session.granted_access = stored
+
+
 async def run_group_turn(
     session: Session,
     team: Team,
@@ -314,6 +332,9 @@ async def run_group_turn(
             chat=history,
             team_id=session.team_id,
             user_id=session.user_id,
+            # What the person allowed this agent with Request Access in this
+            # team chat (each teammate has its own).
+            granted_access=_agent_grants(session, agent_id),
         )
         return agent, group_agent, scratch, trigger, len(scratch.chat)
 
@@ -335,6 +356,7 @@ async def run_group_turn(
                 'speaker': agent.name,
                 'timestamp': stamp,
             })
+        _keep_grants(session, str(agent.id), scratch)
         await asyncio.shield(session.save())
         return produced
 
