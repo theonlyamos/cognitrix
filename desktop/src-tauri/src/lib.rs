@@ -665,6 +665,8 @@ pub fn run() {
             }
             WindowEvent::Focused(false) if window.label() == QUICK => {
                 let _ = window.hide();
+                // The page closes the microphone on this.
+                let _ = window.emit("quick-ask-hide", ());
             }
             _ => {}
         })

@@ -119,6 +119,7 @@ export default function QuickAsk() {
   const contentRef = useRef<HTMLDivElement>(null);
   const cardsRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
   const turnId = useRef(0);
   const vad = useRef<VoiceActivityDetector | null>(null);
   const heard = useRef(false);
@@ -245,10 +246,18 @@ export default function QuickAsk() {
     }).then((fn) => stops.push(fn));
     // The open event can be missed while the page is (re)loading; focus means it's up.
     const onFocus = () => setShown(true);
+    // The desktop hides quick ask when it loses focus; never keep listening then.
+    const onBlur = () => {
+      if (!isDesktop()) return;
+      setShown(false);
+      voiceRef.current.cancel();
+    };
     window.addEventListener('focus', onFocus);
+    window.addEventListener('blur', onBlur);
     return () => {
       stops.forEach((fn) => fn());
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener('blur', onBlur);
     };
   }, []);
 
@@ -367,7 +376,10 @@ export default function QuickAsk() {
       const pad = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
       const gap = parseFloat(style.rowGap) || 0;
       const bottom = content.lastElementChild as HTMLElement | null;
-      const height = Math.ceil(cards.scrollHeight + gap + (bottom?.offsetHeight ?? 0) + pad);
+      // The agent menu opens above the pill; make room for it when the cards are shorter.
+      const menu = menuRef.current?.offsetHeight ?? 0;
+      const above = Math.max(cards.scrollHeight + gap, menu ? menu + 12 : 0);
+      const height = Math.ceil(above + (bottom?.offsetHeight ?? 0) + pad);
       if (Math.abs(height - last) < 1) return;
       last = height;
       void desktop.fitQuickAsk(height);
@@ -375,9 +387,10 @@ export default function QuickAsk() {
     const observer = new ResizeObserver(report);
     observer.observe(cards);
     if (content.lastElementChild) observer.observe(content.lastElementChild);
+    if (menuRef.current) observer.observe(menuRef.current);
     report();
     return () => observer.disconnect();
-  }, []);
+  }, [menuOpen]);
 
   // Keep the newest answer in view as it streams in.
   useEffect(() => {
@@ -414,6 +427,7 @@ export default function QuickAsk() {
       </button>
       {menuOpen && (
         <ul
+          ref={menuRef}
           role="listbox"
           aria-label={tr('ui.quickAsk.agent')}
           className="absolute bottom-12 left-0 z-10 max-h-64 w-56 overflow-y-auto rounded-xl border border-line bg-panel p-1 shadow-xl"
