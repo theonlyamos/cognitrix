@@ -423,12 +423,9 @@ class WindowsBackend:
         found: list[int] = []
         cb = _EnumProc(lambda h, _: found.append(h) or True)
         user32.EnumWindows(cb, 0)
-        out = []
-        for hwnd in found:
-            info = self._info(hwnd)
-            if info is not None and info.blocked != "it is Cognitrix's own window":
-                out.append(info)
-        return out
+        # Cognitrix's own windows are listed too (marked as not controllable),
+        # like on Linux and macOS, so an agent can find and look at the app.
+        return [info for info in map(self._info, found) if info is not None]
 
     def window(self, window_id: int) -> WindowInfo | None:
         _dpi_aware()
