@@ -324,3 +324,11 @@ html.dark .chill-composer { box-shadow: 0 16px 48px rgb(0 0 0 / .55), 0 2px 8px 
   .chill-orb::after { animation: none; }
   .chill-turn-down, .chill-turn-up { animation: chill-fade .15s ease-out; }
 }
+
+/* Quick ask (Alt+Space): a see-through window, the pill and cards float on the desktop. */
+html.quick-ask-window,
+html.quick-ask-window body,
+html.quick-ask-window #root { background: transparent !important; }
+.quick-ask-dot { animation: quick-ask-bounce 1s ease-in-out infinite; }
+@keyframes quick-ask-bounce { 0%, 100% { transform: translateY(0); opacity: .5; } 50% { transform: translateY(-5px); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .quick-ask-dot { animation: none; } }

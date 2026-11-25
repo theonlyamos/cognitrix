@@ -47,7 +47,16 @@ interface Session {
  * stop. `analyser` feeds the live waveform while recording. Recording stops by
  * itself after `maxSeconds`, calling `onLimit`.
  */
-export function useVoiceRecorder({ maxSeconds = 600, onLimit }: { maxSeconds?: number; onLimit?: () => void } = {}) {
+export function useVoiceRecorder({
+  maxSeconds = 600,
+  onLimit,
+  onBlock,
+}: {
+  maxSeconds?: number;
+  onLimit?: () => void;
+  /** Every block of raw samples as it arrives (for pause detection). */
+  onBlock?: (block: Float32Array, sampleRate: number) => void;
+} = {}) {
   const [state, setState] = useState<RecorderState>('idle');
   const [elapsed, setElapsed] = useState(0);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
@@ -57,6 +66,8 @@ export function useVoiceRecorder({ maxSeconds = 600, onLimit }: { maxSeconds?: n
   const generation = useRef(0);
   const onLimitRef = useRef(onLimit);
   onLimitRef.current = onLimit;
+  const onBlockRef = useRef(onBlock);
+  onBlockRef.current = onBlock;
 
   const teardown = useCallback(() => {
     generation.current += 1;
@@ -97,6 +108,11 @@ export function useVoiceRecorder({ maxSeconds = 600, onLimit }: { maxSeconds?: n
       meter.fftSize = 1024;
       source.connect(meter);
       const chunks: Float32Array[] = [];
+      const rate = context.sampleRate;
+      const collect = (block: Float32Array) => {
+        chunks.push(block);
+        onBlockRef.current?.(block, rate);
+      };
 
       let node: AudioNode;
       try {
@@ -107,12 +123,12 @@ export function useVoiceRecorder({ maxSeconds = 600, onLimit }: { maxSeconds?: n
           URL.revokeObjectURL(url);
         }
         const worklet = new AudioWorkletNode(context, 'cognitrix-collector');
-        worklet.port.onmessage = (e: MessageEvent<Float32Array>) => chunks.push(e.data);
+        worklet.port.onmessage = (e: MessageEvent<Float32Array>) => collect(e.data);
         node = worklet;
       } catch {
         // Older engines without AudioWorklet.
         const processor = context.createScriptProcessor(4096, 1, 1);
-        processor.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+        processor.onaudioprocess = (e) => collect(new Float32Array(e.inputBuffer.getChannelData(0)));
         node = processor;
       }
       // Route through a muted gain so the node keeps processing without

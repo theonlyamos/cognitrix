@@ -93,6 +93,8 @@ export const desktop = {
   saveSession: (token: string) => invokeDesktop<void>('save_session', { token }),
   clearSession: () => invokeDesktop<void>('clear_session'),
   hideQuickAsk: () => invokeDesktop<void>('hide_quick_ask'),
+  /** Quick ask sizes its window to its content (CSS pixels); it stays docked above the taskbar. */
+  fitQuickAsk: (height: number) => invokeDesktop<void>('fit_quick_ask', { height }),
   checkForUpdate: () => invokeDesktop<UpdateInfo>('check_for_update'),
   /** Downloads, installs and restarts the app. Rejects with the reason. */
   installUpdate: () => invokeDesktop<void>('install_update'),

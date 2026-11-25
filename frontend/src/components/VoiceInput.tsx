@@ -12,7 +12,17 @@ export type VoiceStatus = 'idle' | 'starting' | 'recording' | 'transcribing';
  * Click the mic, speak, click stop: the recording is transcribed by the
  * engine and handed to `onText`. Never sends the message by itself.
  */
-export function useVoiceInput({ onText }: { onText: (text: string) => void }) {
+export function useVoiceInput({
+  onText,
+  onBlock,
+  keys = true,
+}: {
+  onText: (text: string) => void;
+  /** Raw microphone samples while recording (quick ask's pause detection). */
+  onBlock?: (block: Float32Array, sampleRate: number) => void;
+  /** Enter stops and Escape cancels while recording. Off when the page handles keys itself. */
+  keys?: boolean;
+}) {
   const [settings, setSettings] = useState<VoiceSettings | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,6 +35,7 @@ export function useVoiceInput({ onText }: { onText: (text: string) => void }) {
   const recorder = useVoiceRecorder({
     maxSeconds: settings?.max_seconds ?? 600,
     onLimit: () => stopRef.current(),
+    onBlock,
   });
 
   useEffect(() => {
@@ -83,14 +94,14 @@ export function useVoiceInput({ onText }: { onText: (text: string) => void }) {
 
   // Enter stops, Escape cancels while the bar is showing.
   useEffect(() => {
-    if (status !== 'recording' && status !== 'transcribing') return;
+    if (!keys || (status !== 'recording' && status !== 'transcribing')) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); cancel(); }
       else if (e.key === 'Enter' && status === 'recording') { e.preventDefault(); void stop(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [status, cancel, stop]);
+  }, [keys, status, cancel, stop]);
 
   return {
     status,
