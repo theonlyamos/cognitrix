@@ -4,6 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 import Sidebar from '@/components/Sidebar';
 import { ThemeProvider } from '@/context/ThemeContext';
 
+// Requests never settle, so nothing updates state after the test ends.
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  const pending = () => new Promise<never>(() => {});
+  return { ...actual, api: { ...actual.api, get: vi.fn(pending), post: vi.fn(pending), put: vi.fn(pending), patch: vi.fn(pending), delete: vi.fn(pending) } };
+});
 vi.mock('@/context/AppContext', () => ({
   useUser: () => ({ user: { id: 'u1', name: 'Test User', email: 'test@example.com' }, logout: vi.fn() }),
 }));
