@@ -124,3 +124,22 @@ async def test_allow_all_commands_never_covers_coding_agent(tmp_path, monkeypatc
         assert result.approved and result.cached
     finally:
         web_turn_ctx.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_allow_all_commands_still_covers_a_cli_command(tmp_path):
+    """A coding agent CLI's own command in ask mode is a shell command too."""
+    gate = ApprovalGate(cache_dir=str(tmp_path))
+
+    async def emit(_event):
+        pass
+
+    token = web_turn_ctx.set({'emit': emit, 'session_id': 's1', 'bypass': False, 'user_key': 'u1'})
+    try:
+        gate.session_cache.add(gate._shell_key('a1', 'web'))
+        risk = RiskAssessment(RiskLevel.MEDIUM, ['shell'], 'Claude Code wants to run this command with its own shell')
+        call = SimpleNamespace(tool_name='Claude Code: Bash', params={'command': 'npm test'}, app=None, access=None)
+        result = await gate.check_approval(call, risk, interface='web', scope='a1', person_only=True)
+        assert result.approved and result.cached
+    finally:
+        web_turn_ctx.reset(token)

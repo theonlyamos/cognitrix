@@ -337,7 +337,7 @@ class ApprovalGate:
         # The person allowed every full-shell command in this chat.
         # Only Bash: "allow all commands" never covers Coding Agent or Copy
         # Back, which are person-only too.
-        shell_key = self._shell_key(scope, interface) if self._is_shell(tool_call) else None
+        shell_key = self._shell_key(scope, interface) if self._is_shell(risk) else None
         if person_only and shell_key and shell_key in self.session_cache:
             return ApprovalResult(approved=True, cached=True, remember=True)
 
@@ -486,8 +486,10 @@ class ApprovalGate:
                 f"{_normal_name(tool_call.tool_name)}")
 
     @staticmethod
-    def _is_shell(tool_call: ToolCall) -> bool:
-        return _normal_name(tool_call.tool_name) == 'bash'
+    def _is_shell(risk: RiskAssessment) -> bool:
+        """A command run in a shell: Bash's full shell, or a coding agent
+        CLI's own command in ask mode. Not Coding Agent or Copy Back."""
+        return 'shell' in (risk.categories or [])
 
     @staticmethod
     def _command(tool_call: ToolCall) -> str | None:
@@ -711,7 +713,7 @@ class ApprovalGate:
             'future': future, 'user_key': ctx.get('user_key'), 'person_only': person_only,
             # A full-shell Bash command: the only kind "allow all commands in
             # this chat" may answer (Coding Agent is person-only too).
-            'full_shell': person_only and self._is_shell(tool_call),
+            'full_shell': person_only and self._is_shell(risk),
             'app': tool_call.app, 'always': always, 'access': tool_call.access,
             # What the Inbox, notifications and chat apps show about it.
             'tool_name': tool_call.tool_name,
@@ -742,7 +744,7 @@ class ApprovalGate:
                 'session_id': ctx.get('session_id'),
                 # A full-shell command: the card offers "allow all commands
                 # in this chat".
-                'full_shell': person_only and self._is_shell(tool_call),
+                'full_shell': person_only and self._is_shell(risk),
                 # Asked every time (a screen takeover): no "for session" button.
                 **({'always_ask': True} if must_ask else {}),
                 # The agent asks the person to take over its computer: the
