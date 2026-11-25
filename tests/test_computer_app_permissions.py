@@ -172,3 +172,83 @@ async def test_a_screen_takeover_is_asked_every_time(monkeypatch):
     finally:
         web_turn_ctx.reset(token)
     assert not result.approved and not result.auto
+
+
+class _OwnBackend:
+    def window(self, wid):
+        return {5: WindowInfo(5, 'Cognitrix', 'cognitrix.exe', 2, own=True),
+                7: WindowInfo(7, 'Untitled - Notepad', 'Notepad.exe', 1)}.get(wid)
+
+
+class _OwnDriver:
+    backend = _OwnBackend()
+
+
+def test_actions_in_cognitrix_itself_are_marked_own_app(monkeypatch):
+    from cognitrix.safety.destructive_ops import DestructiveOpDetector
+
+    monkeypatch.setattr(computer, 'get_driver', lambda: _OwnDriver())
+    detector = DestructiveOpDetector()
+    own = detector.analyze('click_element', {'window_id': 5, 'element': 1, 'computer': 'person'})
+    assert own.risk_level is RiskLevel.MEDIUM and 'own_app' in own.categories
+    other = detector.analyze('click_element', {'window_id': 7, 'element': 1, 'computer': 'person'})
+    assert 'own_app' not in other.categories
+    # With the screen too, so no reviewer answers it in a task.
+    screen = detector.analyze('type_in_window', {'window_id': 5, 'text': 'x', 'use_screen': True,
+                                                 'computer': 'person'})
+    assert {'screen_takeover', 'own_app'} <= set(screen.categories)
+    assert computer_apps.app_of_call('type_in_window', {'window_id': 5, 'use_screen': True}) is None
+    assert computer.is_own_app('Cognitrix-Desktop.exe') and not computer.is_own_app('notepad.exe')
+
+
+async def test_cognitrix_itself_needs_the_persons_answer(monkeypatch):
+    """Chat auto-approve, the reviewer and "always allow this tool" don't
+    cover actions in Cognitrix itself; the person's answer for the app does."""
+    gate = ApprovalGate()
+    call = ToolCall('click_element', {'window_id': 5, 'element': 1}, app='cognitrix.exe')
+    risk = RiskAssessment(RiskLevel.MEDIUM, ['desktop_control', 'own_app'], 'controls Cognitrix itself')
+
+    async def review(*_a, **_k):
+        raise AssertionError('the reviewer must not answer for the person')
+
+    monkeypatch.setattr(gate, '_review', review)
+    gate.session_cache.add(gate._tool_allow_key('a1', call))
+    token = web_turn_ctx.set({'bypass': True, 'session_id': 's1', 'user_key': 'u1'})
+    try:
+        result = await gate.check_approval(call, risk, interface='web', scope='a1', timeout=0.05)
+        assert not result.approved and not result.auto
+        # The person allowed Cognitrix for this chat: that answer counts.
+        gate.session_cache.add(gate._app_key(call, 'web'))
+        assert (await gate.check_approval(call, risk, interface='web', scope='a1')).approved
+    finally:
+        web_turn_ctx.reset(token)
+        _WEB_PENDING.clear()
+
+
+async def test_waiting_task_approvals_are_found(db):
+    from datetime import datetime, timedelta
+
+    from cognitrix.tasks.approvals import APPROVED, TaskApproval, any_waiting
+
+    assert not await any_waiting()
+    await TaskApproval(run_id='r1', user_id='u1', tool_name='Write', status=APPROVED).save()
+    assert not await any_waiting()
+    old = TaskApproval(run_id='r2', user_id='u1', tool_name='Write',
+                       created_at=datetime.now() - timedelta(days=2))
+    await old.save()
+    assert not await any_waiting()  # long expired, not a card anyone sees
+    await TaskApproval(run_id='r3', user_id='u1', tool_name='Write').save()
+    assert await any_waiting()
+
+
+async def test_task_approvals_are_checked_again_right_before_acting(db):
+    """The driver runs in a worker thread; it asks the main loop's database."""
+    from cognitrix.tasks.approvals import TaskApproval
+
+    computer.remember_loop(asyncio.get_running_loop())
+    try:
+        assert await asyncio.to_thread(computer.own_app_busy) is None
+        await TaskApproval(run_id='r9', user_id='u1', tool_name='Write').save()
+        assert await asyncio.to_thread(computer.own_app_busy) == computer.OWN_APP_BUSY
+    finally:
+        computer.remember_loop(None)

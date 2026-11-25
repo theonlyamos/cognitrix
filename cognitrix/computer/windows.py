@@ -12,7 +12,7 @@ import threading
 import time
 from _ctypes import COMError
 
-from cognitrix.computer import Element, WindowInfo, blocked_reason, fingerprint_of
+from cognitrix.computer import Element, WindowInfo, blocked_reason, fingerprint_of, is_own_app
 
 user32 = ctypes.WinDLL('user32', use_last_error=True)
 kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -413,18 +413,17 @@ class WindowsBackend:
             kind = 'chromium'
         if app in _SHELL_APPS:
             return None
-        own = pid == self._own_pid
-        blocked = blocked_reason(app, kind, title, own=own, elevated=elevated and not self._self_elevated)
+        own = pid == self._own_pid or is_own_app(app)
+        blocked = blocked_reason(app, kind, title, elevated=elevated and not self._self_elevated)
         return WindowInfo(id=int(hwnd), title=title, app=app or '?', pid=pid,
-                          minimized=bool(user32.IsIconic(hwnd)), rect=_frame(hwnd), kind=kind, blocked=blocked)
+                          minimized=bool(user32.IsIconic(hwnd)), rect=_frame(hwnd), kind=kind, blocked=blocked,
+                          own=own)
 
     def list_windows(self) -> list[WindowInfo]:
         _dpi_aware()
         found: list[int] = []
         cb = _EnumProc(lambda h, _: found.append(h) or True)
         user32.EnumWindows(cb, 0)
-        # Cognitrix's own windows are listed too (marked as not controllable),
-        # like on Linux and macOS, so an agent can find and look at the app.
         return [info for info in map(self._info, found) if info is not None]
 
     def window(self, window_id: int) -> WindowInfo | None:

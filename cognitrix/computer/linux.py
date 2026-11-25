@@ -30,7 +30,7 @@ from collections.abc import Callable
 from ctypes import POINTER, byref, c_char_p, c_double, c_int, c_long, c_uint, c_ulong, c_void_p
 from typing import Any
 
-from cognitrix.computer import Element, Unsupported, WindowInfo, blocked_reason, fingerprint_of
+from cognitrix.computer import Element, Unsupported, WindowInfo, fingerprint_of, is_own_app
 
 logger = logging.getLogger('cognitrix.computer')
 
@@ -557,11 +557,12 @@ class LinuxBackend:
         left, top = self.x.to_root(window)
         rect = (left, top, left + attrs.width, top + attrs.height)
         blocked = self._blocked(app, title, pid, other_user)
-        return WindowInfo(int(window), title, app, pid, minimized, rect, 'x11', blocked)
+        own = pid == os.getpid() or is_own_app(app)
+        return WindowInfo(int(window), title, app, pid, minimized, rect, 'x11', blocked, own)
 
     def _blocked(self, app: str, title: str, pid: int, other_user: bool) -> str | None:
-        if pid == os.getpid() or app.startswith('cognitrix'):
-            return blocked_reason(app, own=True)
+        if pid == os.getpid() or is_own_app(app):
+            return None  # Cognitrix itself: see own_app_busy
         if app in TERMINAL_APPS or app.endswith('-terminal'):
             return 'it is a terminal; use the shell tool instead'
         if app in PASSWORD_MANAGERS:

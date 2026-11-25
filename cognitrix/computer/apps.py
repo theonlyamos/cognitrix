@@ -38,23 +38,30 @@ def app_label(app: Any) -> str:
 def app_of_call(tool_name: Any, params: dict | None) -> str | None:
     """The app a background window action would act in, or None when the call
     isn't one, takes over the screen, or the window can't be found."""
-    if _tool_key(tool_name) not in ACTION_TOOLS:
-        return None
     params = params if isinstance(params, dict) else {}
     if params.get('use_screen'):
         return None
+    window = window_of_call(tool_name, params)
+    return app_key(getattr(window, 'app', '')) or None
+
+
+def window_of_call(tool_name: Any, params: dict | None) -> Any:
+    """The person's-computer window a window action acts in (background or
+    with the screen), or None."""
+    if _tool_key(tool_name) not in ACTION_TOOLS:
+        return None
+    params = params if isinstance(params, dict) else {}
     from cognitrix.computer import PERSON, which_computer
     from cognitrix.computer.sandbox.client import sandbox_mode
 
     if sandbox_mode() and which_computer(params.get('computer')) != PERSON:
-        return None  # the sandbox isn't the person's computer: no per-app answers
+        return None  # the sandbox isn't the person's computer
     try:
         from cognitrix.computer import get_driver
 
-        window = get_driver().backend.window(int(params.get('window_id')))
+        return get_driver().backend.window(int(params.get('window_id')))
     except Exception:
         return None
-    return app_key(getattr(window, 'app', '')) or None
 
 
 async def _rows(user_key: str, app: str | None = None) -> list:
