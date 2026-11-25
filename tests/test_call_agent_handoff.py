@@ -164,3 +164,13 @@ def test_call_agent_schema_offers_both_modes():
     assert set(fn['parameters']['properties']) == {'name', 'task', 'mode', 'wait_minutes'}
     assert fn['parameters']['required'] == ['name', 'task']
     assert "'handoff'" in fn['description'] and "'wait'" in fn['description']
+
+
+def test_wait_stays_under_the_apps_tool_call_limit(monkeypatch):
+    from cognitrix.tools import misc
+
+    monkeypatch.setattr('cognitrix.agents.base.tool_timeout_seconds', lambda: 900.0)
+    assert misc._wait_seconds(10) == 600
+    assert misc._wait_seconds(30) == 885
+    monkeypatch.setattr('cognitrix.agents.base.tool_timeout_seconds', lambda: None)
+    assert misc._wait_seconds(30) == 1800

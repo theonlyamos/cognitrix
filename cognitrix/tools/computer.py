@@ -139,6 +139,8 @@ def list_windows(search: str | None = None, computer: str = AGENT):
                 line += ' minimized'
             if w.blocked:
                 line += f' - can\'t control: {w.blocked}'
+            elif w.own:
+                line += ' - this is Cognitrix itself (the app you run in); the person approves each action in it'
             lines.append(line)
         return '\n'.join(lines)
     return _run(go, computer=computer)

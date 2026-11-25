@@ -15,6 +15,7 @@ Only Windows has a backend today; elsewhere ``get_driver()`` raises
 """
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import hashlib
 import itertools
@@ -75,6 +76,7 @@ class WindowInfo:
     rect: tuple[int, int, int, int] = (0, 0, 0, 0)  # screen left, top, right, bottom
     kind: str = 'win32'  # 'win32' | 'uwp' | 'chromium' | 'console'
     blocked: str | None = None  # why the agent may not act on it
+    own: bool = False  # a window of Cognitrix itself (see own_app_busy)
 
 
 @dataclass
@@ -233,12 +235,76 @@ OWN_APPS = frozenset({'cognitrix-desktop.exe', 'cognitrix-engine.exe', 'cognitri
 SECURE_APPS = frozenset({'consent.exe', 'logonui.exe', 'lockapp.exe'})
 
 
-def blocked_reason(app: str, kind: str = 'win32', title: str = '', own: bool = False,
-                   elevated: bool = False) -> str | None:
+def is_own_app(app: Any) -> bool:
+    """Cognitrix itself: the desktop app, its engine, or an app it installed."""
+    app = str(app or '').strip().lower()
+    return app in OWN_APPS or app.startswith('cognitrix')
+
+
+OWN_APP_BUSY = (
+    "an approval or question card is waiting for the person, and agents can't use Cognitrix while one is "
+    "open, so no agent can answer it for them. Wait until they have answered, then try again")
+
+
+_main_loop: asyncio.AbstractEventLoop | None = None
+
+
+def remember_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """The event loop that owns the database, so a window tool running in a
+    worker thread can check task approvals right before it acts."""
+    global _main_loop
+    _main_loop = loop
+
+
+def _task_approval_waiting() -> bool:
+    loop = _main_loop
+    if loop is None or loop.is_closed():
+        return False
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        return False  # can't wait on our own loop; the async check ran before
+    from cognitrix.tasks.approvals import any_waiting
+
+    try:
+        return bool(asyncio.run_coroutine_threadsafe(any_waiting(), loop).result(timeout=5))
+    except Exception:
+        logger.debug('computer-use: task approval check failed', exc_info=True)
+        return True  # unsure: don't act in Cognitrix
+
+
+def own_app_busy() -> str | None:
+    """Why agents may not act in Cognitrix's own window right now, or None.
+
+    Agents may drive the app like any other, but never while it shows a card
+    that only the person may answer (an approval or a question): a click
+    there would approve an agent's action on their behalf."""
+    try:
+        from cognitrix.safety.approval_gate import _WEB_PENDING
+
+        for entry in list(_WEB_PENDING.values()):
+            future = (entry or {}).get('future')
+            if future is None or not future.done():
+                return OWN_APP_BUSY
+    except Exception:
+        logger.debug('computer-use: approval check failed', exc_info=True)
+    try:
+        from cognitrix.questions import broker
+
+        if any(not pending.future.done() for pending in list(broker._PENDING.values())):
+            return OWN_APP_BUSY
+    except Exception:
+        logger.debug('computer-use: question check failed', exc_info=True)
+    if _task_approval_waiting():
+        return OWN_APP_BUSY
+    return None
+
+
+def blocked_reason(app: str, kind: str = 'win32', title: str = '', elevated: bool = False) -> str | None:
     """Why the agent may not act on a window, or None."""
     app = (app or '').lower()
-    if own or app in OWN_APPS:
-        return "it is Cognitrix's own window"
     if kind == 'console' or app in TERMINAL_APPS:
         return 'it is a terminal; use the shell tool instead'
     if app in PASSWORD_MANAGERS:
@@ -365,6 +431,8 @@ class Driver:
             raise DriverError(f'No window with id {window_id}. Call list_windows to see open windows.')
         if acting and win.blocked:
             raise Blocked(f"Can't control '{win.title}' because {win.blocked}.")
+        if acting and win.own and (busy := own_app_busy()):
+            raise Blocked(f"Can't control '{win.title}' right now: {busy}.")
         return win
 
     def open(self, target: str, timeout_s: float = 12.0, args: str | None = None) -> WindowInfo | None:

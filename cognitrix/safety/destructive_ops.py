@@ -178,6 +178,19 @@ def _on_persons_computer(params: dict) -> bool:
     return which_computer(params.get('computer')) == PERSON
 
 
+def _in_own_app(tool_name: str, params: dict) -> bool:
+    """A window action (background or with the screen) in Cognitrix's own window."""
+    try:
+        from cognitrix.computer import is_own_app
+        from cognitrix.computer.apps import window_of_call
+
+        window = window_of_call(tool_name, params)
+        return window is not None and (bool(getattr(window, 'own', False))
+                                       or is_own_app(getattr(window, 'app', '')))
+    except Exception:
+        return False
+
+
 def _publish_app_risk(params: dict) -> RiskAssessment:
     """Publishing an app runs the agent's code as a server. In the agents'
     sandboxed computer that's their own container; on this machine it's like
@@ -433,9 +446,17 @@ class DestructiveOpDetector:
         if name in _DESKTOP_CONTROL and _truthy(params.get('use_screen')):
             # Takes over the person's real mouse and keyboard for a moment.
             # Never covered by a per-app "always allow".
+            own = ['own_app'] if _in_own_app(tool_name, params) else []
             return RiskAssessment(
-                RiskLevel.MEDIUM, ['desktop_control', 'screen_takeover'],
+                RiskLevel.MEDIUM, ['desktop_control', 'screen_takeover', *own],
                 f"'{tool_name}' takes over your screen, mouse and keyboard for a moment",
+            )
+        if name in _DESKTOP_CONTROL and _in_own_app(tool_name, params):
+            # Cognitrix itself: its settings and approvals. Only the person's
+            # own answer covers it, never a broad auto-approve or the reviewer.
+            return RiskAssessment(
+                RiskLevel.MEDIUM, ['desktop_control', 'own_app'],
+                f"'{tool_name}' controls Cognitrix itself",
             )
         if name in _DESKTOP_CONTROL:
             return RiskAssessment(

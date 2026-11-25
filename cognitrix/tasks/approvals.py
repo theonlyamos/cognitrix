@@ -202,3 +202,27 @@ async def list_for_run(run_id: str, status: str | None = None) -> list[TaskAppro
         query['status'] = status
     rows = await TaskApproval.find(query) or []
     return sorted(rows, key=lambda r: str(getattr(r, 'created_at', '') or ''))
+
+
+async def any_waiting() -> bool:
+    """Whether a task approval is still waiting for a person anywhere (one
+    that hasn't outlived the approval timeout)."""
+    try:
+        rows = await TaskApproval.find({'status': PENDING}) or []
+    except Exception:
+        logger.debug('task approvals: pending lookup failed', exc_info=True)
+        return False
+    limit = approval_timeout_seconds() + 60
+    for row in rows:
+        created = getattr(row, 'created_at', None)
+        if isinstance(created, str):
+            try:
+                created = datetime.fromisoformat(created)
+            except ValueError:
+                created = None
+        if not isinstance(created, datetime):
+            return True
+        now = datetime.now(created.tzinfo or None) if created.tzinfo else datetime.now()
+        if (now - created).total_seconds() <= limit:
+            return True
+    return False

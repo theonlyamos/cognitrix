@@ -1666,6 +1666,22 @@ _CALL_AGENT_MODES = ('wait', 'handoff')
 _MINUTE = 60.0
 
 
+def _wait_seconds(wait_minutes: float) -> float:
+    """How long wait mode waits: a little under the app's limit on any one
+    tool call, if there is one, so Call Agent stops the helper itself and
+    can pass on what it wrote so far."""
+    seconds = wait_minutes * _MINUTE
+    try:
+        from cognitrix.agents.base import tool_timeout_seconds  # noqa: WPS433
+
+        limit = tool_timeout_seconds()
+    except Exception:
+        limit = None
+    if limit:
+        seconds = min(seconds, max(limit - 15.0, limit * 0.9))
+    return seconds
+
+
 async def _handoff_chat(authority):
     """The caller's saved chat that a handed-off answer can come back to,
     and '' — or None and why hand-off isn't possible from this turn."""
@@ -1737,7 +1753,9 @@ def _start_handoff(authority, agent, saved, current, task: str, child_context, d
         user_key, agent, saved, task, on_done=done, setup=setup, tool_context=child_context)
 
 
-@tool(category='system')
+# Waits for another agent's whole reply, whose own tool calls need slots:
+# holding one here could leave both waiting on each other.
+@tool(category='system', occupies_execution_slot=False)
 async def call_agent(name: str, task: str, mode: str = 'wait', wait_minutes: int = CALL_AGENT_WAIT_MINUTES,
                      *, interface: str = 'task', parent=None):
     """Give a job to another agent, who can read the working folders but cannot change files or run commands. Pick the mode by how long the job takes. mode 'wait' (default): the answer is this tool's result; use it for quick asks you need before you can go on, like a lookup, a short question, a second opinion or a quick review. mode 'handoff': returns at once while the agent works in the background, and its answer arrives in this chat as a new message when it is done; use it for anything that takes more than a few minutes (research, a long document, a big review) or to run several jobs at the same time. After a hand-off, carry on with other work, or tell the person what is running and end your turn; don't wait or poll for it.
@@ -1900,13 +1918,14 @@ async def call_agent(name: str, task: str, mode: str = 'wait', wait_minutes: int
         # fills the caller's context (a reviewer can think for pages).
         from cognitrix.teams.group_chat import _strip_think  # noqa: WPS433
 
+        wait_seconds = _wait_seconds(wait_minutes)
         try:
-            await asyncio.wait_for(run_helper(), timeout=wait_minutes * _MINUTE)
+            await asyncio.wait_for(run_helper(), timeout=wait_seconds)
         except TimeoutError:
             so_far = _strip_think(''.join(chunks)).strip()
             where = f' Its chat (chat id {saved.id}) shows how far it got.' if saved is not None else ''
             partial = f'\n\nWhat it had written so far:\n{so_far[-4000:]}' if so_far else ''
-            return (f"{note}Agent '{name}' did not finish within {wait_minutes:g} minutes, so it was stopped.{where} "
+            return (f"{note}Agent '{name}' did not finish within {round(wait_seconds / _MINUTE, 1):g} minutes, so it was stopped.{where} "
                     "For long work, call it again with mode='handoff': its answer then comes back to this "
                     f'chat as a new message when it is done.{partial}')
 

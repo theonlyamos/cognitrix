@@ -236,6 +236,11 @@ class ApprovalGate:
         Returns:
             ApprovalResult
         """
+        # Actions in Cognitrix's own window (its settings, its approvals) are
+        # answered by the person: no reviewer, bypass or "always allow this
+        # tool" stands in. Their answer for the Cognitrix app itself still counts.
+        own_app = 'own_app' in (risk.categories or [])
+
         # Non-interactive auto-approve (benchmarks / CI / unattended runs inside
         # a sandbox). Off by default; only enable in a throwaway environment.
         if _auto_approve_enabled():
@@ -259,7 +264,7 @@ class ApprovalGate:
                 if earlier is not None:
                     return ApprovalResult(approved=earlier)
 
-            reviewed = await self._review(tool_call, risk, interface)
+            reviewed = None if own_app else await self._review(tool_call, risk, interface)
             if reviewed is not None:
                 return reviewed
 
@@ -304,7 +309,7 @@ class ApprovalGate:
         # reloaded with it set to allow), or a saved command prefix.
         tool_key = self._tool_allow_key(scope, tool_call)
         chat_tool_key = self._chat_tool_allow_key(scope, tool_call, interface)
-        if not person_only and not always_ask and (
+        if not person_only and not always_ask and not own_app and (
                 tool_key in self.session_cache or (chat_tool_key and chat_tool_key in self.session_cache)):
             return ApprovalResult(approved=True, cached=True, remember=True)
         if person_only and not always_ask and await self._command_allowed(tool_call, interface):
@@ -314,10 +319,10 @@ class ApprovalGate:
         # A call a person already refused goes back to the person.
         web_ctx = web_turn_ctx.get(None)
         bypass = (
-            not person_only and not always_ask
+            not person_only and not always_ask and not own_app
             and interface in ('web', 'ws', 'websocket') and web_ctx and web_ctx.get('bypass')
         )
-        if not bypass and not always_ask and scoped not in self.session_denied:
+        if not bypass and not always_ask and not own_app and scoped not in self.session_denied:
             reviewed = await self._review(tool_call, risk, interface)
             if reviewed is not None:
                 return reviewed
@@ -334,7 +339,7 @@ class ApprovalGate:
             result = await self._cli_approval(tool_call, risk, timeout)
         elif interface in ('web', 'ws', 'websocket'):
             result = await self._web_approval(tool_call, risk, timeout, person_only=person_only, must_ask=always_ask,
-                                              scope=scope)
+                                              scope=scope, **({'no_bypass': True} if own_app else {}))
         elif interface == 'acp':
             approver = acp_approver.get(None)
             if approver is None:
@@ -616,6 +621,7 @@ class ApprovalGate:
         person_only: bool = False,
         must_ask: bool = False,
         scope: str | None = None,
+        no_bypass: bool = False,
     ) -> ApprovalResult:
         """Interactive approval over the SSE chat stream.
 
@@ -628,7 +634,7 @@ class ApprovalGate:
         ctx = web_turn_ctx.get(None)
 
         if (
-            ctx and ctx.get('bypass') and not person_only and not must_ask
+            ctx and ctx.get('bypass') and not person_only and not must_ask and not no_bypass
             and _normal_name(tool_call.tool_name) not in _NEVER_AUTO_APPROVED
         ):
             # Auto-approve tool calls only — the bash whitelist / sandbox-shell
