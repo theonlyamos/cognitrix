@@ -377,6 +377,7 @@ async def _reload(row):
 
 
 async def test_calendar_changes_wait_for_a_new_sign_in(db, monkeypatch):
+    """Google's own create/update tools stay hidden until "Create and change events" is signed in."""
     from cognitrix.api.routes import connected_apps
     from cognitrix.mcp import apps, oauth, registry
     from cognitrix.models.mcp_server import MCPServer
@@ -386,13 +387,26 @@ async def test_calendar_changes_wait_for_a_new_sign_in(db, monkeypatch):
     monkeypatch.setenv('GOOGLE_CLIENT_ID', 'g-id')
     monkeypatch.setenv('GOOGLE_CLIENT_SECRET', 'g-secret')
     row = await _google_row(member, 'google-calendar', scope='openid email')
-    client = _use(monkeypatch, FakeClient({str(row.id): [{'name': 'list_events', 'annotations': {'readOnlyHint': True}}]}))
+    writes = {'readOnlyHint': False}
+    client = _use(monkeypatch, FakeClient({str(row.id): [
+        {'name': 'list_events', 'annotations': {'readOnlyHint': True}},
+        {'name': 'create_event', 'annotations': writes},
+        {'name': 'update_event', 'annotations': writes},
+        {'name': 'delete_event', 'annotations': {'readOnlyHint': False, 'destructiveHint': True}},
+        {'name': 'respond_to_event', 'annotations': writes},
+    ]}))
+    config = registry.config_from_row(await _reload(row))
+    await registry.prepare(client, config)
+    assert [t['name'] for t in await apps.list_tools(client, config)] == ['list_events']
+    refused = await apps.call_tool(client, config, 'create_event', {'summary': 'Call'})
+    assert refused.startswith('Error:') and 'Create and change events' in refused
+    assert client.called == []
 
     conn = await connected_apps.set_app_options(
         'google-calendar', connected_apps.OptionsBody(options=['edit']), _ctx(member))
     assert conn['pending_options'] == ['edit']
     config = registry.config_from_row(await _reload(row))
-    await registry.prepare(client, config)
+    # Turned on but not signed in for yet: still hidden.
     assert [t['name'] for t in await apps.list_tools(client, config)] == ['list_events']
 
     # Reconnecting asks Google for the extra scope.
@@ -406,24 +420,45 @@ async def test_calendar_changes_wait_for_a_new_sign_in(db, monkeypatch):
     conn = next(a for a in listing['apps'] if a['id'] == 'google-calendar')['connection']
     assert conn['options'] == ['edit'] and conn['pending_options'] == []
     names = [t['name'] for t in await apps.list_tools(client, config)]
-    assert names == ['list_events', 'create_event', 'update_event', 'delete_event']
+    assert names == ['list_events', 'create_event', 'update_event', 'delete_event', 'respond_to_event']
+    # The change goes to Google's server, not to a tool of ours.
+    assert await apps.call_tool(client, config, 'create_event', {'summary': 'Call'}) == 'create_event ran'
+    assert client.called[-1][1] == 'create_event'
 
-    web = Web(monkeypatch)
-    web.on('POST', 'https://www.googleapis.com/calendar/v3/calendars/primary/events',
-           lambda r: httpx.Response(200, json={'id': 'e1', 'summary': 'Call', 'htmlLink': 'https://cal/e1'}))
-    web.on('DELETE', 'https://www.googleapis.com/calendar/v3/calendars/primary/events/e1',
-           lambda r: httpx.Response(204))
-    made = await apps.call_tool(client, config, 'create_event', {
-        'title': 'Call', 'start': '2030-01-02T15:00:00', 'end': '2030-01-02T15:30:00',
-        'time_zone': 'Europe/Berlin', 'attendees': ['ann@example.com'],
-    })
-    assert json.loads(made)['event_id'] == 'e1'
-    request = web.made('POST', 'https://www.googleapis.com/calendar/v3/calendars/primary/events')[0]
-    body = json.loads(request.content)
-    assert body['start'] == {'dateTime': '2030-01-02T15:00:00', 'timeZone': 'Europe/Berlin'}
-    assert body['attendees'] == [{'email': 'ann@example.com'}]
-    assert request.url.params['sendUpdates'] == 'none'  # nobody is emailed unless asked
-    assert json.loads(await apps.call_tool(client, config, 'delete_event', {'event_id': 'e1'}))['deleted'] is True
+
+async def test_new_google_apps_and_classroom_setting(db, monkeypatch):
+    from cognitrix.api.routes import connected_apps
+    from cognitrix.mcp import catalog
+    from cognitrix.mcp import setup as app_setup
+
+    admin, member = await _people()
+    monkeypatch.setenv('GOOGLE_CLIENT_ID', 'g-id')
+    monkeypatch.setenv('GOOGLE_CLIENT_SECRET', 'g-secret')
+    assert catalog.get('google-contacts').url == 'https://people.googleapis.com/mcp/v1'
+    assert catalog.get('google-search').url == 'https://workspacemcp.googleapis.com/mcp/v1'
+    assert catalog.get('google-chat').url == 'https://chatmcp.googleapis.com/mcp/v1'
+    assert 'https://www.googleapis.com/auth/gmail.modify' in catalog.get('gmail').scopes
+    chat_send = catalog.option(catalog.get('google-chat'), 'send')
+    assert 'send_message' in chat_send.tools and chat_send.scopes
+
+    listing = await connected_apps.list_apps(_request(), _ctx(member))
+    ids = [a['id'] for a in listing['apps']]
+    assert {'google-chat', 'google-contacts', 'google-search'} <= set(ids)
+    assert 'google-classroom' not in ids
+    assert not any('classroom' in s for s in app_setup.all_scopes('google'))
+    assert not set(app_setup.CLASSROOM_APIS) & set(app_setup.google_apis())
+    with pytest.raises(HTTPException) as off:
+        await connected_apps.connect_app('google-classroom', _request(), _ctx(member))
+    assert 'turned off' in off.value.detail
+
+    monkeypatch.setenv('COGNITRIX_GOOGLE_CLASSROOM', '1')
+    listing = await connected_apps.list_apps(_request(), _ctx(member))
+    assert 'google-classroom' in [a['id'] for a in listing['apps']]
+    assert set(app_setup.CLASSROOM_APIS) <= set(app_setup.google_apis())
+    assert any('classroom' in s for s in app_setup.all_scopes('google'))
+    started = await connected_apps.connect_app('google-classroom', _request(), _ctx(member))
+    scopes = parse_qs(urlparse(started['authorize_url']).query)['scope'][0].split()
+    assert 'https://www.googleapis.com/auth/classroom.courses.readonly' in scopes
 
 
 # --- finding and running app tools -------------------------------------------------------

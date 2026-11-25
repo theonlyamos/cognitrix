@@ -1,6 +1,6 @@
 # Connected apps
 
-Settings › Connected apps lets each person sign in to hosted MCP servers (GitHub, Gmail, Google Calendar, Drive, Docs, Sheets, Slides, Slack, Notion, Linear, Sentry, or any server added by address). Their agents can then use those apps' tools.
+Settings › Connected apps lets each person sign in to hosted MCP servers (GitHub, Gmail, Google Calendar, Drive, Docs, Sheets, Slides, Chat, Contacts, Search all of Google, Classroom when an admin offers it, Slack, Notion, Linear, Sentry, or any server added by address). Their agents can then use those apps' tools.
 
 ## How it works
 
@@ -17,10 +17,11 @@ Settings › Connected apps lets each person sign in to hosted MCP servers (GitH
 
 Some apps have options a person turns on under the app once it is connected (`AppOption` in `cognitrix/mcp/catalog.py`):
 
-- **Gmail › Send email** adds `send_email` and `send_draft`. The sign-in already covers it.
-- **Google Calendar › Create and change events** adds `create_event`, `update_event` and `delete_event`. It needs the `calendar.events` scope, so the page offers "Reconnect to allow".
+- **Gmail › Send email** adds `send_email` and `send_draft`. The sign-in already covers it. Google's Gmail server has no send tool, so these are built in (`cognitrix/mcp/native.py`) and call Gmail's REST API with the same sign-in.
+- **Google Calendar › Create and change events** unlocks the Calendar server's own `create_event`, `update_event`, `delete_event` and `respond_to_event`. It needs the `calendar.events` scope, so the page offers "Reconnect to allow".
+- **Google Chat › Send messages** unlocks the Chat server's `send_message`, `mark_as_read`, `mark_as_unread` and `update_notification_settings`. It needs three more Chat scopes and a Chat app in the Google Cloud project (Google Chat API › Configuration, interactive features off).
 
-Google's MCP servers don't offer these, so they are built in (`cognitrix/mcp/native.py`) and call Google's REST API with the same sign-in. They are marked as changing things, so every call asks first unless the person sets the tool to Allow.
+A server tool that belongs to an option (`AppOption.tools`) is hidden from agents, and refused if called, until the option is on and the sign-in covers its scopes. Built-in tools and changing server tools ask first unless the person sets the tool to Allow.
 
 ## Setting up the apps (admin)
 
@@ -31,7 +32,7 @@ The client ID and secret can be saved on that page (encrypted with the saved key
 The redirect addresses are `<base>/api/v1/auth/oauth/<provider>/callback`, where `<base>` is `COGNITRIX_PUBLIC_URL`, or `http://127.0.0.1:48210` in the desktop app.
 
 - **GitHub** uses the hosted server at `https://api.githubcopilot.com/mcp/` with the scopes `repo read:org read:user`. Organizations may have to approve the OAuth app. Anyone can paste a personal access token instead.
-- **Google** uses Google's Workspace MCP servers (developer preview), for example `https://gmailmcp.googleapis.com/mcp/v1`. Each app needs its normal API and its MCP API turned on, the scopes added to the consent screen, and a "Web application" client with "Use this client for an AI-powered agent" ticked.
+- **Google** uses Google's Workspace MCP servers (developer preview, see developers.google.com/workspace/guides/configure-mcp-servers), for example `https://gmailmcp.googleapis.com/mcp/v1`. Contacts is served at `https://people.googleapis.com/mcp/v1` and Search all of Google (one `search_corpus` tool over Gmail, Drive, Calendar and Chat) at `https://workspacemcp.googleapis.com/mcp/v1`. Each app needs its normal API and its MCP API turned on, the scopes added to the consent screen, and a "Web application" client with "Use this client for an AI-powered agent" ticked; Google refuses MCP calls from a client without it. Google Classroom is only offered when an admin turns on **Offer Google Classroom** (`COGNITRIX_GOOGLE_CLASSROOM`) in Settings › Connected apps; its APIs and scopes then join the setup steps.
 - **Slack** uses Slack's server at `https://mcp.slack.com/mcp` with a user token. Slack only lets apps internal to a workspace (or in its Marketplace) use it, and only accepts https redirect addresses.
 
 **Notion, Linear, Sentry and servers added by address** need no setup. Cognitrix reads the server's sign-in metadata and registers itself, with a client ID metadata document when the server has a public https address, or dynamic client registration otherwise. On a shared server, every address in that metadata must be public https.
@@ -82,7 +83,7 @@ Every GitHub connection (signed in or with a token) has three built-in tools nex
 ## Limits
 
 - Pending sign-ins are kept in memory for ten minutes, like "Sign in with Google". Run one API process, or keep a sign-in on the process that started it.
-- Google Calendar's MCP server is read-only today; changing events goes through the built-in tools above.
+- Google's Gmail MCP server can't send mail; sending goes through the built-in tools above.
 - New mail is found by asking on a timer, not pushed, so a run starts up to a couple of minutes after the mail arrives.
 
 ## App screens beside the chat (MCP Apps)

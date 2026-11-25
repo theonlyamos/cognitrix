@@ -34,6 +34,10 @@ const TILE: Record<string, string> = {
   'google-docs': 'bg-[#4285f4]/15 text-[#1967d2] dark:text-[#8ab4f8]',
   'google-sheets': 'bg-[#0f9d58]/15 text-[#0b8043] dark:text-[#81c995]',
   'google-slides': 'bg-[#f4b400]/20 text-[#b06000] dark:text-[#fdd663]',
+  'google-chat': 'bg-[#00ac47]/15 text-[#137333] dark:text-[#81c995]',
+  'google-contacts': 'bg-[#1a73e8]/15 text-[#185abc] dark:text-[#aecbfa]',
+  'google-search': 'bg-[#4285f4]/15 text-[#1967d2] dark:text-[#8ab4f8]',
+  'google-classroom': 'bg-[#f9ab00]/20 text-[#b06000] dark:text-[#fdd663]',
   slack: 'bg-[#4a154b]/15 text-[#4a154b] dark:text-[#e0b3e2]',
 };
 

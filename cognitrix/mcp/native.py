@@ -1,10 +1,11 @@
 """Built-in tools that sit next to a connected app's own (MCP) tools.
 
-Google's Gmail and Calendar MCP servers can read and draft, but not send mail
-or change events. When a person turns on "Send email" or "Create and change
-events" for their connection (``catalog.AppOption``), the tools here are added
-to that connection. They call Google's REST APIs with the connection's own
-sign-in, so nothing new is stored.
+Google's Gmail MCP server can read, label and draft, but not send mail. When
+a person turns on "Send email" for their Gmail connection
+(``catalog.AppOption``), the tools here are added to that connection. They
+call Gmail's REST API with the connection's own sign-in, so nothing new is
+stored. (Calendar changes used to live here too; Google's Calendar server now
+has its own create, update, delete and respond tools, see ``AppOption.tools``.)
 
 GitHub connections always have Watch Pull Request and its companions
 (``APP_TOOLS``): they wake the agent when a pull request changes
@@ -24,7 +25,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
@@ -34,7 +34,6 @@ logger = logging.getLogger('cognitrix.log')
 
 HTTP_TIMEOUT = 30
 GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me'
-CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
 
 Handler = Callable[[str, dict[str, Any]], Awaitable[str]]
 
@@ -174,121 +173,7 @@ GMAIL_SEND = (
 )
 
 
-# --- Google Calendar ------------------------------------------------------------
-
-def _event_time(value: Any, time_zone: str | None) -> dict[str, str]:
-    text = str(value or '').strip()
-    if not text:
-        raise NativeToolError('Give start and end as a date (2026-11-20) or a date and time (2026-11-20T15:00:00).')
-    if 'T' not in text:
-        return {'date': text}
-    when: dict[str, str] = {'dateTime': text}
-    if time_zone:
-        when['timeZone'] = time_zone
-    return when
-
-
-def _event_body(args: dict[str, Any], *, partial: bool) -> dict[str, Any]:
-    body: dict[str, Any] = {}
-    zone = str(args.get('time_zone') or '').strip() or None
-    for field, key in (('title', 'summary'), ('description', 'description'), ('location', 'location')):
-        if args.get(field) is not None:
-            body[key] = str(args[field])
-    for field in ('start', 'end'):
-        if args.get(field) is not None:
-            body[field] = _event_time(args[field], zone)
-    if args.get('attendees') is not None:
-        body['attendees'] = [{'email': str(a).strip()} for a in args['attendees'] if str(a).strip()]
-    if not partial and not {'summary', 'start', 'end'} <= set(body):
-        raise NativeToolError('An event needs a title, a start and an end.')
-    return body
-
-
-def _calendar_url(args: dict[str, Any], event: bool) -> str:
-    calendar = quote(str(args.get('calendar_id') or 'primary'), safe='')
-    url = f'{CALENDAR_API}/calendars/{calendar}/events'
-    if event:
-        event_id = str(args.get('event_id') or '').strip()
-        if not event_id:
-            raise NativeToolError('Give the event_id of the event.')
-        url += f'/{quote(event_id, safe="")}'
-    return url
-
-
-def _notify(args: dict[str, Any]) -> dict[str, str]:
-    return {'sendUpdates': 'all' if args.get('notify_attendees') else 'none'}
-
-
-def _event_summary(event: dict[str, Any]) -> str:
-    return json.dumps({
-        'event_id': event.get('id'),
-        'title': event.get('summary'),
-        'start': event.get('start'),
-        'end': event.get('end'),
-        'link': event.get('htmlLink'),
-    })
-
-
-async def _create_event(token: str, args: dict[str, Any]) -> str:
-    event = await _request('POST', _calendar_url(args, False), token, app='Google Calendar',
-                           json=_event_body(args, partial=False), params=_notify(args))
-    return _event_summary(event)
-
-
-async def _update_event(token: str, args: dict[str, Any]) -> str:
-    body = _event_body(args, partial=True)
-    if not body:
-        raise NativeToolError('Give at least one thing to change.')
-    event = await _request('PATCH', _calendar_url(args, True), token, app='Google Calendar',
-                           json=body, params=_notify(args))
-    return _event_summary(event)
-
-
-async def _delete_event(token: str, args: dict[str, Any]) -> str:
-    await _request('DELETE', _calendar_url(args, True), token, app='Google Calendar', params=_notify(args))
-    return json.dumps({'deleted': True, 'event_id': str(args.get('event_id'))})
-
-
-_EVENT_FIELDS: dict[str, dict[str, Any]] = {
-    'title': {'type': 'string', 'description': 'What the event is called.'},
-    'start': {'type': 'string', 'description': 'Start: 2026-11-20T15:00:00, or 2026-11-20 for an all-day event.'},
-    'end': {'type': 'string', 'description': 'End, in the same form as start.'},
-    'time_zone': {'type': 'string', 'description': 'IANA time zone of start and end, e.g. Europe/Berlin.'},
-    'description': {'type': 'string', 'description': 'Notes shown on the event.'},
-    'location': {'type': 'string', 'description': 'Where it takes place.'},
-    'attendees': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Email addresses to invite.'},
-    'notify_attendees': {'type': 'boolean', 'description': 'Email the attendees about this. Off unless asked.'},
-    'calendar_id': {'type': 'string', 'description': 'Which calendar. Leave out for the main one.'},
-}
-_EVENT_ID = {'event_id': {'type': 'string', 'description': 'The id of the event.'}}
-
-CALENDAR_EDIT = (
-    NativeTool(
-        name='create_event',
-        description='Add an event to the connected Google Calendar. Check free time first.',
-        input_schema=_schema(_EVENT_FIELDS, ['title', 'start', 'end']),
-        handler=_create_event,
-        annotations={**_ASKS, 'title': 'Create event'},
-    ),
-    NativeTool(
-        name='update_event',
-        description='Change an event in the connected Google Calendar. Only the fields you give are changed.',
-        input_schema=_schema({**_EVENT_ID, **_EVENT_FIELDS}, ['event_id']),
-        handler=_update_event,
-        annotations={**_ASKS, 'title': 'Change event'},
-    ),
-    NativeTool(
-        name='delete_event',
-        description='Delete an event from the connected Google Calendar.',
-        input_schema=_schema({
-            **_EVENT_ID,
-            'notify_attendees': _EVENT_FIELDS['notify_attendees'],
-            'calendar_id': _EVENT_FIELDS['calendar_id'],
-        }, ['event_id']),
-        handler=_delete_event,
-        annotations={**_ASKS, 'title': 'Delete event'},
-    ),
-)
+# --- GitHub -------------------------------------------------------------------
 
 async def _watch_pr(token: str, args: dict[str, Any], row: Any) -> str:
     from cognitrix.tasks import pr_watch
@@ -369,7 +254,6 @@ APP_TOOLS: dict[str, tuple[NativeTool, ...]] = {
 # (catalog app id, option id) -> the tools that option adds.
 OPTION_TOOLS: dict[tuple[str, str], tuple[NativeTool, ...]] = {
     ('gmail', 'send'): GMAIL_SEND,
-    ('google-calendar', 'edit'): CALENDAR_EDIT,
 }
 
 

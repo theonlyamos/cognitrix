@@ -75,7 +75,9 @@ async def list_apps(request: Request, ctx: AuthContext = Depends(jwt_only)):
     by_app = {r.catalog_id: r for r in rows if r.catalog_id}
     admin = await is_admin(ctx.user)
     base = base_url(request)
-    apps = [{**catalog.public(app), 'connection': _connection(by_app.get(app.id))} for app in catalog.CATALOG]
+    # Apps an admin turned off still show for people already connected to them.
+    shown = [app for app in catalog.CATALOG if catalog.offered(app) or app.id in by_app]
+    apps = [{**catalog.public(app), 'connection': _connection(by_app.get(app.id))} for app in shown]
     custom = [
         _connection(r) for r in rows
         if not r.catalog_id and (r.auth_type or '') == 'oauth'
@@ -138,6 +140,8 @@ def _sign_in_error(exc: oauth.SignInError) -> HTTPException:
 async def connect_app(app_id: str, request: Request, ctx: AuthContext = Depends(jwt_only)):
     """Start signing in. The UI opens ``authorize_url`` and polls the flow."""
     app = _app_or_404(app_id)
+    if not catalog.offered(app):
+        raise HTTPException(status_code=400, detail=f'{app.name} is turned off on this server. An admin can turn it on in Settings > Connected apps.')
     if not catalog.available(app):
         raise HTTPException(status_code=400, detail=f'{app.name} is not set up on this server yet. {catalog.setup_hint(app)}')
     me = owner_key(ctx.user)
