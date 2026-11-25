@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -54,28 +55,19 @@ MAX_TOOL_RESULT_CHARS = 8000
 # Bound simultaneous executions without limiting how many calls a turn may
 # make. The limiter is shared by every batch on the same event loop (the normal
 # deployment model is one loop per server process).
-_DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 4
-_MAX_ALLOWED_CONCURRENT_TOOL_CALLS = 64
+# 0 means no limit (the default): every call in a batch runs at once.
+_DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 0
 
 
 def _parse_max_concurrent_tool_calls(raw: str | None) -> int:
     try:
-        value = int(raw) if raw else _DEFAULT_MAX_CONCURRENT_TOOL_CALLS
+        value = int(raw) if raw not in (None, '') else _DEFAULT_MAX_CONCURRENT_TOOL_CALLS
     except (TypeError, ValueError):
         logger.warning(
-            "Invalid COGNITRIX_MAX_CONCURRENT_TOOL_CALLS=%r; using %s",
-            raw,
-            _DEFAULT_MAX_CONCURRENT_TOOL_CALLS,
+            "Invalid COGNITRIX_MAX_CONCURRENT_TOOL_CALLS=%r; using no limit", raw,
         )
         return _DEFAULT_MAX_CONCURRENT_TOOL_CALLS
-    if not 1 <= value <= _MAX_ALLOWED_CONCURRENT_TOOL_CALLS:
-        logger.warning(
-            "COGNITRIX_MAX_CONCURRENT_TOOL_CALLS must be between 1 and %s; using %s",
-            _MAX_ALLOWED_CONCURRENT_TOOL_CALLS,
-            _DEFAULT_MAX_CONCURRENT_TOOL_CALLS,
-        )
-        return _DEFAULT_MAX_CONCURRENT_TOOL_CALLS
-    return value
+    return max(0, value)
 
 
 MAX_CONCURRENT_TOOL_CALLS = _parse_max_concurrent_tool_calls(
@@ -122,7 +114,7 @@ def _path_lock_for(params: dict[str, Any]) -> asyncio.Lock | None:
     return lock
 
 
-def _tool_execution_limiter(owner: str = '') -> asyncio.Semaphore:
+def _tool_execution_limiter(owner: str = '') -> asyncio.Semaphore | None:
     """Return the limiter shared by one agent's tool calls in one chat.
 
     It used to be one limiter for the whole server, so every chat, swarm
@@ -133,6 +125,8 @@ def _tool_execution_limiter(owner: str = '') -> asyncio.Semaphore:
     """
     loop = asyncio.get_running_loop()
     configured = MAX_CONCURRENT_TOOL_CALLS
+    if configured <= 0:
+        return None  # no limit
     entry = _TOOL_EXECUTION_LIMITERS.get(loop)
     if entry is None or entry[0] != configured:
         entry = (configured, {})
@@ -894,7 +888,7 @@ class AgentManager:
                         await path_lock.acquire()
                         lock_held = True
                     if constrained:
-                        async with execution_slots:
+                        async with execution_slots or contextlib.nullcontext():
                             try:
                                 async with asyncio.timeout(time_limit):
                                     result = await resilient_manager.run_tool(
@@ -960,7 +954,10 @@ class AgentManager:
                     next_job += 1
                     await run_job(slot_jobs[job_index], constrained=True)
 
-            worker_count = min(MAX_CONCURRENT_TOOL_CALLS, len(slot_jobs))
+            worker_count = (
+                min(MAX_CONCURRENT_TOOL_CALLS, len(slot_jobs))
+                if MAX_CONCURRENT_TOOL_CALLS > 0 else len(slot_jobs)
+            )
             coords_token = None
             # Desktop actions (click, type, screenshot) must run one at a time
             # and in the order the model gave them: "click the field, then

@@ -52,7 +52,8 @@ ON_DEMAND_MIN_TOOLS = int(app_setting('COGNITRIX_ON_DEMAND_MIN_TOOLS', '12') or 
 
 CODE_TIMEOUT_SECONDS = float(app_setting('COGNITRIX_CODE_MODE_TIMEOUT', '600') or 600)
 CODE_MEMORY_BYTES = 256 * 1024 * 1024
-MAX_CALLS_PER_SCRIPT = int(app_setting('COGNITRIX_CODE_MODE_MAX_CALLS', '200') or 200)
+# 0 (the default) means no limit.
+MAX_CALLS_PER_SCRIPT = int(app_setting('COGNITRIX_CODE_MODE_MAX_CALLS', '0') or 0)
 MAX_OUTPUT_CHARS = 20_000
 
 # Tools a script can't call: no scripts inside scripts, no loading tools
@@ -390,7 +391,7 @@ async def run_code(code: str, *, parent=None, interface=None) -> ToolOutcome:
 
     async def _call(name: Any, args_json: Any) -> str:
         name = aliases.get(js_name(str(name)), str(name))
-        if len(calls) >= MAX_CALLS_PER_SCRIPT:
+        if MAX_CALLS_PER_SCRIPT and len(calls) >= MAX_CALLS_PER_SCRIPT:
             return json.dumps({'ok': False, 'error': f'Too many tool calls in one script (limit {MAX_CALLS_PER_SCRIPT}).'})
         try:
             args = json.loads(str(args_json)) if args_json else {}

@@ -114,3 +114,38 @@ def test_tools_that_wait_on_other_agents_hold_no_slot():
 
     for tool in (call_agent, spawn_workers, swarm, board):
         assert tool.occupies_execution_slot is False, tool.name
+
+
+@pytest.mark.asyncio
+async def test_no_limit_runs_every_call_at_once(monkeypatch):
+    import cognitrix.agents.base as agent_base
+
+    tools = [Tool(name=f"T{i}", description="d", parameters={}) for i in range(12)]
+    agent = _agent(monkeypatch, tools)
+    monkeypatch.setattr(agent_base, "MAX_CONCURRENT_TOOL_CALLS", 0)
+    started = 0
+    all_started = asyncio.Event()
+
+    async def fake_run_tool(self, tool, params, **kwargs):
+        nonlocal started
+        started += 1
+        if started == len(tools):
+            all_started.set()
+        await asyncio.wait_for(all_started.wait(), 1)
+        return ToolResult(success=True, data=tool.name)
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+    result = await agent.call_tools(
+        [{"name": t.name, "arguments": {}, "tool_call_id": t.name} for t in tools]
+    )
+    assert [r["data"] for r in result["result"]] == [t.name for t in tools]
+
+
+def test_tool_round_and_script_limits_default_to_none():
+    from cognitrix.sessions import base as session_base
+    from cognitrix.tools import code_mode
+
+    assert session_base.MAX_TOOL_ROUNDS == 0
+    assert code_mode.MAX_CALLS_PER_SCRIPT == 0
