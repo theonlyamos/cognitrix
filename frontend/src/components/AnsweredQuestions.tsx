@@ -48,7 +48,7 @@ export function answeredSummary(name: string, params?: string, result?: string):
       auto: !!r.auto_submitted,
       words: false,
       rows: r.answers.map((a) => ({
-        label: a.short || a.question || '',
+        label: a.question || a.short || '',
         value: [...(a.choices ?? []), ...(a.text ? [a.text] : [])].join(', '),
         skipped: !!a.skipped,
         recommended: !!a.recommended,
@@ -57,7 +57,7 @@ export function answeredSummary(name: string, params?: string, result?: string):
   }
   // An older answer, or a reply typed instead of using the card.
   const asked = askedQuestions(params);
-  const label = asked.length === 1 ? (asked[0].short || asked[0].prompt) : asked.map((q) => q.short || q.prompt).join(' · ');
+  const label = asked.length === 1 ? (asked[0].prompt || asked[0].short || '') : asked.map((q) => q.short || q.prompt).join(' · ');
   return {
     auto: !!r.auto_submitted,
     words: r.answer_type === 'text' && asked.length > 1,
@@ -65,36 +65,48 @@ export function answeredSummary(name: string, params?: string, result?: string):
   };
 }
 
-/** An answered question card as it stays in the chat: what was asked and what
- *  the person chose. */
+/** An answered question card as it stays in the chat: each question, with
+ *  what the person chose right under it. */
 export function AnsweredQuestions({ summary }: { summary: AnsweredSummary }) {
+  const many = summary.rows.length > 1;
   const answered = summary.rows.filter((r) => !r.skipped).length;
   return (
-    <section className="w-full max-w-2xl overflow-hidden rounded-xl border border-line" aria-label={tr('ui.answeredQuestions.youAnswered')}>
-      <div className="flex items-center gap-2.5 px-3.5 py-2.5">
-        <span aria-hidden className="grid h-[18px] w-[18px] flex-none place-items-center rounded-full bg-accent text-accent-foreground">
-          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 6.3l2.3 2.3 4.7-5" /></svg>
-        </span>
-        <span className="text-[13.5px] font-semibold text-fg">
-          {summary.rows.length > 1 ? tr('ui.answeredQuestions.youAnsweredN', { n: answered }) : tr('ui.answeredQuestions.youAnswered')}
-        </span>
+    <section
+      className="w-full max-w-xl rounded-xl border border-line bg-panel/60 px-3.5 py-2.5"
+      aria-label={tr('ui.answeredQuestions.youAnswered')}
+    >
+      <div className="mb-1.5 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.1em] text-fg-dim">
+        <span>{many ? tr('ui.answeredQuestions.youAnsweredN', { n: answered }) : tr('ui.answeredQuestions.youAnswered')}</span>
         {(summary.auto || summary.words) && (
-          <span className="ml-auto font-mono text-[10.5px] text-fg-dim">
+          <span className="ml-auto normal-case tracking-normal">
             {summary.auto ? tr('ui.answeredQuestions.answeredAutomatically') : tr('ui.answeredQuestions.repliedInWords')}
           </span>
         )}
       </div>
-      {summary.rows.map((row, i) => (
-        <div key={i} className="flex flex-col gap-0.5 border-t border-line px-3.5 py-2 text-[13.5px] leading-snug sm:flex-row sm:gap-3">
-          <span className="text-fg-dim sm:w-48 sm:flex-none">{row.label}</span>
-          <span className={row.skipped ? 'italic text-fg-dim' : 'font-medium text-fg'}>
-            {row.skipped ? tr('ui.answeredQuestions.skipped') : row.value}
-            {row.recommended && !summary.auto && (
-              <span className="ml-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-accent-ink">{tr('ui.answeredQuestions.recommended')}</span>
-            )}
-          </span>
-        </div>
-      ))}
+      <dl className="divide-y divide-line">
+        {summary.rows.map((row, i) => (
+          <div key={i} className="py-1.5 first:pt-0 last:pb-0">
+            <dt className="text-[13px] leading-snug text-fg-dim">{row.label}</dt>
+            <dd className="mt-1 flex items-start gap-2 text-[14px] leading-snug">
+              {row.skipped ? (
+                <span className="italic text-fg-dim">{tr('ui.answeredQuestions.skipped')}</span>
+              ) : (
+                <>
+                  <span aria-hidden className="mt-[3px] grid h-3.5 w-3.5 flex-none place-items-center rounded-full bg-accent text-accent-foreground">
+                    <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 6.3l2.3 2.3 4.7-5" /></svg>
+                  </span>
+                  <span className="min-w-0 whitespace-pre-wrap break-words font-medium text-fg">
+                    {row.value}
+                    {row.recommended && !summary.auto && (
+                      <span className="ml-2 align-[1px] font-mono text-[9.5px] font-normal uppercase tracking-[0.1em] text-accent-ink">{tr('ui.answeredQuestions.recommended')}</span>
+                    )}
+                  </span>
+                </>
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
     </section>
   );
 }
