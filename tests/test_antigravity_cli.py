@@ -37,7 +37,7 @@ def test_listed_as_a_harness():
     assert h.is_harness('antigravity-cli')
     assert h.HARNESSES['antigravity-cli'].program == 'agy'
     assert 'antigravity-cli' not in h.NO_TOOL_HARNESSES
-    assert 'antigravity-cli' not in h.ASK_HARNESSES
+    assert 'antigravity-cli' in h.ASK_HARNESSES
 
 
 def test_command_lines_per_mode():

@@ -280,6 +280,21 @@ SHELL_TOOL_NAMES = frozenset({'bash'})
 SHELL_HELPER_TOOL_NAMES = frozenset({'bash output', 'kill shell'})
 
 
+def bash_root(params: dict | None) -> Path:
+    """The folder a Bash call is checked against: the chat folder the tool
+    will run it in, so the approval check and the tool plan it the same way.
+    Falls back to the tools folder outside a chat."""
+    from cognitrix.config import settings
+
+    try:
+        from cognitrix.tools.misc import bash_root_for
+
+        root = bash_root_for(params)
+    except Exception:
+        root = None
+    return Path(root) if root is not None else Path(settings.tools_root).expanduser().resolve()
+
+
 def shell_risk(params: dict | None) -> tuple[str, str]:
     """Risk of a Bash call as ``(level, details)``; level is low/medium/high.
 
@@ -287,13 +302,8 @@ def shell_risk(params: dict | None) -> tuple[str, str]:
     program or changes files. high: needs the full shell (asks every time),
     or reads something that looks like a secret.
     """
-    from cognitrix.config import settings
-
     command = str((params or {}).get('command') or '')
-    plan = plan_call(
-        command, Path(settings.tools_root).expanduser().resolve(),
-        (params or {}).get('run_in_background'),
-    )
+    plan = plan_call(command, bash_root(params), (params or {}).get('run_in_background'))
     if plan.kind == 'shell':
         if shell_mode() == 'allowlist' and not sandbox_shell_enabled():
             # The tool refuses it without running anything; don't ask first.

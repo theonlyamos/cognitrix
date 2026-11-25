@@ -35,7 +35,7 @@ export const HARNESS_MODES = [
 ];
 
 /** CLIs that can send their permission prompts to Cognitrix (ASK_HARNESSES in harness.py). */
-export const ASK_HARNESSES = ['claude-code'];
+export const ASK_HARNESSES = ['claude-code', 'codex', 'gemini-cli', 'copilot-cli', 'opencode', 'antigravity-cli'];
 
 /** CLIs with a fast mode Cognitrix can turn on (FAST_HARNESSES in harness.py):
  *  Claude Code's fastMode setting and Codex's fast service tier. */

@@ -102,7 +102,7 @@ def public_item(request_id: str, entry: dict) -> dict[str, Any]:
         'params': entry.get('params') or {},
         'risk_level': entry.get('risk_level') or '',
         'details': entry.get('details') or '',
-        'full_shell': bool(entry.get('person_only')),
+        'full_shell': bool(entry.get('full_shell')),
         'app': entry.get('app') or '',
         'always': entry.get('always') or None,
         'status': 'pending',

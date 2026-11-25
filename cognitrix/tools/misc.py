@@ -2190,6 +2190,38 @@ def _shell_session_key(context) -> str:
     ))
 
 
+def _bash_start_dir(session_key: str):
+    """Where a Bash call without working_dir starts: where this chat last cd'd to, else the primary folder."""
+    from cognitrix.common import shell as sh
+
+    remembered = sh.remembered_cwd(session_key)
+    if remembered is not None and folder_paths.folder_for(remembered) is not None:
+        return remembered
+    return folder_paths.primary_folder()
+
+
+def _bash_root(work_dir):
+    """The folder a Bash call's cd and paths stay inside: the one holding its start directory."""
+    containing = folder_paths.folder_for(work_dir)
+    return containing.root if containing is not None else folder_paths.primary_folder()
+
+
+def bash_root_for(params: dict | None):
+    """The root the Bash tool will check this call against, worked out the same
+    way the tool does, so the approval check plans the command like the tool.
+    None when it can't be told (the tool then refuses the call itself)."""
+    params = params if isinstance(params, dict) else {}
+    try:
+        working_dir = params.get('working_dir')
+        if working_dir:
+            work_dir = folder_paths.resolve_path(str(working_dir))
+        else:
+            work_dir = _bash_start_dir(_shell_session_key(current_execution_context()))
+        return _bash_root(work_dir)
+    except Exception:
+        return None
+
+
 def bash(
     command: str,
     timeout: int | None = None,
@@ -2233,13 +2265,8 @@ def bash(
         if not work_dir.exists() or not work_dir.is_dir():
             return f"Error: Invalid working directory - {working_dir}"
     else:
-        remembered = sh.remembered_cwd(session_key)
-        if remembered is not None and folder_paths.folder_for(remembered) is not None:
-            work_dir = remembered
-        else:
-            work_dir = folder_paths.primary_folder()
-    containing = folder_paths.folder_for(work_dir)
-    root = containing.root if containing is not None else folder_paths.primary_folder()
+        work_dir = _bash_start_dir(session_key)
+    root = _bash_root(work_dir)
 
     # The model may pass the timeout as a string.
     try:

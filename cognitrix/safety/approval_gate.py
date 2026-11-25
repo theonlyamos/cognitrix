@@ -108,7 +108,7 @@ def resolve_web_approval(request_id: str, approved: bool, user_key: str | None =
     if future is not None and not future.done():
         future.set_result(ApprovalResult(
             approved=approved, remember=remember or remember_shell,
-            remember_shell=bool(approved and remember_shell and entry.get('person_only')),
+            remember_shell=bool(approved and remember_shell and entry.get('full_shell')),
             remember_app=(remember_app if approved and entry.get('app')
                           and remember_app in ('chat', 'always') else None),
             always=bool(approved and always and entry.get('always')),
@@ -292,7 +292,7 @@ class ApprovalGate:
                     grant = 'chat' if earlier and 'access_request' in (risk.categories or []) else None
                     return ApprovalResult(approved=earlier, grant=grant)
 
-            reviewed = None if own_app else await self._review(tool_call, risk, interface)
+            reviewed = None if own_app or person_only else await self._review(tool_call, risk, interface)
             if reviewed is not None:
                 return reviewed
 
@@ -335,7 +335,9 @@ class ApprovalGate:
             return ApprovalResult(approved=True, cached=True, remember=True)
 
         # The person allowed every full-shell command in this chat.
-        shell_key = self._shell_key(scope, interface)
+        # Only Bash: "allow all commands" never covers Coding Agent or Copy
+        # Back, which are person-only too.
+        shell_key = self._shell_key(scope, interface) if self._is_shell(risk) else None
         if person_only and shell_key and shell_key in self.session_cache:
             return ApprovalResult(approved=True, cached=True, remember=True)
 
@@ -356,7 +358,10 @@ class ApprovalGate:
             not person_only and not always_ask and not own_app
             and interface in ('web', 'ws', 'websocket') and web_ctx and web_ctx.get('bypass')
         )
-        if not bypass and not always_ask and not own_app and scoped not in self.session_denied:
+        # Nor for a call only a person may approve: a reviewer "allow" counts
+        # as automatic, so the tool would refuse it and nobody would see a card.
+        if (not bypass and not always_ask and not own_app and not person_only
+                and scoped not in self.session_denied):
             reviewed = await self._review(tool_call, risk, interface)
             if reviewed is not None:
                 return reviewed
@@ -479,6 +484,12 @@ class ApprovalGate:
             return None
         return (f"tool_allow:{scope or 'global'}:{ctx.get('user_key') or ''}:{session_id}:"
                 f"{_normal_name(tool_call.tool_name)}")
+
+    @staticmethod
+    def _is_shell(risk: RiskAssessment) -> bool:
+        """A command run in a shell: Bash's full shell, or a coding agent
+        CLI's own command in ask mode. Not Coding Agent or Copy Back."""
+        return 'shell' in (risk.categories or [])
 
     @staticmethod
     def _command(tool_call: ToolCall) -> str | None:
@@ -700,6 +711,9 @@ class ApprovalGate:
         always = self._always_offer(tool_call, scope, person_only, must_ask)
         _WEB_PENDING[request_id] = {
             'future': future, 'user_key': ctx.get('user_key'), 'person_only': person_only,
+            # A full-shell Bash command: the only kind "allow all commands in
+            # this chat" may answer (Coding Agent is person-only too).
+            'full_shell': person_only and self._is_shell(risk),
             'app': tool_call.app, 'always': always, 'access': tool_call.access,
             # What the Inbox, notifications and chat apps show about it.
             'tool_name': tool_call.tool_name,
@@ -730,7 +744,7 @@ class ApprovalGate:
                 'session_id': ctx.get('session_id'),
                 # A full-shell command: the card offers "allow all commands
                 # in this chat".
-                'full_shell': person_only,
+                'full_shell': person_only and self._is_shell(risk),
                 # Asked every time (a screen takeover): no "for session" button.
                 **({'always_ask': True} if must_ask else {}),
                 # The agent asks the person to take over its computer: the
