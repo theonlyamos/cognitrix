@@ -42,6 +42,31 @@ DEFAULT_TEMPERATURE = 0.4
 # the model reads it as a course correction rather than a fresh request.
 STEER_NOTE = '[The user sent this while you were working. Take it into account and carry on.]\n'
 DEFAULT_MAX_TOKENS = 8192
+# Models that can write much longer replies get more room by default. On
+# these, thinking counts toward the same limit, so 8,192 left too little for
+# a large file write: the call was cut off and tried again.
+LARGE_MAX_TOKENS = 32_000
+_LARGE_OUTPUT_MODEL = re.compile(
+    r'(^|/)(claude-[a-z]+-[4-9]|gpt-[5-9]|o[3-9](-|$)|gemini-(2\.5|[3-9]))', re.I)
+
+
+def output_token_limit(llm: Any) -> int:
+    """Most tokens to ask this model for in one reply.
+
+    A limit set on the agent is used as it is. The default (8,192, which is
+    also what agents saved before this had) becomes ``LARGE_MAX_TOKENS`` on
+    models known to allow it; others keep 8,192, since asking a model for
+    more than it allows is refused.
+    """
+    try:
+        configured = int(getattr(llm, 'max_tokens', 0) or 0)
+    except (TypeError, ValueError):
+        configured = 0
+    if configured and configured != DEFAULT_MAX_TOKENS:
+        return configured
+    if _LARGE_OUTPUT_MODEL.search(str(getattr(llm, 'model', '') or '')):
+        return LARGE_MAX_TOKENS
+    return DEFAULT_MAX_TOKENS
 
 # Well-known base URLs when env does not provide them
 _DEFAULT_BASE_URLS: dict[str, str] = {
@@ -972,7 +997,7 @@ class LLMManager:
                 # The plan route refuses an output limit; a key takes one. It
                 # covers the model's reasoning too, so it is never set tiny.
                 if llm.max_tokens:
-                    api_params['max_output_tokens'] = max(int(llm.max_tokens), 16)
+                    api_params['max_output_tokens'] = max(output_token_limit(llm), 16)
                 if stream:
                     return chatgpt_plan.stream(llm, api_params, client)
                 return await chatgpt_plan.respond(llm, api_params, client)
@@ -982,7 +1007,7 @@ class LLMManager:
             completion_params: dict[str, Any] = {
                 'model': llm.model,
                 'messages': formatted_messages,
-                'max_tokens': llm.max_tokens,
+                'max_tokens': output_token_limit(llm) if llm.max_tokens else llm.max_tokens,
                 'temperature': llm.temperature,
                 'stream': stream,
             }

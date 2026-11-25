@@ -26,6 +26,23 @@ from cognitrix.sessions import runs as chat_runs
 logger = logging.getLogger('cognitrix.log')
 
 MAX_DEPTH = 2
+
+
+def background_turn_timeout() -> float | None:
+    """Most seconds a whole background reply may take; None for no limit.
+
+    These replies (chats agents start, board wake-ups, replies picked up after
+    a restart, chat apps) used to share the API's 5 minutes, which stopped
+    real work part-way. Each tool call has its own time limit and the reply
+    can be stopped from the chat, so by default the reply itself has none.
+    """
+    from cognitrix.app_settings import get as app_setting
+
+    try:
+        value = float(app_setting('COGNITRIX_CHAT_TURN_TIMEOUT', '') or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    return value if value > 0 else None
 MAX_RUNNING_PER_USER = 5
 MAX_EXCHANGES = 6
 MESSAGE_MAX_CHARS = 8000
@@ -148,7 +165,6 @@ async def _turn(
     setup: Callable[[], None] | None = None,
     tool_context: Any = None,
 ) -> None:
-    from cognitrix.api.routes.agents import CHAT_TIMEOUT
     from cognitrix.questions.broker import QuestionTurnContext, question_turn_ctx
     from cognitrix.safety.approval_gate import web_turn_ctx
     from cognitrix.tools.utils import ToolExecutionContext, signed_in_host_process_mode
@@ -180,10 +196,10 @@ async def _turn(
     run.steerable = True
     run.follows_up = True
     chat_runs.current_run.set(run)  # this task has its own context
-    timeout = CHAT_TIMEOUT
+    timeout = background_turn_timeout()
     try:
         if setup is not None:
-            timeout = setup() or CHAT_TIMEOUT
+            timeout = setup() or timeout
         await asyncio.wait_for(
             session(text, agent, interface='web', stream=True, output=output,
                     wsquery={'type': 'generate', 'action': 'chat_message'},

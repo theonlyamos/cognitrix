@@ -232,10 +232,12 @@ def convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str
 def build_params(
     llm: Any, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, effort: str = '',
 ) -> dict[str, Any]:
+    from cognitrix.providers.base import output_token_limit
+
     system, converted = convert_messages(messages)
     params: dict[str, Any] = {
         'model': llm.model,
-        'max_tokens': int(llm.max_tokens or 8192),
+        'max_tokens': output_token_limit(llm),
         'messages': converted,
         # Follows the end of the conversation, so each step of a tool loop
         # reads everything before it from cache.

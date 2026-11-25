@@ -26,7 +26,7 @@ from typing import Any
 FINISHED_RETENTION_SECONDS = 120.0
 # Safety valve for pathological turns: past this many entries, further
 # non-terminal events are not recorded (the turn itself is unaffected).
-MAX_EVENTS_PER_RUN = 20_000
+MAX_EVENTS_PER_RUN = 200_000
 MAX_RUNS_PER_USER = 32
 
 TERMINAL_TYPES = frozenset({'turn_complete', 'turn_stopped', 'multistep_result'})

@@ -60,7 +60,7 @@ PC_TOOL_KEYS: dict[str, str] = {
 }
 # Seconds the server waits for a call's answer (Bash may run for 10 minutes).
 CALL_TIMEOUT_S = {'Bash': 660.0}
-DEFAULT_CALL_TIMEOUT_S = 150.0
+DEFAULT_CALL_TIMEOUT_S = 900.0
 MAX_RESULT_CHARS = 200_000
 
 

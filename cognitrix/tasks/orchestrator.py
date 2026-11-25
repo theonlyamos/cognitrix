@@ -82,7 +82,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger('cognitrix.log')
 
-STEP_TIMEOUT = int(app_setting('COGNITRIX_STEP_TIMEOUT', '600'))
+STEP_TIMEOUT = int(app_setting('COGNITRIX_STEP_TIMEOUT', '3600'))
 GATE_THRESHOLD = float(app_setting('COGNITRIX_GATE_THRESHOLD', '7'))
 MAX_PARALLEL_STEPS = int(app_setting('COGNITRIX_MAX_PARALLEL_STEPS', '3'))
 MAX_PLAN_STEPS = 10
