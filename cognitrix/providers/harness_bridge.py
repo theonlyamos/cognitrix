@@ -31,6 +31,9 @@ APPROVE_TOOL = 'approve'
 OWN_TOOLS = frozenset({
     'edit', 'glob', 'grep', 'read', 'write', 'bash', 'bash_output', 'kill_shell',
     'open_file', 'coding_agent', 'request_folder',
+    # A tool granted mid-turn can't reach the CLI's tool list, which is fixed
+    # when it starts, so Request Access isn't lent either.
+    'request_access',
 })
 
 ToolCaller = Callable[[str, dict[str, Any]], Awaitable[tuple]]
