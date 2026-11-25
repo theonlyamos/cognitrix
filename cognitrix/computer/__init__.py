@@ -15,6 +15,7 @@ Only Windows has a backend today; elsewhere ``get_driver()`` raises
 """
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import hashlib
 import itertools
@@ -245,6 +246,35 @@ OWN_APP_BUSY = (
     "open, so no agent can answer it for them. Wait until they have answered, then try again")
 
 
+_main_loop: asyncio.AbstractEventLoop | None = None
+
+
+def remember_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """The event loop that owns the database, so a window tool running in a
+    worker thread can check task approvals right before it acts."""
+    global _main_loop
+    _main_loop = loop
+
+
+def _task_approval_waiting() -> bool:
+    loop = _main_loop
+    if loop is None or loop.is_closed():
+        return False
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        return False  # can't wait on our own loop; the async check ran before
+    from cognitrix.tasks.approvals import any_waiting
+
+    try:
+        return bool(asyncio.run_coroutine_threadsafe(any_waiting(), loop).result(timeout=5))
+    except Exception:
+        logger.debug('computer-use: task approval check failed', exc_info=True)
+        return True  # unsure: don't act in Cognitrix
+
+
 def own_app_busy() -> str | None:
     """Why agents may not act in Cognitrix's own window right now, or None.
 
@@ -267,6 +297,8 @@ def own_app_busy() -> str | None:
             return OWN_APP_BUSY
     except Exception:
         logger.debug('computer-use: question check failed', exc_info=True)
+    if _task_approval_waiting():
+        return OWN_APP_BUSY
     return None
 
 

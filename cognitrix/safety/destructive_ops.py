@@ -179,12 +179,14 @@ def _on_persons_computer(params: dict) -> bool:
 
 
 def _in_own_app(tool_name: str, params: dict) -> bool:
-    """A background window action in Cognitrix's own window."""
+    """A window action (background or with the screen) in Cognitrix's own window."""
     try:
         from cognitrix.computer import is_own_app
-        from cognitrix.computer.apps import app_of_call
+        from cognitrix.computer.apps import window_of_call
 
-        return is_own_app(app_of_call(tool_name, params))
+        window = window_of_call(tool_name, params)
+        return window is not None and (bool(getattr(window, 'own', False))
+                                       or is_own_app(getattr(window, 'app', '')))
     except Exception:
         return False
 
@@ -444,8 +446,9 @@ class DestructiveOpDetector:
         if name in _DESKTOP_CONTROL and _truthy(params.get('use_screen')):
             # Takes over the person's real mouse and keyboard for a moment.
             # Never covered by a per-app "always allow".
+            own = ['own_app'] if _in_own_app(tool_name, params) else []
             return RiskAssessment(
-                RiskLevel.MEDIUM, ['desktop_control', 'screen_takeover'],
+                RiskLevel.MEDIUM, ['desktop_control', 'screen_takeover', *own],
                 f"'{tool_name}' takes over your screen, mouse and keyboard for a moment",
             )
         if name in _DESKTOP_CONTROL and _in_own_app(tool_name, params):

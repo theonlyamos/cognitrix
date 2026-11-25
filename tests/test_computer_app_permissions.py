@@ -193,6 +193,11 @@ def test_actions_in_cognitrix_itself_are_marked_own_app(monkeypatch):
     assert own.risk_level is RiskLevel.MEDIUM and 'own_app' in own.categories
     other = detector.analyze('click_element', {'window_id': 7, 'element': 1, 'computer': 'person'})
     assert 'own_app' not in other.categories
+    # With the screen too, so no reviewer answers it in a task.
+    screen = detector.analyze('type_in_window', {'window_id': 5, 'text': 'x', 'use_screen': True,
+                                                 'computer': 'person'})
+    assert {'screen_takeover', 'own_app'} <= set(screen.categories)
+    assert computer_apps.app_of_call('type_in_window', {'window_id': 5, 'use_screen': True}) is None
     assert computer.is_own_app('Cognitrix-Desktop.exe') and not computer.is_own_app('notepad.exe')
 
 
@@ -234,3 +239,16 @@ async def test_waiting_task_approvals_are_found(db):
     assert not await any_waiting()  # long expired, not a card anyone sees
     await TaskApproval(run_id='r3', user_id='u1', tool_name='Write').save()
     assert await any_waiting()
+
+
+async def test_task_approvals_are_checked_again_right_before_acting(db):
+    """The driver runs in a worker thread; it asks the main loop's database."""
+    from cognitrix.tasks.approvals import TaskApproval
+
+    computer.remember_loop(asyncio.get_running_loop())
+    try:
+        assert await asyncio.to_thread(computer.own_app_busy) is None
+        await TaskApproval(run_id='r9', user_id='u1', tool_name='Write').save()
+        assert await asyncio.to_thread(computer.own_app_busy) == computer.OWN_APP_BUSY
+    finally:
+        computer.remember_loop(None)
