@@ -131,6 +131,10 @@ async def test_older_apps_pick_up_an_icon_at_startup(db, tmp_path):  # noqa: F81
     assert one.icon == icons.CUSTOM and icons.icon_file(str(one.id)) is not None
     assert two.icon == icons.GENERATED
     assert await store.backfill_icons() == 0
+    # "Use initials" on an app whose folder has an icon survives the next start.
+    await store.set_icon(one, None)
+    assert await store.backfill_icons() == 0
+    assert (await store.by_slug('has-icon')).icon == icons.GENERATED
 
 
 async def test_generate_image_saves_only_into_an_app_folder(db, tmp_path, monkeypatch):  # noqa: F811 (the db fixture)

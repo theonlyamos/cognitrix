@@ -202,9 +202,10 @@ def adopt(app_id: str, folder: Path | None, *, explicit: str = '', current: str 
 
 
 def backfill(app_id: str, folder: str, current: str) -> str | None:
-    """For apps made before icons: use an icon in their folder if there is one.
-    Returns the new state, or None when nothing changed."""
-    if current == CUSTOM and icon_file(app_id) is not None:
+    """For apps made before icons (``current`` is ''): use an icon in their folder if
+    there is one. Apps that already have a state are left alone, so a person's
+    "Use initials" survives restarts. Returns the new state, or None when nothing changed."""
+    if current:
         return None
     state, _ = adopt(app_id, Path(folder) if folder else None, current=current)
-    return state if state != current else None
+    return state
