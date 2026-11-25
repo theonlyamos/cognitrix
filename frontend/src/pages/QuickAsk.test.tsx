@@ -16,6 +16,7 @@ const voice = vi.hoisted(() => ({
   start: vi.fn(async () => undefined),
   cancel: vi.fn(),
   status: 'idle' as string,
+  needsSetup: false,
 }));
 
 vi.mock('@/components/VoiceInput', () => ({
@@ -29,7 +30,7 @@ vi.mock('@/components/VoiceInput', () => ({
       maxSeconds: 600,
       analyser: null,
       error: null,
-      needsSetup: false,
+      needsSetup: voice.needsSetup,
       dismiss: vi.fn(),
       start: voice.start,
       stop: vi.fn(async () => undefined),
@@ -54,6 +55,7 @@ describe('QuickAsk', () => {
   beforeEach(() => {
     localStorage.clear();
     voice.status = 'idle';
+    voice.needsSetup = false;
     voice.start.mockClear();
     voice.cancel.mockClear();
   });
@@ -94,5 +96,13 @@ describe('QuickAsk', () => {
     expect(await screen.findByText(/open pull requests/)).toBeInTheDocument();
     const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
     expect(body.message).toBe('How many open PRs?');
+  });
+
+  it('keeps the voice pill and offers setup when speech-to-text is not set up', () => {
+    voice.needsSetup = true;
+    render(<QuickAsk />);
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByRole('button', { name: /set up voice/i })).toBeInTheDocument();
+    expect(voice.start).not.toHaveBeenCalled();
   });
 });

@@ -3184,6 +3184,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.quickAsk.escDismiss": "Échap fermer",
   "ui.quickAsk.listening": "Écoute…",
   "ui.quickAsk.requestFailedStatus": "Échec de la requête ({status})",
+  "ui.quickAsk.setUpVoice": "Configurer la voix pour parler",
   "ui.quickAsk.somethingWentWrong": "Une erreur s’est produite.",
   "ui.quickAsk.speakToFollowUp": "Parlez pour poursuivre",
   "ui.quickAsk.talkInstead": "Parler plutôt",
