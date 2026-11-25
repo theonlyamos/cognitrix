@@ -98,7 +98,8 @@ function Row({ s, draft, setDraft, disabled }: {
   );
   return (
     <div className={cn('flex flex-wrap gap-x-3 gap-y-2 px-3.5 py-3', inline ? 'items-center' : 'flex-col')}>
-      <div className="min-w-0 flex-1 basis-[200px]">
+      {/* basis is a width only in a row; in a column it would become a 200px tall gap. */}
+      <div className={cn('min-w-0', inline && 'flex-1 basis-[200px]')}>
         <div className="text-[13.5px] font-medium">{s.label}</div>
         {(s.help || s.restart) && <div className="mt-0.5 text-[12px] leading-snug text-fg-dim">{detail}</div>}
       </div>
