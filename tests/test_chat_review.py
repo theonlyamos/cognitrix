@@ -311,7 +311,7 @@ async def test_leftover_work_waits_for_the_next_review(db, notes, monkeypatch): 
 
     user = await _user('Amos', 'amos@example.com')
     uid = str(user.id)
-    monkeypatch.setattr(review, 'ITEMS_PER_RUN', 1)
+    monkeypatch.setattr(review, 'MAX_ITEMS_PER_RUN', 1)
     await _chat(user, LONG_JOB)
     await _chat(user, LONG_JOB)
     llm = _LLM(_reply())
@@ -319,6 +319,51 @@ async def test_leftover_work_waits_for_the_next_review(db, notes, monkeypatch): 
     assert len(llm.prompts) == 1 and '1 more wait' in first.summary
     await review.run_review(uid, 'night', llm=llm, now=_later(30))
     assert len(llm.prompts) == 2, 'the chat left over is read the next night'
+
+
+async def test_one_review_reads_every_finished_chat_oldest_first(db, notes):  # noqa: F811
+    from cognitrix.memory import review
+
+    user = await _user('Amos', 'amos@example.com')
+    uid = str(user.id)
+    for _ in range(12):
+        await _chat(user, LONG_JOB)
+    llm = _LLM(*[_reply(skill=None, facts=[], knowledge=None)] * 12)
+    run = await review.run_review(uid, 'manual', llm=llm, now=_later())
+    assert len(llm.prompts) == 12, 'no fixed cap of 10 a run'
+    assert 'more wait' not in run.summary
+    stats = review.public_run(run)['stats']
+    assert stats['reviewed'] == 12 and stats['total'] == 12
+
+
+async def test_the_nightly_budget_stops_a_review_and_the_rest_waits(db, notes, monkeypatch):  # noqa: F811
+    from cognitrix.assistant import proactivity
+    from cognitrix.memory import review
+
+    user = await _user('Amos', 'amos@example.com')
+    uid = str(user.id)
+    for _ in range(3):
+        await _chat(user, LONG_JOB)
+    spent = {'n': 0}
+    llm = _LLM(*[_reply(skill=None, facts=[], knowledge=None)] * 3)
+
+    async def over_budget(user_id, now):
+        spent['n'] += 1
+        return spent['n'] > 1
+
+    monkeypatch.setattr(proactivity, 'over_budget', over_budget)
+    first = await review.run_review(uid, 'night', llm=llm, now=_later())
+    assert len(llm.prompts) == 1 and '2 more wait' in first.summary
+
+
+def test_a_long_run_with_a_recent_heartbeat_is_not_stale():
+    from cognitrix.memory import review
+
+    old = (datetime.now(UTC) - timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S')
+    row = review.ReviewRun(user_id='u', status=review.RUNNING, started=old,
+                           stats=json.dumps({'beat': review.now_str()}))
+    assert not review._stale(row)
+    assert review._stale(review.ReviewRun(user_id='u', status=review.RUNNING, started=old))
 
 
 async def test_removing_an_older_note_after_an_update(db, notes):  # noqa: F811

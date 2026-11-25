@@ -83,6 +83,10 @@ export function ReviewSection({ enabled, onChanged }: { enabled: boolean; onChan
   const learned = (status.learned ?? []).filter((item) => !item.removed);
   const shown = showAll ? learned : learned.slice(0, SHOWN);
   const hour = `${String(status.hour).padStart(2, '0')}:00`;
+  const total = running && last?.status === 'running' ? Number(last.stats?.total ?? 0) : 0;
+  const readingDetail = total > 0
+    ? tr('ui.settings.memoryReview.readingProgress', { at: Math.min(total, Number(last?.stats?.at ?? 0) + 1), total })
+    : tr('ui.settings.memoryReview.readingYourFinishedChatsAnd');
 
   return (
     <section aria-label={tr('ui.settings.memoryReview.learnFromFinishedChats')} className="!mt-6">
@@ -97,7 +101,7 @@ export function ReviewSection({ enabled, onChanged }: { enabled: boolean; onChan
         </SettingRow>
         <SettingRow
           label={tr('ui.settings.memoryReview.reviewChatsNow')}
-          detail={running ? tr('ui.settings.memoryReview.readingYourFinishedChatsAnd')
+          detail={running ? readingDetail
             : last ? tr('ui.settings.memoryReview.lastReviewTimeagoRuntext', { timeAgo: timeAgo(last.finished || last.started), runText: runText(last) }) : tr('ui.settings.memoryReview.notReviewedYet')}
         >
           <button type="button" className={primaryButtonClass} disabled={busy || running}

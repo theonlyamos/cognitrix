@@ -255,7 +255,8 @@ export interface ReviewRun {
   started: string;
   finished: string | null;
   summary: string;
-  stats: Record<string, number>;
+  /** Counts; while running also `at` (0-based item being read), `total` and `beat` (a heartbeat time). */
+  stats: Record<string, number | string>;
   error?: string | null;
 }
 
@@ -317,6 +318,19 @@ export interface NotionBackupState {
   page_url: string | null;
   /** Memories in the last backup that worked. */
   count: number;
+  /** The skills backup (its own Notion page, same switch). */
+  skills?: NotionSkillsBackupState;
+}
+
+export interface NotionSkillsBackupState {
+  /** '' (never ran), 'ok', 'failed', 'not_connected' or 'restore_first' (Notion has skills this install lacks). */
+  status: '' | 'ok' | 'failed' | 'not_connected' | 'restore_first';
+  message: string;
+  last_at: string | null;
+  last_ok: string | null;
+  page_url: string | null;
+  /** Skills in the last backup that worked. */
+  count: number;
 }
 
 export interface NotionRestoreResult {
@@ -328,6 +342,8 @@ export interface NotionRestoreResult {
   about_you: boolean;
   saved: string;
   page_url: string | null;
+  /** Skills: added, already here, kept (this install's own copy, or a shared skill, has the name), left out. */
+  skills?: { restored: number; already: number; kept: number; left_out: number; not_fitted?: number };
   state: NotionBackupState;
 }
 

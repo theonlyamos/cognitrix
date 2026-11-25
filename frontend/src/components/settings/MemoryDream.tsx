@@ -265,16 +265,22 @@ export function NotionBackupSection({ memoryOn, refresh, onChanged }: { memoryOn
   else if (state.status === 'not_connected') detail = tr('ui.settings.memoryNotion.signInAgain');
   else if (lastOk) detail = tr('ui.settings.memoryNotion.lastBackup', { timeAgo: lastOk, count: state.count });
   else detail = tr('ui.settings.memoryNotion.notYet');
+  const skills = state.skills;
+  let skillsDetail = tr('ui.settings.memoryNotion.skillsNotYet');
+  if (skills?.status === 'restore_first') skillsDetail = tr('ui.settings.memoryNotion.skillsRestoreFirst');
+  else if (skills?.status === 'failed') skillsDetail = tr('ui.settings.memoryNotion.skillsLastFailed');
+  else if (skills?.status === 'not_connected') skillsDetail = tr('ui.settings.memoryNotion.signInAgain');
+  else if (skills?.last_ok) skillsDetail = tr('ui.settings.memoryNotion.skillsLastBackup', { timeAgo: timeAgo(skills.last_ok), count: skills.count });
 
   return (
     <section aria-label={tr('ui.settings.memoryDream.notionBackup')} className="!mt-6">
       <SubHeading className="!mt-0">{tr('ui.settings.memoryDream.backUpToNotion')}</SubHeading>
       <p className="mb-2 text-[12px] text-fg-dim">
-        {tr('ui.settings.memoryDream.afterEveryTidyYourMemories')}
+        {tr('ui.settings.memoryNotion.introWithSkills')}
       </p>
       <Group>
-        <SettingRow label={tr('ui.settings.memoryDream.backUpAfterEveryTidy')} detail={detail}>
-          <Toggle label={tr('ui.settings.memoryDream.backUpAfterEveryTidy')} checked={state.enabled} disabled={busy !== null || !memoryOn}
+        <SettingRow label={tr('ui.settings.memoryNotion.backUpAutomatically')} detail={detail}>
+          <Toggle label={tr('ui.settings.memoryNotion.backUpAutomatically')} checked={state.enabled} disabled={busy !== null || !memoryOn}
             onChange={(enabled) => void act('toggle', async () => { setState(await setNotionBackup(enabled)); }, tr('ui.settings.memoryDream.couldNotChangeTheSetting'))} />
         </SettingRow>
         {state.connected ? (
@@ -288,8 +294,9 @@ export function NotionBackupSection({ memoryOn, refresh, onChanged }: { memoryOn
               onClick={() => void act('backup', async () => {
                 const next = await notionBackupNow();
                 setState(next);
-                if (next.status === 'ok') setNotice(tr('ui.settings.memoryNotion.backedUp', { count: next.count }));
-                else setError(tr('ui.settings.memoryDream.theBackupToNotionDid'));
+                if (next.status === 'ok' && (!next.skills || next.skills.status === 'ok' || next.skills.status === '')) {
+                  setNotice(tr('ui.settings.memoryNotion.backedUpWithSkills', { count: next.count, skills: next.skills?.count ?? 0 }));
+                } else setError(tr('ui.settings.memoryDream.theBackupToNotionDid'));
               }, tr('ui.settings.memoryDream.couldNotBackUpTo'))}>
               {busy === 'backup' ? tr('ui.settings.memoryDream.backingUp') : tr('ui.settings.memoryDream.backUpNow')}
             </button>
@@ -297,12 +304,22 @@ export function NotionBackupSection({ memoryOn, refresh, onChanged }: { memoryOn
               onClick={() => void act('restore', async () => {
                 const result = await restoreFromNotion();
                 setState(result.state);
-                setNotice(tr('ui.settings.memoryNotion.restored', { restored: result.restored, already: result.already, waiting: result.waiting }));
+                const skillsBack = result.skills ?? { restored: 0, already: 0, kept: 0, left_out: 0 };
+                setNotice(`${tr('ui.settings.memoryNotion.restored', { restored: result.restored, already: result.already, waiting: result.waiting })} ${tr('ui.settings.memoryNotion.skillsRestored', { restored: skillsBack.restored, already: skillsBack.already + skillsBack.kept })}`);
                 onChanged();
               }, tr('ui.settings.memoryDream.couldNotRestoreFromNotion'))}>
               {busy === 'restore' ? tr('ui.settings.memoryDream.restoring') : tr('ui.settings.memoryDream.restoreFromNotion')}
             </button>
           </SettingRow>
+        ) : null}
+        {state.connected ? (
+          <SettingRow
+            label={tr('ui.settings.memoryNotion.skillsLabel')}
+            detail={<>
+              {skillsDetail}
+              {skills?.page_url ? <> <a href={skills.page_url} target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">{tr('ui.settings.memoryNotion.openSkillsPage')}</a></> : null}
+            </>}
+          />
         ) : (
           <SettingRow label={tr('ui.settings.memoryDream.notionIsNotConnected')} detail={tr('ui.settings.memoryDream.connectItOnceAndThe')}>
             <a href="/settings/apps" className={buttonClass}>{tr('ui.settings.memoryDream.connectNotion')}</a>

@@ -580,18 +580,21 @@ _after_tasks: set[asyncio.Task] = set()
 
 
 def _after_connect(row: Any, user_key: str) -> None:
-    """Things a newly connected app makes possible. Notion: offer to restore a memory backup
-    (a reinstalled app has no memories, and its last install backed them up there)."""
+    """Things a newly connected app makes possible. Notion: offer to restore a memory or skills
+    backup (a reinstalled app has none, and its last install backed them up there)."""
     from cognitrix.memory import notion_backup
 
     if not notion_backup.is_notion(row):
         return
-    try:
-        task = asyncio.get_running_loop().create_task(notion_backup.offer_restore(user_key))
-    except RuntimeError:
-        return
-    _after_tasks.add(task)
-    task.add_done_callback(_after_tasks.discard)
+    from cognitrix.skills import notion_backup as skills_backup
+
+    for offer in (notion_backup.offer_restore, skills_backup.offer_restore):
+        try:
+            task = asyncio.get_running_loop().create_task(offer(user_key))
+        except RuntimeError:
+            return
+        _after_tasks.add(task)
+        task.add_done_callback(_after_tasks.discard)
 
 
 async def _disconnect(server_id: str) -> None:

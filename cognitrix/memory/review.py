@@ -27,8 +27,12 @@ Rules:
 - Everything made is listed in Settings > Memory with Remove (or Undo for an
   improved skill), and the Inbox says what was learned.
 
-Nightly runs happen in the same window as dream mode, within the daily token
-limit for proactive work. "Review chats now" runs one right away.
+Each run reads everything finished since the last one, oldest first (up to
+``MAX_ITEMS_PER_RUN``). Nightly runs happen in the same window as dream mode
+and stop at the daily token limit for proactive work (or after
+``NIGHT_MAX_MINUTES``); what's left carries over to the next night. "Review
+chats now" runs one right away. A running run keeps its progress (and a
+heartbeat, so a long run isn't taken for a stuck one) in ``stats``.
 """
 from __future__ import annotations
 
@@ -52,8 +56,11 @@ IDLE_MINUTES_MANUAL = 10
 """Review chats now also takes chats quiet for this long."""
 LOOKBACK_DAYS = 14
 """How far back a review looks; anything already read in that window is skipped."""
-ITEMS_PER_RUN = 10
-"""Pieces of work read per run (newest first); the rest wait for the next run."""
+MAX_ITEMS_PER_RUN = 200
+"""A safety ceiling only: a run reads everything finished since the last one, oldest first,
+so nothing ages out of the look-back window. What's left waits for the next run."""
+NIGHT_MAX_MINUTES = 90
+"""A nightly run stops after this long so the tidy that follows still fits in its window."""
 GROW_TO_REVIEW_AGAIN = 6
 MIN_TRANSCRIPT_CHARS = 600
 TRANSCRIPT_MAX_CHARS = 24_000
@@ -203,8 +210,9 @@ async def learned_for(user_id: str, limit: int = 100) -> list[LearnedItem]:
 
 
 def _stale(row: ReviewRun) -> bool:
-    started = _parse(row.started)
-    return started is None or datetime.now(UTC) - started > timedelta(minutes=RUN_STALE_MINUTES)
+    """A running row nothing has touched for a while: its process was stopped."""
+    beat = _parse(_stats(row).get('beat')) or _parse(row.started)
+    return beat is None or datetime.now(UTC) - beat > timedelta(minutes=RUN_STALE_MINUTES)
 
 
 async def running(user_id: str) -> bool:
@@ -326,7 +334,8 @@ async def _task_runs(user_id: str, since: datetime, reviewed: dict[tuple[str, st
 async def finished_work(user_id: str, *, since: datetime, idle: datetime) -> list[Work]:
     reviewed = {(r.source_kind, r.source_id): r for r in await _find(ReviewedSource, {'user_id': str(user_id)})}
     work = await _chats(user_id, since, idle, reviewed) + await _task_runs(user_id, since, reviewed)
-    work.sort(key=lambda w: w.stamp or datetime.min.replace(tzinfo=UTC), reverse=True)
+    # Oldest first: what has waited longest is closest to leaving the look-back window.
+    work.sort(key=lambda w: w.stamp or datetime.min.replace(tzinfo=UTC))
     return work
 
 
@@ -608,6 +617,14 @@ async def _mark(user_id: str, run_id: str, work: Work, outcome: str) -> None:
 
 # ---------------------------------------------------------------- running
 
+async def _progress(run: ReviewRun, counts: dict[str, int], index: int) -> None:
+    """Where a running review is ("12 of 40"), with a heartbeat for ``_stale``."""
+    try:
+        await ReviewRun.update_one({'id': run.id}, {'stats': json.dumps({**counts, 'at': index, 'beat': now_str()})})
+    except Exception:
+        logger.debug('Could not save the review progress', exc_info=True)
+
+
 _locks: dict[str, asyncio.Lock] = {}
 _background: set[asyncio.Task] = set()
 
@@ -696,11 +713,17 @@ async def run_review(user_id: str, trigger: str = 'manual', *, run: ReviewRun | 
                 if found is None:
                     return await finish(SKIPPED, 'No assistant model to review chats with.', counts)
                 llm, agent_id = found
-            counts['left'] = max(0, len(work) - ITEMS_PER_RUN)
-            for item in work[:ITEMS_PER_RUN]:
-                if trigger == 'night' and await proactivity.over_budget(user_id, now):
-                    counts['left'] += 1
-                    continue
+            todo = work[:MAX_ITEMS_PER_RUN]
+            counts['left'] = len(work) - len(todo)
+            counts['total'] = len(todo)
+            began = datetime.now(UTC)
+            for index, item in enumerate(todo):
+                if trigger == 'night' and (
+                        await proactivity.over_budget(user_id, now)
+                        or datetime.now(UTC) - began > timedelta(minutes=NIGHT_MAX_MINUTES)):
+                    counts['left'] += len(todo) - index
+                    break
+                await _progress(run, counts, index)
                 memories = [r.content for r in await saved.list_memories(user_id)
                             if r.scope == 'global' and not r.pending]
                 mine = await personal.skills_of(user_id)
@@ -754,6 +777,10 @@ async def run_review(user_id: str, trigger: str = 'manual', *, run: ReviewRun | 
             done = await finish(DONE, summary, counts)
             if counts['facts'] or counts['skills_new'] or counts['skills_improved'] or counts['notes']:
                 await _tell(user_id, summary)
+            if counts['skills_new'] or counts['skills_improved']:
+                from cognitrix.skills import notion_backup as skills_backup
+
+                await skills_backup.after_change(user_id, 'review')
             return done
         except Exception as exc:
             logger.exception('Chat review failed for %s', user_id)
