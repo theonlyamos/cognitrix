@@ -100,7 +100,9 @@ export const MODELS: Record<string, string[]> = {
   cerebras: ['gpt-oss-120b', 'qwen-3.8-27b'],
   ollama: ['llama3.2', 'gpt-oss:20b', 'qwen3', 'mistral'],
   // Coding agent CLIs: an empty model uses the CLI's own default.
-  'claude-code': ['sonnet', 'opus', 'haiku', 'claude-fable-5-2'],
+  // Full names, so the picker matches HARNESSES in harness.py. Fast mode
+  // works on Opus and Fable only.
+  'claude-code': ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2'],
   codex: ['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-5.5'],
   'gemini-cli': ['gemini-3.6-flash', 'gemini-4-neon', 'gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-3.8-flash'],
   'copilot-cli': ['auto', 'claude-sonnet-5-5', 'gpt-6.2-sol'],

@@ -119,7 +119,7 @@ HARNESSES: dict[str, Harness] = {
     'claude-code': Harness(
         'claude-code', 'Claude Code', 'claude',
         'npm install -g @anthropic-ai/claude-code, then run `claude` once and sign in',
-        ('sonnet', 'opus', 'haiku', 'claude-fable-5-2', 'claude-sonnet-5-5', 'claude-opus-5-5'), False),
+        ('claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2'), False),
     'codex': Harness(
         'codex', 'Codex', 'codex',
         'npm install -g @openai/codex, then run `codex login` (Sign in with ChatGPT)',
