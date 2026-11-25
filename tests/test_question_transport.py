@@ -161,3 +161,25 @@ async def test_direct_sse_chat_binds_question_context(monkeypatch):
     assert captured['context'].session_id == 'session-1'
     assert captured['context'].stream_id == 'stream-1'
     assert captured['context'].user_key == 'user-1'
+
+
+@pytest.mark.asyncio
+async def test_question_endpoint_takes_the_cards_answers_list():
+    task, event = await _pending_question()
+    user = types.SimpleNamespace(id='user-1')
+    try:
+        with pytest.raises(agent_routes.HTTPException) as both:
+            await agent_routes.question_endpoint(JsonRequest({
+                'request_id': event['request_id'], 'action': 'answer',
+                'option_id': 'yes', 'answers': [],
+            }), user=user)
+        assert both.value.status_code == 400
+        result = await agent_routes.question_endpoint(JsonRequest({
+            'request_id': event['request_id'], 'action': 'answer',
+            'answers': [{'question_id': 'q1', 'option_ids': ['no']}],
+        }), user=user)
+        assert result == {'status': 'resolved'}
+        assert (await task).option_id == 'no'
+    finally:
+        if not task.done():
+            await resolve_question(event['request_id'], 'user-1', 'cancel')

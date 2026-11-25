@@ -8,9 +8,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 from cognitrix.questions.models import (
+    ItemAnswer,
     QuestionAction,
     QuestionAnswer,
     QuestionSpec,
+    QuestionValidationError,
 )
 
 
@@ -87,13 +89,18 @@ async def _auto_submit_if_due(pending: PendingQuestion) -> None:
     deadline = pending.auto_submit_at
     if deadline is None or deadline > datetime.now(timezone.utc):
         return
-    option_id = pending.spec.recommended_option_id
-    option = next(
-        (item for item in pending.spec.options if item.id == option_id), None,
-    )
-    if option is not None:
-        pending.future.set_result(QuestionAnswer.option(
-            option.id, option.label, auto_submitted=True,
+    items = pending.spec.items
+    if len(items) == 1 and not items[0].multiple:
+        option = items[0].option(items[0].recommended_option_id or '')
+        if option is not None:
+            pending.future.set_result(QuestionAnswer.option(
+                option.id, option.label, auto_submitted=True,
+            ))
+        return
+    if all(item.recommended_option_ids for item in items):
+        pending.future.set_result(QuestionAnswer.of_items(
+            tuple(ItemAnswer(item, item.recommended_option_ids) for item in items),
+            auto_submitted=True,
         ))
 
 
@@ -151,6 +158,7 @@ async def resolve_question(
     *,
     option_id: str | None = None,
     text: str | None = None,
+    answers: list[Any] | None = None,
 ) -> bool:
     pending = _PENDING.get(str(request_id))
     if pending is None or pending.context.user_key != str(user_key) or pending.future.done():
@@ -160,17 +168,38 @@ async def resolve_question(
     except ValueError:
         return False
 
+    given = answers is not None
     if normalized_action is QuestionAction.STOP_TIMER:
-        if option_id is not None or text is not None or pending.auto_submit_at is None:
+        if given or option_id is not None or text is not None or pending.auto_submit_at is None:
             return False
         pending.auto_submit_at = None
         await pending.context.emit(pending.event())
         return True
 
     if normalized_action is QuestionAction.CANCEL:
-        if option_id is not None or text is not None:
+        if given or option_id is not None or text is not None:
             return False
         pending.future.set_result(_CANCELLED)
+        return True
+
+    items = pending.spec.items
+    if given:
+        # The card's answer: one entry per question, in any order.
+        if option_id is not None or text is not None or not isinstance(answers, list):
+            return False
+        by_id = {}
+        for value in answers:
+            qid = value.get('question_id') if isinstance(value, dict) else None
+            if not isinstance(qid, str) or qid in by_id:
+                return False
+            by_id[qid] = value
+        if set(by_id) != {item.id for item in items}:
+            return False
+        try:
+            parsed = tuple(ItemAnswer.parse(item, by_id[item.id]) for item in items)
+        except QuestionValidationError:
+            return False
+        pending.future.set_result(QuestionAnswer.of_items(parsed))
         return True
 
     has_option = option_id is not None
@@ -178,21 +207,26 @@ async def resolve_question(
     if has_option == has_text:
         return False
     if has_option:
-        option = next(
-            (item for item in pending.spec.options if item.id == option_id), None,
-        )
+        first = items[0]
+        option = first.option(str(option_id))
         if option is None:
             return False
-        pending.future.set_result(QuestionAnswer.option(option.id, option.label))
+        if len(items) == 1 and not first.multiple:
+            pending.future.set_result(QuestionAnswer.option(option.id, option.label))
+        else:
+            # A chat app or voice answered the first question; the rest
+            # were not shown there.
+            pending.future.set_result(QuestionAnswer.of_items((
+                ItemAnswer(first, (option.id,)),
+                *(ItemAnswer(item, skipped=True) for item in items[1:]),
+            )))
         return True
 
     normalized_text = str(text or '').strip()
-    if (
-        not pending.spec.allow_free_text
-        or not normalized_text
-        or len(normalized_text) > 4000
-    ):
+    if not normalized_text or len(normalized_text) > 4000:
         return False
+    # Typed words always answer: the card offers "Something else" on every
+    # question, and a reply typed in the chat box answers the whole card.
     pending.future.set_result(QuestionAnswer.free_text(normalized_text))
     return True
 

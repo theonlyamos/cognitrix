@@ -28,7 +28,7 @@ import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
 import { desktopName, getChatSandbox, sandboxStatus, setChatSandbox, type ChatSandbox, type SandboxDesktop } from '@/lib/sandbox';
 import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, type SidebarWaiting } from '@/components/ChatSidebar';
-import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
+import { QuestionCard, type QuestionAnswer, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { LiveVoiceButton, LiveVoicePanel } from '@/components/LiveVoice';
 import { useLiveVoice } from '@/hooks/useLiveVoice';
@@ -319,7 +319,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
   const postQuestionAction = useCallback(async (
     current: QuestionRequest,
     action: 'answer' | 'cancel' | 'stop_timer',
-    answer?: { option_id: string } | { text: string },
+    answer?: QuestionAnswer,
   ) => {
     try {
       await api.post('/agents/question', {
@@ -1627,6 +1627,20 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
       ) {
         return steer(msg);
       }
+      // A question card is open: words typed in the chat box answer it.
+      if (
+        question && !question.secret && msg && pending.length === 0 && pendingEditSource === null
+        && !replace && executionMode === 'chat' && !opts.keepComposer
+      ) {
+        setInput('');
+        try {
+          await postQuestionAction(question, 'answer', { text: msg });
+          return true;
+        } catch {
+          setInput(msg);
+          return false;
+        }
+      }
       if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return false;
       if (executionMode === 'task' && (pending.length > 0 || pendingEditSource !== null)) return false;
       if (replace) {
@@ -1735,7 +1749,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
         return false;
       }
     },
-    [busy, question, steer, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
+    [busy, question, postQuestionAction, steer, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
   );
 
   // A button on an agent's card was pressed: tell the agent, as a message.
@@ -2369,7 +2383,9 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
           aria-expanded={skillMenuOpen}
           aria-controls="skill-menu"
           aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
-          placeholder={busy && question === null
+          placeholder={question && !question.secret
+            ? tr('ui.home.answerAboveOrTypeHere')
+            : busy && question === null
             ? tr('ui.home.addToWhatItS')
             : empty ? tr('ui.home.askAnything') : tr('ui.home.replyToName', { name: currentAgent?.name || 'the agent' })}
           className={cn('block min-h-11 max-h-48 w-full resize-none bg-transparent outline-none focus-visible:outline-none px-4 pb-1 pt-3.5 text-[15px] text-fg placeholder:text-fg-dim', voice.active && '!hidden')}

@@ -895,7 +895,7 @@ async def question_endpoint(request: Request, user=Depends(get_current_user)):
     data = await request.json()
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail='Invalid question action')
-    allowed = {'request_id', 'action', 'option_id', 'text'}
+    allowed = {'request_id', 'action', 'option_id', 'text', 'answers'}
     if set(data) - allowed:
         raise HTTPException(status_code=400, detail='Invalid question action fields')
 
@@ -917,13 +917,16 @@ async def question_endpoint(request: Request, user=Depends(get_current_user)):
         raise HTTPException(status_code=400, detail='Invalid option_id')
     if text is not None and not isinstance(text, str):
         raise HTTPException(status_code=400, detail='Invalid answer text')
+    answers = data.get('answers')
+    if answers is not None and (not isinstance(answers, list) or len(answers) > 4):
+        raise HTTPException(status_code=400, detail='Invalid answers')
     if action is QuestionAction.ANSWER:
-        if (option_id is None) == (text is None):
+        if sum(v is not None for v in (option_id, text, answers)) != 1:
             raise HTTPException(
                 status_code=400,
-                detail='Answer requires exactly one of option_id or text',
+                detail='Answer requires exactly one of option_id, text or answers',
             )
-    elif option_id is not None or text is not None:
+    elif option_id is not None or text is not None or answers is not None:
         raise HTTPException(
             status_code=400,
             detail=f'{action.value} does not accept an answer',
@@ -935,6 +938,7 @@ async def question_endpoint(request: Request, user=Depends(get_current_user)):
         action,
         option_id=option_id,
         text=text,
+        answers=answers,
     )
     if not resolved:
         raise HTTPException(

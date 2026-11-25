@@ -774,6 +774,11 @@ class ChannelService:
                 if event.get('allow_free_text'):
                     body += '\n\nTap an option or type your answer.' if options else '\n\nType your answer.'
                 buttons = [Button(str(o.get('label'))[:60], f'q:{rid}:{i}') for i, o in enumerate(options)][:8]
+                from cognitrix.questions.models import batch_text
+                several = batch_text(event)
+                if several:
+                    # Several questions at once: list them and take the reply as words.
+                    body, buttons = several, []
                 if guest:
                     # Buttons are the linked person's; a guest answers by mentioning the bot again.
                     buttons = []
