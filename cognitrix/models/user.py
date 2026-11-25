@@ -26,3 +26,7 @@ class User(Model):
 
     whats_new_seen: str | None = None
     """Last app version whose What's new notes this user saw (or skipped)."""
+
+    auto_approve_all: bool | None = None
+    """Every approval card meant for this person is answered Yes for them
+    (safety/auto_approve_all.py). Off unless they turn it on."""

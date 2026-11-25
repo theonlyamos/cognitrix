@@ -232,7 +232,7 @@ export default function ComposerMenu(p: Props) {
                 onClick={p.onToggleBypass}
               >
                 <ShieldOffIcon />
-                <span className="min-w-0 flex-1">{tr('ui.composerMenu.autoApprove')}<span className={sub}>{tr('ui.composerMenu.skipApprovalPromptsInThis')}</span></span>
+                <span className="min-w-0 flex-1">{tr('ui.composerMenu.autoApprove')}<span className={cn(sub, 'font-medium text-danger-ink')}>{tr('ui.composerMenu.skipApprovalPromptsInThis')}</span></span>
                 <Switch on={p.bypass} tone="danger" />
               </button>
               <button

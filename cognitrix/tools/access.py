@@ -11,9 +11,10 @@ why, and the person picks:
   sign-in, started from the card);
 - **Deny**.
 
-Only a person can grant: the call always asks (no auto-approve, "always
-allow", bypass mode or reviewer answers it, see ``approval_gate`` and
-``action_reviewer``), and the tool only grants what the person's answer
+Only a person can grant: the call always asks (no "always allow", bypass
+mode or reviewer answers it, see ``approval_gate`` and ``action_reviewer``;
+the person's own "Auto-approve everything" answers it for them in this chat,
+see ``safety/auto_approve_all``), and the tool only grants what the person's answer
 (``access_grant``, filled in by the agent loop from that answer) says.
 
 ``precheck`` runs before anyone is asked: it works out what is being asked

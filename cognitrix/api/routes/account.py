@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from cognitrix.agents import access as agent_access
 from cognitrix.common.security import AuthContext, jwt_only, redact_secrets
@@ -33,6 +34,32 @@ def _messages(chat) -> list[dict]:
                 entry[key] = message[key]
         out.append(entry)
     return out
+
+
+class AutoApproveBody(BaseModel):
+    on: bool
+
+
+@account_api.get('/auto-approve')
+async def get_auto_approve(ctx: AuthContext = Depends(jwt_only)):
+    """The person's "Auto-approve everything" setting."""
+    from cognitrix.safety import auto_approve_all
+
+    return {'on': await auto_approve_all.is_on(agent_access.owner_key(ctx.user))}
+
+
+@account_api.put('/auto-approve')
+async def put_auto_approve(body: AutoApproveBody, ctx: AuthContext = Depends(jwt_only)):
+    """Turn "Auto-approve everything" on or off: every approval card meant
+    for this person is answered Yes for them while it is on."""
+    from cognitrix import audit
+    from cognitrix.safety import auto_approve_all
+
+    user_key = agent_access.owner_key(ctx.user)
+    on = await auto_approve_all.set_on(user_key, body.on)
+    audit.record('settings', f"Turned {'on' if on else 'off'} Auto-approve everything",
+                 user_id=user_key, outcome='ok', risk='high' if on else '')
+    return {'on': on}
 
 
 @account_api.get('/export')

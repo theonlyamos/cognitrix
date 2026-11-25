@@ -182,7 +182,6 @@ describe('Home image editing transport', () => {
   });
 
   it('posts repeated original files plus one JSON payload Blob with optional metadata', async () => {
-    localStorage.setItem('bypassPermissions', '1');
     localStorage.setItem('chatSession:agent-1', 'conversation-1');
     harness.conversations = [{ id: 'conversation-1', title: 'Current', message_count: 2 }];
     renderHome();
@@ -202,7 +201,6 @@ describe('Home image editing transport', () => {
       agent_id: 'agent-1',
       stream_id: 'stream-1',
       session_id: 'conversation-1',
-      bypass_permissions: true,
       execution_mode: 'chat',
     });
   });

@@ -19,12 +19,14 @@ from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 logger = logging.getLogger('cognitrix.log')
 
 
-# Tools a person must answer even with the browser's auto-approve on:
-# giving an agent a new folder or write access widens what it can touch.
+# Tools a person must answer even with a turn's bypass flag on: giving an
+# agent a new folder or write access widens what it can touch. The person's
+# own "Auto-approve everything" setting does answer them (auto_approve_all.py).
 _NEVER_AUTO_APPROVED = frozenset({'request_folder', 'copy_back_from_sandbox', 'request_access'})
 
 # Risk categories only a person answers, every time: no remembered answer,
-# auto-approve, bypass or reviewer stands in. Taking over the person's
+# bypass or reviewer stands in. Only the person's own "Auto-approve
+# everything" setting answers them for the person (never person_takeover). Taking over the person's
 # screen, the person taking over the agent's computer, and an agent asking
 # for a tool or connected app it doesn't have (Request Access).
 ALWAYS_ASK_CATEGORIES = frozenset({'screen_takeover', 'person_takeover', 'access_request'})
@@ -175,8 +177,12 @@ class ApprovalResult:
     reviewed: bool = False  # Decided by the reviewer model, not a person
     review: dict | None = None  # The reviewer's verdict, when it was asked
     # Request Access: what a person allowed ('chat' or 'agent'). Only ever set
-    # from a person's answer, never by auto-approval.
+    # from a person's answer (their card, or their "Auto-approve everything"
+    # setting), never by low-risk or unattended auto-approval.
     grant: str | None = None
+    # Answered Yes by the person's "Auto-approve everything" setting
+    # (safety/auto_approve_all.py). Counts as their answer.
+    standing: bool = False
 
 
 @dataclass
@@ -272,6 +278,15 @@ class ApprovalGate:
         # a sandbox). Off by default; only enable in a throwaway environment.
         if _auto_approve_enabled():
             return ApprovalResult(approved=True, auto=True)
+
+        # The person's "Auto-approve everything": a Yes on every card they
+        # would be shown (see safety/auto_approve_all.py for what it skips).
+        from cognitrix.safety import auto_approve_all
+
+        categories = set(risk.categories or [])
+        if not (categories & auto_approve_all.NEVER_CATEGORIES) and await auto_approve_all.answers_for(interface):
+            return ApprovalResult(approved=True, standing=True,
+                                  grant='chat' if 'access_request' in categories else None)
 
         # Auto-approve low risk
         if risk.risk_level == RiskLevel.LOW and not person_only:
