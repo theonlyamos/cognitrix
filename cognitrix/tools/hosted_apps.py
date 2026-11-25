@@ -38,7 +38,7 @@ def _has_saved_tests(app) -> bool:
 @tool(category=APP_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
 async def publish_app(title: str, start_command: str, folder: str = '', install_command: str = '', note: str = '',
                       app_id: str = '', description: str = '', use_cognitrix_api: bool = False, branch: str = '',
-                      *, parent=None) -> ToolOutcome:
+                      icon: str = '', *, parent=None) -> ToolOutcome:
     """Publish a live web app people open from a link that never changes: an internal tool, dashboard,
     form, review queue, or a staging copy of a project. Unlike Publish Artifact (one static page), an app
     is a real server with its own backend and database. It runs in the agents' sandboxed computer
@@ -60,6 +60,8 @@ async def publish_app(title: str, start_command: str, folder: str = '', install_
     - Python 3 and Node.js are available. Dependency folders (node_modules, .venv) are not copied;
       install them with install_command (e.g. "pip install -r requirements.txt" or "npm ci").
     - No websockets yet: poll instead.
+    - Give it an icon: a square icon.svg (or a 512 x 512 icon.png) in its folder. It shows on the Apps
+      page and becomes the shortcut icon when someone installs the app on their computer.
 
     If the new version doesn't answer HTTP within 90 seconds it is marked failed and the result shows
     its log; the live version keeps serving. Fix it and publish again with the same app_id.
@@ -76,6 +78,8 @@ async def publish_app(title: str, start_command: str, folder: str = '', install_
         use_cognitrix_api (bool): Give the app a Cognitrix API key (COGNITRIX_API_URL, COGNITRIX_API_KEY env)
             so it can run agents and read tasks. Only when the app needs it.
         branch (str): For a preview of a project: the git branch it was built from.
+        icon (str): The icon file inside the folder, e.g. "static/logo.svg"; empty looks for icon.svg,
+            icon.png (also in static/, public/, assets/) and favicon.svg/png.
     """
     user_key = _owner()
     if not user_key:
@@ -93,17 +97,19 @@ async def publish_app(title: str, start_command: str, folder: str = '', install_
             user_key=user_key, title=title, folder=folder, command=start_command, install=install_command,
             note=note, app_id=str(app_id or '').strip(), description=description,
             use_cognitrix_api=bool(use_cognitrix_api), branch=branch, agent_id=_agent_id(parent),
-            session_id=str(ctx.session_id or ''), task_id=str(ctx.task_id or ''),
+            session_id=str(ctx.session_id or ''), task_id=str(ctx.task_id or ''), icon=str(icon or '').strip(),
         )
     except store.AppError as exc:
         return ToolOutcome.failure(exc.code, exc.message)
+    icon_note = store.icon_note(app)
     entity = [EntityRef(type='hosted_app', id=str(app.id), name=app.title)]
     if row.status != 'live':
         live = f' Version {app.version} keeps serving.' if app.version else ''
         log = f'\nLog:\n{row.log[-3000:]}' if row.log else ''
         return ToolOutcome.failure(
             'did_not_start',
-            f'Version {row.number} of "{app.title}" (app_id {app.id}) did not start: {row.error}{live}{log}',
+            f'Version {row.number} of "{app.title}" (app_id {app.id}) did not start: {row.error}{live}{log}'
+            + (f'\n{icon_note}' if icon_note else ''),
         )
     what = 'Published' if created else f'Updated to version {row.number}:'
     where = "the agents' sandboxed computer" if app.runtime == 'sandbox' else 'this machine'
@@ -112,7 +118,7 @@ async def publish_app(title: str, start_command: str, folder: str = '', install_
         f'It is private to the person until they share it; the link is /apps/open/{app.slug}. '
         'The person sees a card in the chat that opens it. Now look at it with Check App and click through it '
         'with Test App' + (' (no steps re-runs its saved tests)' if _has_saved_tests(app) else '')
-        + ' before you say it is done.',
+        + ' before you say it is done.' + (f' {icon_note}' if icon_note else ''),
         entities=entity,
     )
 

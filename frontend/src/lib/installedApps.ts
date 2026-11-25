@@ -60,11 +60,103 @@ export async function makeAppIcon(title: string, slug: string): Promise<Uint8Arr
   return new Uint8Array(await blob.arrayBuffer());
 }
 
-/** Install (or reinstall) an app on this computer. */
-export async function installApp(app: { slug: string; title: string }, desktopShortcut: boolean): Promise<InstalledApp | null> {
-  const icon = await makeAppIcon(app.title, app.slug);
-  return desktop.installApp(app.slug, app.title, icon, desktopShortcut);
+/** The app's own icon (``url``: an image on this server, PNG or SVG) as a 256 x 256 PNG
+ *  for its shortcut, tray icon and window. Null when it can't be loaded or drawn. */
+export async function drawAppIcon(url: string): Promise<Uint8Array | null> {
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('icon did not load'));
+      image.src = url;
+    });
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    // Fit it inside the square (an SVG may have no size of its own: then it fills it).
+    const w = image.naturalWidth || size;
+    const h = image.naturalHeight || size;
+    const scale = Math.min(size / w, size / h);
+    const dw = w * scale;
+    const dh = h * scale;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(image, (size - dw) / 2, (size - dh) / 2, dw, dh);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+  } catch {
+    return null;
+  }
 }
+
+/** Install (or reinstall) an app on this computer, with its own icon when it has one. */
+export async function installApp(app: { slug: string; title: string; icon_url?: string }, desktopShortcut: boolean): Promise<InstalledApp | null> {
+  const icon = (app.icon_url ? await drawAppIcon(app.icon_url) : null) ?? await makeAppIcon(app.title, app.slug);
+  const out = await desktop.installApp(app.slug, app.title, icon, desktopShortcut);
+  rememberShortcutIcon(app);
+  return out;
+}
+
+const ICON_SEEN_KEY = 'cognitrix.installedAppIcons';
+
+/** Which version of each app's icon its shortcut on this computer was made with ('v' in icon_url). */
+function shortcutIcons(): Record<string, string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ICON_SEEN_KEY) || '{}');
+    return raw && typeof raw === 'object' ? raw as Record<string, string> : {};
+  } catch {
+    return {};
+  }
+}
+
+function iconVersion(url: string | undefined): string {
+  if (!url) return '';
+  try {
+    return new URL(url, window.location.origin).searchParams.get('v') || '';
+  } catch {
+    return '';
+  }
+}
+
+function rememberShortcutIcon(app: { slug: string; icon_url?: string }): void {
+  try {
+    localStorage.setItem(ICON_SEEN_KEY, JSON.stringify({ ...shortcutIcons(), [app.slug]: iconVersion(app.icon_url) }));
+  } catch {
+    /* storage off: the shortcut is refreshed again next time */
+  }
+}
+
+/** Installed apps whose icon changed since their shortcut was made (or that were installed
+ *  before apps had icons) get their shortcut redrawn, quietly. Returns how many changed. */
+export async function refreshShortcutIcons(
+  apps: { slug: string; title: string; icon_url?: string }[], installed: InstalledApp[],
+): Promise<number> {
+  if (!isDesktop() || installed.length === 0 || refreshing) return 0;
+  refreshing = true;
+  const seen = shortcutIcons();
+  let changed = 0;
+  try {
+    for (const record of installed) {
+      const app = apps.find((a) => a.slug === record.slug);
+      if (!app?.icon_url || seen[app.slug] === iconVersion(app.icon_url)) continue;
+      try {
+        await installApp(app, record.desktop_shortcut);
+        changed += 1;
+      } catch {
+        rememberShortcutIcon(app); // don't retry every few seconds; Install > Update the shortcut does
+      }
+    }
+  } finally {
+    refreshing = false;
+  }
+  if (changed) installedChanged();
+  return changed;
+}
+
+let refreshing = false;
 
 export const INSTALLED_EVENT = 'cognitrix:installed-apps';
 

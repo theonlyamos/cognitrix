@@ -75,8 +75,9 @@ async def lifespan(app: FastAPI):
         knowledge_refresher = asyncio.create_task(refresher_loop())
         try:
             # Apps published from other folders before the apps folder existed.
-            from ..hosted_apps.store import move_into_apps_folder
+            from ..hosted_apps.store import backfill_icons, move_into_apps_folder
             await move_into_apps_folder()
+            await backfill_icons()  # apps made before every app had an icon
         except Exception:
             import logging
             logging.getLogger('cognitrix.log').exception('Could not move apps into the apps folder')
