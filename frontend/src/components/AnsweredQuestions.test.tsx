@@ -15,7 +15,7 @@ describe('answeredSummary', () => {
     }))!;
     render(<AnsweredQuestions summary={summary} />);
     expect(screen.getByText('You answered 2 questions')).toBeInTheDocument();
-    expect(screen.getByText('Database')).toBeInTheDocument();
+    expect(screen.getByText('Which database?')).toBeInTheDocument();
     expect(screen.getByText('SQLite')).toBeInTheDocument();
     expect(screen.getByText('recommended')).toBeInTheDocument();
     expect(screen.getByText('Google, GitHub, Apple')).toBeInTheDocument();
