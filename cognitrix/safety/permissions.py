@@ -211,6 +211,20 @@ def needs_person(tools: tuple, args: dict) -> bool:
             return False  # Run in sandbox: commands run in the agent's own container
     except Exception:
         pass
+    if 'coding_agent' in names:
+        # Coding Agent only starts a CLI once a person approved that exact
+        # call (tools/misc.py), so the gate must put a card in front of them
+        # whatever the agent's permission level or auto-approve says. Listing
+        # what's installed runs without asking.
+        if str((args or {}).get('agent') or '').strip().lower() == 'list':
+            return False
+        try:
+            from cognitrix.common import shell as sh
+            if sh.sandbox_shell_enabled():
+                return False  # the tool runs it without a person
+        except Exception:
+            pass
+        return True
     command = args.get('command') if isinstance(args, dict) else None
     try:
         from cognitrix.computer.paired.turn import device_turn
@@ -223,16 +237,13 @@ def needs_person(tools: tuple, args: dict) -> bool:
     if not isinstance(command, str) or not command.strip():
         return False
     try:
-        from pathlib import Path
-
         from cognitrix.common import shell as sh
-        from cognitrix.config import settings
 
         if sh.sandbox_shell_enabled() or sh.shell_mode() == 'allowlist':
             return False  # runs without a person, or is refused without running
-        plan = sh.plan_call(
-            command, Path(settings.tools_root).expanduser().resolve(), args.get('run_in_background'),
-        )
+        # Planned against the folder the Bash tool will use, so a command the
+        # tool would send to the full shell is never waved through here.
+        plan = sh.plan_call(command, sh.bash_root(args), args.get('run_in_background'))
         return plan.kind == 'shell'
     except Exception:
         return True

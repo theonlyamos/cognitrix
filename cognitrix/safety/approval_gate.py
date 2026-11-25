@@ -292,7 +292,7 @@ class ApprovalGate:
                     grant = 'chat' if earlier and 'access_request' in (risk.categories or []) else None
                     return ApprovalResult(approved=earlier, grant=grant)
 
-            reviewed = None if own_app else await self._review(tool_call, risk, interface)
+            reviewed = None if own_app or person_only else await self._review(tool_call, risk, interface)
             if reviewed is not None:
                 return reviewed
 
@@ -356,7 +356,10 @@ class ApprovalGate:
             not person_only and not always_ask and not own_app
             and interface in ('web', 'ws', 'websocket') and web_ctx and web_ctx.get('bypass')
         )
-        if not bypass and not always_ask and not own_app and scoped not in self.session_denied:
+        # Nor for a call only a person may approve: a reviewer "allow" counts
+        # as automatic, so the tool would refuse it and nobody would see a card.
+        if (not bypass and not always_ask and not own_app and not person_only
+                and scoped not in self.session_denied):
             reviewed = await self._review(tool_call, risk, interface)
             if reviewed is not None:
                 return reviewed
