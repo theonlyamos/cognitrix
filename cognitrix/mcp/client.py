@@ -371,15 +371,21 @@ class DynamicMCPClient:
 
         try:
             session = self.sessions[server_name]
+            # A call may run as long as any other tool call (the setting, 15
+            # minutes by default): the 30 seconds used for connecting cut off
+            # browser tools, database queries and builds.
+            from cognitrix.agents.base import tool_timeout_seconds
+
+            limit = tool_timeout_seconds()
             result = await asyncio.wait_for(
-                session.call_tool(tool_name, arguments), timeout=DEFAULT_MCP_TIMEOUT
+                session.call_tool(tool_name, arguments), timeout=limit
             )
             content = ToolContent(getattr(result, 'content', None) or [])
             content.result = result
             return content
         except TimeoutError:
-            logger.error(f"Timeout calling tool {tool_name} on {server_name} after {DEFAULT_MCP_TIMEOUT}s")
-            return f"Error: MCP tool '{tool_name}' timed out after {DEFAULT_MCP_TIMEOUT}s"
+            logger.error(f"Timeout calling tool {tool_name} on {server_name} after {limit:g}s")
+            return f"Error: MCP tool '{tool_name}' timed out after {limit:g}s"
         except Exception as e:
             logger.error(f"Error calling tool {tool_name} on server {server_name}: {e}")
             return None

@@ -48,10 +48,20 @@ logger = logging.getLogger('cognitrix.log')
 
 AgentList: TypeAlias = list['Agent']
 
-# Cap on a single tool result entering chat history (~2k tokens). Oversized
-# results bloat every subsequent prompt; the model can re-run the tool with a
-# narrower range if it needs more.
-MAX_TOOL_RESULT_CHARS = 8000
+# Cap on a single tool result entering chat history. It was 8,000, well under
+# what the tools themselves return (shell 30k, Read File 32k), so agents saw
+# files and logs cut short. Older results are shortened by the prompt builder,
+# so a larger one only costs while it is recent. A setting; 0 for no cap.
+MAX_TOOL_RESULT_CHARS = 32_000
+
+
+def tool_result_chars() -> int:
+    raw = app_setting('COGNITRIX_TOOL_RESULT_CHARS')
+    try:
+        value = int(raw) if raw not in (None, '') else MAX_TOOL_RESULT_CHARS
+    except (TypeError, ValueError):
+        value = MAX_TOOL_RESULT_CHARS
+    return max(0, value)
 
 # Bound simultaneous executions without limiting how many calls a turn may
 # make. The limiter is shared by every batch on the same event loop (the normal
@@ -177,11 +187,12 @@ class ToolBatchCancelled(asyncio.CancelledError):
 
 
 def _truncate_tool_result(content: str) -> str:
-    if len(content) <= MAX_TOOL_RESULT_CHARS:
+    limit = tool_result_chars()
+    if not limit or len(content) <= limit:
         return content
-    dropped = len(content) - MAX_TOOL_RESULT_CHARS
+    dropped = len(content) - limit
     return (
-        content[:MAX_TOOL_RESULT_CHARS]
+        content[:limit]
         + f"\n[truncated {dropped} chars — re-run the tool with a narrower range if you need more]"
     )
 

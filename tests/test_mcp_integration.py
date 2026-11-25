@@ -48,10 +48,11 @@ def test_wrapper_sanitizes_hostile_names_and_bad_schema():
 
 @pytest.mark.asyncio
 async def test_call_tool_times_out(monkeypatch):
-    from cognitrix.mcp import client as mcp_client
+    from cognitrix.agents import base as agents_base
     from cognitrix.mcp.client import DynamicMCPClient
 
-    monkeypatch.setattr(mcp_client, "DEFAULT_MCP_TIMEOUT", 0.05)
+    # A call follows the tool call time limit, not the 30 seconds for connecting.
+    monkeypatch.setattr(agents_base, "tool_timeout_seconds", lambda: 0.05)
 
     class HungSession:
         async def call_tool(self, name, args):

@@ -295,7 +295,11 @@ class TaskAccounting:
         await self.ledger.checkpoint()
         slot = self.limiter.slot(str(llm.provider), str(llm.model), self.actor_key)
         await self.ledger.wait_within_wall(slot.__aenter__())
-        requested_output = int(getattr(llm, "max_tokens", 0) or 0)
+        from cognitrix.providers.base import DEFAULT_MAX_TOKENS, output_token_limit
+
+        # The same number the provider call will ask for, so the budget holds
+        # back enough for it.
+        requested_output = output_token_limit(llm) if getattr(llm, "max_tokens", 0) else 0
         prompt_estimate = estimate_prompt_tokens(prompt)
         try:
             reservation, output_tokens = await self.ledger.begin_bounded_llm_call(
@@ -310,6 +314,11 @@ class TaskAccounting:
         runtime_llm = llm
         if output_tokens != requested_output:
             runtime_llm = llm.model_copy(deep=True)
+            # 8,192 exactly reads as "the default" and would grow again on
+            # large models (output_token_limit), past what the budget held
+            # back, so a limit cut to that number goes one lower.
+            if output_tokens == DEFAULT_MAX_TOKENS:
+                output_tokens -= 1
             runtime_llm.max_tokens = output_tokens
         return _LLMCall(
             self,

@@ -668,7 +668,7 @@ class ChannelService:
         """One reply. With ``chat_id`` it answers an @mention in a shared
         channel (in ``thread_id``); ``guest`` means someone other than the
         linked person asked."""
-        from cognitrix.api.routes.agents import CHAT_TIMEOUT
+        from cognitrix.sessions.agent_chats import background_turn_timeout
         from cognitrix.questions.broker import QuestionTurnContext, question_turn_ctx
         from cognitrix.safety.approval_gate import web_turn_ctx
         from cognitrix.safety.permissions import guest_run, read_only_run
@@ -802,7 +802,7 @@ class ChannelService:
                             session_id=str(session.id), user_id=channel.user_id,
                             agent_id=str(agent.id), host_process_mode=signed_in_host_process_mode(),
                         )),
-                timeout=CHAT_TIMEOUT,
+                timeout=background_turn_timeout(),
             )
         except asyncio.CancelledError:
             terminal = {'type': 'turn_stopped', 'content': '', 'session_id': str(session.id)}

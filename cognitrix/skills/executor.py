@@ -11,6 +11,7 @@ Handles:
 
 import asyncio
 import fnmatch
+import itertools
 import logging
 import re
 from collections.abc import AsyncGenerator
@@ -53,6 +54,22 @@ def _get_skill_approval_gate():
 
 # Max size for dynamic context command output
 MAX_DYNAMIC_CONTEXT_SIZE = 100_000  # 100KB
+
+_ROUNDS_NOTICE = '\n\n[Stopped after {rounds} tool rounds]'
+
+
+def _max_tool_rounds() -> int:
+    """The same limit chat replies use (Settings; 0 for no limit)."""
+    from cognitrix.sessions.base import MAX_TOOL_ROUNDS
+
+    return max(0, int(MAX_TOOL_ROUNDS or 0))
+
+
+def _tool_rounds():
+    """One item per tool round a skill may take. It used to stop after 15
+    without a word, which left longer skills half done."""
+    limit = _max_tool_rounds()
+    return range(limit) if limit else itertools.count()
 
 # Pre-compiled regex for argument substitution
 _ARG_NUM_PATTERN = re.compile(r'\$(\d+)(?!\d)')
@@ -572,8 +589,7 @@ class SkillExecutor:
         formatted_tools = [t.to_dict_format() for t in tools]
 
         # Tool call loop — keep prompting until LLM gives a final text response
-        max_iterations = 15  # safety limit
-        for _ in range(max_iterations):
+        for _ in _tool_rounds():
             response = await self.llm(messages, tools=formatted_tools, stream=True)
 
             last_response = None
@@ -627,6 +643,9 @@ class SkillExecutor:
             else:
                 # Non-dict result (error string, etc.) — inject as user context
                 messages.append({'role': 'user', 'content': f"Tool result: {result}"})
+        else:
+            # Only reached with a tool-round limit set in Settings.
+            yield _ROUNDS_NOTICE.format(rounds=_max_tool_rounds())
 
     async def _execute_forked(
         self,
@@ -703,8 +722,7 @@ class SkillExecutor:
         formatted_tools = [t.to_dict_format() for t in visible_tools(agent, agent.tools)]
 
         # Tool call loop
-        max_iterations = 15
-        for _ in range(max_iterations):
+        for _ in _tool_rounds():
             response = await self.llm(messages, tools=formatted_tools, stream=True)
 
             last_response = None
@@ -757,6 +775,9 @@ class SkillExecutor:
                     })
             else:
                 messages.append({'role': 'user', 'content': f"Tool result: {result}"})
+        else:
+            # Only reached with a tool-round limit set in Settings.
+            yield _ROUNDS_NOTICE.format(rounds=_max_tool_rounds())
 
     async def _stream_response(self, response) -> AsyncGenerator[str | Any, None]:
         """Shared streaming logic for both execution modes.

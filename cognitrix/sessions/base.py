@@ -35,11 +35,6 @@ def format_duration(seconds: float) -> str:
         secs = seconds % 60
         return f"{mins}m {secs:.1f}s"
 
-# Hard ceiling on retained chat messages per session. The LLM prompt only uses
-# the shaped window, so this just bounds memory/serialization growth
-# over very long sessions. ponytail: fixed cap; make configurable if needed.
-MAX_CHAT_HISTORY = 1000
-
 # Max tool-call rounds in a single turn before the loop stops (guards against a
 # model that never stops calling tools). 10 was too low for build-style steps
 # (creating several files is >10 tool calls), which cut steps off mid-work;
@@ -418,10 +413,9 @@ class Session(Model):
             self.chat.extend(message)
         else:
             self.chat.append(message)
-        # Bound growth: drop the oldest messages past the ceiling. The prompt
-        # builder trims any orphan tool message left at the new start.
-        if len(self.chat) > MAX_CHAT_HISTORY:
-            del self.chat[:len(self.chat) - MAX_CHAT_HISTORY]
+        # Nothing is dropped here: a saved chat keeps every message. (It used
+        # to keep the last 1,000, so long agent chats lost their beginning for
+        # good.) What the model is sent is kept small by compaction instead.
 
     @property
     async def agent(self):
