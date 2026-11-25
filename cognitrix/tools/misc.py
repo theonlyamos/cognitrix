@@ -1655,7 +1655,9 @@ async def _helper_chat(authority, agent, parent):
     return await agent_chats.create_chat(str(authority.user_id), agent, started_by)
 
 
-@tool(category='system')
+# Waits for another agent's whole reply, whose own tool calls need slots:
+# holding one here could leave both waiting on each other.
+@tool(category='system', occupies_execution_slot=False)
 async def call_agent(name: str, task: str, *, interface: str = 'task', parent=None):
     """Run a task with a sub agent
 

@@ -105,7 +105,8 @@ def _wake(wait: str) -> dict[str, Any]:
     return {'until': 'all'}
 
 
-@tool(category=SWARM_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
+@tool(category=SWARM_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'],
+      occupies_execution_slot=False)
 async def spawn_workers(
     workers: list[dict[str, Any]] | str | None = None,
     title: str = '',
@@ -249,7 +250,8 @@ async def _my_swarm(ctx: Any, swarm_id: str):
     return user_key, swarm
 
 
-@tool(category=SWARM_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
+@tool(category=SWARM_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'],
+      occupies_execution_slot=False)
 async def swarm(action: str, worker: str = '', message: str = '', until: str = '', file: str = '',
                 offset: int = 0, swarm_id: str = '', *, parent=None) -> ToolOutcome:
     """Look at and steer a swarm you started with Spawn Workers. Actions: "status" shows the board (every

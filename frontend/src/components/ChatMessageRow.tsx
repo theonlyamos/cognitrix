@@ -58,6 +58,44 @@ export const withoutThinking = (text: string) =>
   // A block still being streamed has no closing tag yet: hide it to the end.
   text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim();
 
+/** The model's reasoning (the text inside its <think> tags), in order. */
+const thinkingText = (text: string) => {
+  const parts: string[] = [];
+  for (const m of text.matchAll(/<think>([\s\S]*?)(?:<\/think>|$)/g)) {
+    if (m[1].trim()) parts.push(m[1].trim());
+  }
+  return parts.join('\n\n');
+};
+
+/**
+ * The model's reasoning, folded under one line. While it is still thinking
+ * the line shows the same moving bars as the wait before the first word;
+ * either way a press opens the full text.
+ */
+function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex min-h-11 items-center gap-2.5 text-[13px] text-fg-dim transition-colors hover:text-fg md:min-h-0"
+        title={open ? tr('ui.chatMessageRow.hideThinking') : tr('ui.chatMessageRow.showThinking')}
+      >
+        {live && <span aria-hidden className="think-bars"><i /><i /><i /><i /></span>}
+        <span>{live ? tr('ui.home.thinking') : tr('ui.chatMessageRow.thoughtProcess')}</span>
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn('transition-transform', open && 'rotate-90')}><path d="m9 18 6-6-6-6" /></svg>
+      </button>
+      {open && (
+        <div className="mt-1.5 max-h-80 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-line pl-3 text-[13px] leading-relaxed text-fg-dim">
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -195,7 +233,9 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   const reply = isUser ? message.content : withoutThinking(message.content);
   const filesMade = !isUser ? message.filesMade ?? [] : [];
   if (message.role === 'assistant' && !reply && !(isLast && streaming) && !filesMade.length) return null;
-  const thinking = !isUser && !reply && message.content.includes('<think>');
+  const reasoning = isUser ? '' : thinkingText(message.content);
+  // Still inside a <think> block: the reasoning is what's streaming now.
+  const thinkingNow = isLast && streaming && /<think>(?![\s\S]*<\/think>)/.test(message.content);
 
   // A card button press: a small line, not a full message.
   const press = isUser ? parsePress(message.content) : null;
@@ -241,16 +281,24 @@ export const ChatMessageRow = memo(function ChatMessageRow({
             )}
           </>
         ) : isLast && streaming ? (
-          <div className="whitespace-pre-wrap break-words leading-relaxed">
-            {thinking ? <span className="text-fg-dim">{tr('ui.home.thinking')}</span> : reply}
-            <span className="caret" />
-          </div>
+          <>
+            {(reasoning || thinkingNow) && <ThinkingBlock text={reasoning} live={thinkingNow || !reply} />}
+            {(reply || !thinkingNow) && (
+              <div className="whitespace-pre-wrap break-words leading-relaxed">
+                {reply}
+                <span className="caret" />
+              </div>
+            )}
+          </>
         ) : (
-          <div className="md break-words">
-            <Suspense fallback={<div className="whitespace-pre-wrap break-words leading-relaxed">{reply}</div>}>
-              <MarkdownMessage content={step ? step.rest : reply} />
-            </Suspense>
-          </div>
+          <>
+            {reasoning && <ThinkingBlock text={reasoning} live={false} />}
+            <div className="md break-words">
+              <Suspense fallback={<div className="whitespace-pre-wrap break-words leading-relaxed">{reply}</div>}>
+                <MarkdownMessage content={step ? step.rest : reply} />
+              </Suspense>
+            </div>
+          </>
         )}
         {step && onNextStep && (
           <button
