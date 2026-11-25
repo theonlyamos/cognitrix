@@ -48,14 +48,19 @@ from pathlib import Path
 from typing import Any
 
 from cognitrix.errors import ExecutionControlError
+from cognitrix.providers import harness_rpc
 from cognitrix.providers.harness_bridge import Bridge, lendable
 from cognitrix.utils.llm_response import LLMResponse
 
 logger = logging.getLogger('cognitrix.log')
 
 MODES = ('read_only', 'ask', 'edit', 'full')
-ASK_HARNESSES = frozenset({'claude-code'})
-"""CLIs that can hand their permission prompts to Cognitrix ('ask' mode)."""
+ASK_HARNESSES = frozenset({'claude-code', 'codex', 'gemini-cli', 'copilot-cli', 'opencode', 'antigravity-cli'})
+"""CLIs that can hand their permission prompts to Cognitrix ('ask' mode).
+Claude Code through --permission-prompt-tool; the others run in their protocol
+mode for an 'ask' turn (harness_rpc.py: Codex app-server, the rest ACP)."""
+PROMPT_TOOL_HARNESSES = frozenset({'claude-code'})
+"""'ask' mode through the lent MCP server's approve tool."""
 DEFAULT_MODE = 'edit'
 TURN_TIMEOUT = 60 * 60
 MAX_TRANSCRIPT_CHARS = 60_000
@@ -346,7 +351,7 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
     from cognitrix.providers.harness_bridge import APPROVE_TOOL, SERVER_NAME
 
     env: dict[str, str] = {}
-    if mode == 'ask' and not (tools_url and key in ASK_HARNESSES):
+    if mode == 'ask' and not (tools_url and key in PROMPT_TOOL_HARNESSES):
         mode = 'edit'
     if key == 'claude-code':
         if tools_url and not settings_file:
@@ -487,6 +492,53 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
             argv += ['--conversation', resume]
         return argv, env
     raise HarnessError(f'Unknown coding agent {key!r}.')
+
+
+def rpc_command(key: str, program: str, *, model: str, effort: str, cwd: str, tools_url: str | None,
+                settings_file: str | None, extra_dirs: list[str] | tuple[str, ...], fast: bool = False,
+                ) -> tuple[list[str], dict[str, str], list[dict[str, Any]]]:
+    """(argv, extra environment, MCP servers for the session) for an 'ask' turn
+    in the CLI's protocol mode (harness_rpc.py).
+
+    The lent Cognitrix tools reach each CLI the way its one-shot mode gets
+    them where that works in protocol mode too (Gemini's settings file,
+    OpenCode's config, Antigravity's workspace folder, Codex's -c options);
+    Copilot gets them on the ACP session."""
+    from cognitrix.providers.harness_bridge import SERVER_NAME
+
+    if key == 'codex':
+        argv = [program, 'app-server']
+        if tools_url:
+            argv += ['-c', f'mcp_servers.{SERVER_NAME}.url={tools_url}',
+                     '-c', f'mcp_servers.{SERVER_NAME}.default_tools_approval_mode=approve']
+        if fast:
+            argv += ['-c', 'service_tier=fast']
+        return argv, {}, []
+    env: dict[str, str] = {}
+    servers: list[dict[str, Any]] = []
+    dirs = list(extra_dirs)
+    if key == 'gemini-cli':
+        # Writes the settings file and its variable (the flags are not used).
+        _argv, env = build_command(key, program, mode='edit', model=model, effort=effort, resume=None,
+                                   new_session=None, cwd=cwd, tools_url=tools_url,
+                                   settings_file=settings_file, extra_dirs=extra_dirs)
+    elif key == 'opencode':
+        # Ask before commands, edits, web fetches and anything outside the
+        # project; what's inside the chat's folders Cognitrix then allows.
+        config: dict[str, Any] = {'permission': {
+            'edit': 'ask', 'bash': 'ask', 'webfetch': 'ask', 'external_directory': 'ask'}}
+        if tools_url:
+            config['mcp'] = {SERVER_NAME: {'type': 'remote', 'url': tools_url, 'enabled': True, 'oauth': False}}
+        env['OPENCODE_CONFIG_CONTENT'] = json.dumps(config)
+    elif key == 'antigravity-cli':
+        if tools_url and settings_file:
+            build_command(key, program, mode='edit', model=model, effort=effort, resume=None, new_session=None,
+                          cwd=cwd, tools_url=tools_url, settings_file=settings_file, extra_dirs=())
+            dirs.append(settings_file)
+    elif key == 'copilot-cli' and tools_url:
+        servers.append({'type': 'http', 'name': SERVER_NAME, 'url': tools_url, 'headers': []})
+    argv = harness_rpc.acp_argv(key, program, model=model, extra_dirs=dirs, effort=effort)
+    return argv, env, servers
 
 
 def stdin_message(key: str, text: str) -> str:
@@ -708,9 +760,12 @@ def parse_line(key: str, line: str) -> list[Event]:
 Runner = Callable[[list[str], str, str, dict[str, str]], Any]
 
 
-def _spawn(argv: list[str], stdin_text: str, cwd: str, env_extra: dict[str, str],
+def _spawn(argv: list[str], stdin_text: str | None, cwd: str, env_extra: dict[str, str],
            loop: asyncio.AbstractEventLoop, queue: asyncio.Queue) -> subprocess.Popen:
-    """Start the CLI; a thread feeds its stdout lines (then None) to ``queue``."""
+    """Start the CLI; a thread feeds its stdout lines (then None) to ``queue``.
+
+    ``stdin_text`` is written and stdin closed; None keeps stdin open for a
+    protocol conversation (harness_rpc.Peer writes to it)."""
     from cognitrix.common.shell import _group_kwargs, child_env
 
     env = child_env()
@@ -741,7 +796,8 @@ def _spawn(argv: list[str], stdin_text: str, cwd: str, env_extra: dict[str, str]
         loop.call_soon_threadsafe(queue.put_nowait, None)
 
     err_thread = threading.Thread(target=read_err, daemon=True)
-    threading.Thread(target=write, daemon=True).start()
+    if stdin_text is not None:
+        threading.Thread(target=write, daemon=True).start()
     err_thread.start()
     threading.Thread(target=read_out, daemon=True).start()
     proc.stderr_lines = errors  # type: ignore[attr-defined]
@@ -775,6 +831,8 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
     harness = HARNESSES[key]
     response = LLMResponse()
     proc: subprocess.Popen | None = None
+    driver: Any = None
+    helpers: list[asyncio.Task] = []
     bridge: Any = None
     settings_file: str | None = None
     in_reasoning = False
@@ -836,7 +894,10 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
         # Lend the CLI this agent's own tools for the turn (harness_bridge.py).
         lent = (lendable(list(info.tools))
                 if info is not None and info.call_tool is not None and key not in NO_TOOL_HARNESSES else [])
-        asking = mode == 'ask' and key in ASK_HARNESSES and info is not None and info.approve is not None
+        can_ask = mode == 'ask' and key in ASK_HARNESSES and info is not None and info.approve is not None
+        asking = can_ask and key in PROMPT_TOOL_HARNESSES
+        # The other CLIs ask over their own protocol, for this turn (harness_rpc.py).
+        rpc = can_ask and key in harness_rpc.RPC_KEYS
         if lent or asking:
             try:
                 bridge = await Bridge(
@@ -846,7 +907,7 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
             except Exception as exc:  # noqa: BLE001 - the turn still works without them
                 logger.warning('Could not lend tools to %s: %s', harness.label, exc)
                 bridge = None
-        if mode == 'ask' and not (asking and bridge is not None):
+        if mode == 'ask' and not rpc and not (asking and bridge is not None):
             # Nobody to ask. 'edit' lets the CLI change files in the folder and
             # refuses whatever it would have asked about.
             mode = 'edit'
@@ -859,22 +920,78 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
             folder = _store_file().parent
             folder.mkdir(parents=True, exist_ok=True)
             settings_file = str(folder / f'{AGY_TOOLS_DIR_PREFIX}{uuid.uuid4().hex}')
-        if bridge is not None and lent and not resume:
-            text = tools_note(harness.label, bridge.tool_names()) + text
+        full_text = first_message(instructions, earlier, new_message)
+        if bridge is not None and lent:
+            full_text = tools_note(harness.label, bridge.tool_names()) + full_text
+            if not resume:
+                text = tools_note(harness.label, bridge.tool_names()) + text
 
         fast = fast_mode_for(llm)
         fast_file = None
         if fast and key == 'claude-code':
             _store_file().parent.mkdir(parents=True, exist_ok=True)
             fast_file = str(_store_file().parent / FAST_SETTINGS_NAME)
-        argv, env_extra = build_command(key, program, mode=mode, model=model, effort=effort,
-                                        resume=resume, new_session=new_session, cwd=cwd,
-                                        tools_url=bridge.url if bridge is not None else None,
-                                        settings_file=settings_file, extra_dirs=extra_dirs,
-                                        fast=fast, fast_settings_file=fast_file)
+        tools_url = bridge.url if bridge is not None else None
+        if rpc:
+            argv, env_extra, session_servers = rpc_command(
+                key, program, model=model, effort=effort, cwd=cwd, tools_url=tools_url,
+                settings_file=settings_file, extra_dirs=extra_dirs, fast=fast)
+        else:
+            argv, env_extra = build_command(key, program, mode=mode, model=model, effort=effort,
+                                            resume=resume, new_session=new_session, cwd=cwd,
+                                            tools_url=tools_url,
+                                            settings_file=settings_file, extra_dirs=extra_dirs,
+                                            fast=fast, fast_settings_file=fast_file)
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
-        proc = _spawn(argv, stdin_message(key, text), cwd, env_extra, loop, queue)
+        events: asyncio.Queue = asyncio.Queue()
+        proc = _spawn(argv, None if rpc else stdin_message(key, text), cwd, env_extra, loop, queue)
+        if rpc:
+            driver = harness_rpc.driver_for(
+                key, label=harness.label, emit=events.put_nowait, approve=info.approve,
+                lent=frozenset(t['name'] for t in lent), event_type=Event)
+            peer = harness_rpc.Peer(proc, queue, jsonrpc=key != 'codex', on_request=driver.on_request,
+                                    on_notification=driver.on_notification)
+            reading = loop.create_task(peer.run())
+            helpers.append(reading)
+
+            async def drive() -> None:
+                try:
+                    running = loop.create_task(driver.run(
+                        peer, cwd=cwd, extra_dirs=list(extra_dirs), model=model, effort=effort,
+                        resume=resume, text=text, full_text=full_text, mcp_servers=session_servers))
+                    try:
+                        # A CLI that dies mid-turn ends the turn instead of leaving it waiting.
+                        await asyncio.wait({running, reading}, return_when=asyncio.FIRST_COMPLETED)
+                        if not running.done():
+                            await asyncio.wait({running}, timeout=2)
+                        if not running.done():
+                            raise harness_rpc.Closed('the CLI ended before the turn finished')
+                        await running
+                    finally:
+                        if not running.done():
+                            running.cancel()
+                except (harness_rpc.RpcError, harness_rpc.Closed) as exc:
+                    hint = _stderr_hint(proc) if isinstance(exc, harness_rpc.Closed) else ''
+                    events.put_nowait([Event(error=_short(hint or str(exc), 400))])
+                finally:
+                    events.put_nowait(None)
+
+            helpers.append(loop.create_task(drive()))
+        else:
+            async def pump() -> None:
+                while True:
+                    line = await queue.get()
+                    if line is None:
+                        break
+                    parsed = parse_line(key, line)
+                    if parsed:
+                        events.put_nowait(parsed)
+                events.put_nowait(None)
+
+            helpers.append(loop.create_task(pump()))
+        # ACP streams text in pieces even for CLIs whose one-shot output is whole messages.
+        whole = key in WHOLE_MESSAGES and not (rpc and key in harness_rpc.ACP_KEYS)
         session = resume or new_session or ''
         usage: dict[str, int] | None = None
         errors: list[str] = []
@@ -886,10 +1003,10 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
             if remaining <= 0:
                 errors.append(f'{harness.label} took longer than {TURN_TIMEOUT // 60} minutes and was stopped.')
                 break
-            line = await asyncio.wait_for(queue.get(), timeout=remaining)
-            if line is None:
+            batch = await asyncio.wait_for(events.get(), timeout=remaining)
+            if batch is None:
                 break
-            for event in parse_line(key, line):
+            for event in batch:
                 if event.session:
                     session = event.session
                 if event.usage:
@@ -906,7 +1023,7 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
                     response.current_chunk = event.activity if in_reasoning else '<think>' + event.activity
                     in_reasoning = True
                     yield response
-                if event.text and key in WHOLE_MESSAGES:
+                if event.text and whole:
                     if pending:
                         response.add_reasoning_chunk(pending.strip() + '\n')
                         response.current_chunk = (pending.strip() + '\n') if in_reasoning else '<think>' + pending.strip() + '\n'
@@ -924,7 +1041,7 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
                     response.current_chunk = ('\n</think>\n' + chunk) if in_reasoning else chunk
                     in_reasoning = False
                     yield response
-        code = proc.wait(timeout=30)
+        code = 0 if rpc else proc.wait(timeout=30)
         if pending.strip():
             chunk = pending.strip()
             response.add_chunk(chunk)
@@ -958,6 +1075,11 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
         logger.exception('Coding agent turn failed: %s', exc)
         yield fail(f'{harness.label} failed: {exc}')
     finally:
+        if driver is not None:
+            await driver.cancel()
+        for task in helpers:
+            if not task.done():
+                task.cancel()
         if proc is not None:
             _stop(proc)
         if bridge is not None:
