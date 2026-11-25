@@ -149,10 +149,8 @@ def _pixel(png_b64: str, x: int, y: int) -> tuple[int, int, int]:
     return px[0], px[1], px[2]
 
 
-async def test_a_real_browser_sees_dark_mode_and_errors():
-    from types import SimpleNamespace
-
-    from cognitrix.artifact_pages import check
+def test_a_real_browser_sees_dark_mode_and_errors():
+    from cognitrix.artifact_pages import frame
     from cognitrix.computer.sandbox import pagecheck
 
     if pagecheck.find_browser() is None:
@@ -162,8 +160,10 @@ async def test_a_real_browser_sees_dark_mode_and_errors():
             '</style></head><body><p>Draft A</p><div style="height:3000px"></div>'
             '<img src="http://127.0.0.1:9/x.png">'
             '<script>console.error("boom")</script></body></html>')
-    out = await check.look(SimpleNamespace(format='html', title='T'), html, 'u1',
-                           views=['desktop-light', 'phone-dark'])
+    # The document and policy Check Artifact sends. Chromium's own sandbox can't start on
+    # CI runners (no user namespaces), so run without it as the sandboxed computer does.
+    out = pagecheck.check_html(frame.render(html, 'html', 'T'), frame.content_security_policy(),
+                               ['desktop-light', 'phone-dark'], browser=pagecheck.find_browser(), no_sandbox=True)
     light, dark = out
     assert light['ok'] and dark['ok']
     assert light['width'] == 1280 and dark['width'] == 390 and dark['page_width'] == 390
