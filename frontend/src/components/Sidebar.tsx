@@ -113,6 +113,11 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
     );
   };
 
+  // On wide screens the sidebar must not have a transform: a transform makes
+  // the aside a stacking context and the containing block of its `fixed`
+  // popovers (the collapsed rail's chat flyout, the inbox popover), so page
+  // content later in the DOM, such as the chat transcript, would sit on top
+  // of them and take their clicks. md:transform-none, not md:translate-x-0.
   return (
     <aside
       id="primary-navigation"
@@ -120,7 +125,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
       data-mobile-open={mobileOpen}
       data-collapsed={collapsed}
       className={cn(
-        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,300px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:visible md:relative md:z-auto md:h-full md:translate-x-0 md:transition-[width]',
+        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,300px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:visible md:relative md:z-auto md:h-full md:transform-none md:transition-[width]',
         mobileOpen ? 'visible translate-x-0' : 'invisible -translate-x-full',
         collapsed ? 'md:w-16' : 'md:w-[264px]',
       )}
