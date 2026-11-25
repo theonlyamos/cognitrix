@@ -154,6 +154,11 @@ def _registry() -> list[Setting]:
     add(Setting('COGNITRIX_GITHUB_CHECK_SECONDS', 'apps', g, 'Timed check every (seconds)',
                 kind='number', placeholder='300'))
 
+    g = 'Google apps'
+    add(Setting('COGNITRIX_GOOGLE_CLASSROOM', 'apps', g, 'Offer Google Classroom',
+                'Shows Google Classroom in Connected apps. Turn on the Classroom API and Classroom MCP API '
+                'in your Google Cloud project first.', kind=ON_OFF, default='0'))
+
     g = 'Background checks'
     add(Setting('COGNITRIX_CHANNELS', 'apps', g, 'Answer chat apps (Telegram, Slack, SMS)',
                 'Turn off on all but one server when several share the same bots.', kind=ON_OFF, default='1'))

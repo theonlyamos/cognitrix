@@ -7,6 +7,11 @@ Two kinds of tools aren't MCP, and callers shouldn't have to care:
   on Gmail (``cognitrix/mcp/native.py``), listed after the server's own;
 - every tool of an app connected through Composio (``cognitrix/mcp/composio.py``).
 
+Some of a server's own tools belong to an option (``AppOption.tools``), such
+as Google Calendar's create and update tools behind "Create and change
+events". They stay hidden, and are refused, until the person turns the option
+on and their sign-in covers its scopes; otherwise Google would only fail them.
+
 ``search`` ranks tools for a task, so an agent with many connected apps can
 look up the few it needs instead of being handed every schema.
 """
@@ -42,6 +47,31 @@ def _has_options(config: Any) -> bool:
     return bool(app.options and auth == 'oauth')
 
 
+def _locked(app: Any, row: Any) -> set[str]:
+    """The server tools whose option isn't on (or isn't signed in for) yet."""
+    from cognitrix.mcp import catalog
+
+    gated = catalog.gated_tools(app)
+    if not gated:
+        return set()
+    if row is None:
+        return set(gated)
+    unlocked = {o.id for o in catalog.chosen_options(app, row) if native.option_granted(row, o)}
+    return {name for name, o in gated.items() if o.id not in unlocked}
+
+
+def catalog_option(app: Any, tool_name: str) -> Any:
+    from cognitrix.mcp import catalog
+
+    return catalog.gated_tools(app)[tool_name]
+
+
+def _app(config: Any) -> Any | None:
+    from cognitrix.mcp import catalog
+
+    return catalog.get(getattr(config, 'catalog_id', None))
+
+
 async def list_tools(client: Any, config: Any) -> list[dict[str, Any]]:
     """Every tool of a ready connection: the server's own, then built-in ones."""
     if composio.is_app(config):
@@ -55,6 +85,9 @@ async def list_tools(client: Any, config: Any) -> list[dict[str, Any]]:
     tools = list(await client.list_tools(config.key) or [])
     if _has_options(config):
         row = await _row(config)
+        locked = _locked(_app(config), row)
+        if locked:
+            tools = [t for t in tools if t.get('name') not in locked]
         names = {t.get('name') for t in tools}
         tools.extend(t.info() for t in (native.tools_for(row) if row is not None else []) if t.name not in names)
     return tools
@@ -67,6 +100,11 @@ async def call_tool(client: Any, config: Any, tool_name: str, arguments: dict[st
         if row is None:
             return f"'{config.name}' was removed."
         return await composio.call_tool(row, tool_name, arguments)
+    app = _app(config)
+    if _has_options(config) and tool_name in _locked(app, await _row(config)):
+        option = catalog_option(app, tool_name)
+        return (f'Error: {tool_name} needs "{option.label}" on this {app.name} connection. Ask the person to '
+                f'turn it on in Settings > Connected apps and reconnect {app.name}.')
     if _has_options(config) and tool_name not in (client.tool_annotations.get(config.key) or {}):
         row = await _row(config)
         tool = native.find(row, tool_name) if row is not None else None

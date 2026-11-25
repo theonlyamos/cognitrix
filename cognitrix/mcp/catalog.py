@@ -11,9 +11,12 @@ Every entry is a hosted (remote) MCP server. Signing in works one of two ways:
   protected-resource metadata, then a client ID metadata document or dynamic
   client registration). Nothing needs setting up.
 
-Google's Workspace MCP servers are in Google's developer preview. Each one
-needs its API turned on in the Google Cloud project that owns the client ID
-(APIs & Services > Library, search "<app> MCP").
+Google's Workspace MCP servers (developers.google.com/workspace/guides/
+configure-mcp-servers) are in Google's developer preview. Each one needs its
+API turned on in the Google Cloud project that owns the client ID (APIs &
+Services > Library, search "<app> MCP"), and the client must be marked "Use
+this client for an AI-powered agent". Classroom is only offered when an admin
+turns it on (``setting``), since most servers have no use for it.
 
 Slack's MCP server only accepts a Slack app you registered yourself
 (``SLACK_CLIENT_ID`` / ``SLACK_CLIENT_SECRET``); it has no sign-in button of
@@ -61,6 +64,9 @@ class AppOption:
     # Scopes the option needs on top of the app's own. Empty when the app's
     # scopes already cover it.
     scopes: tuple[str, ...] = ()
+    # The server's own tools this option unlocks. They're hidden from agents
+    # (and refused) until the option is on and the sign-in covers its scopes.
+    tools: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,10 +84,13 @@ class CatalogApp:
     setup: str = ''
     extra_params: dict[str, str] = field(default_factory=dict)
     options: tuple[AppOption, ...] = ()
+    # An app setting (``cognitrix/app_settings.py``) that must be on for the
+    # app to be offered. Empty means always offered.
+    setting: str = ''
 
 
 def _google(app_id: str, name: str, description: str, host: str, scopes: tuple[str, ...],
-            options: tuple[AppOption, ...] = ()) -> CatalogApp:
+            options: tuple[AppOption, ...] = (), setup: str = '', setting: str = '') -> CatalogApp:
     return CatalogApp(
         id=app_id,
         name=name,
@@ -91,11 +100,12 @@ def _google(app_id: str, name: str, description: str, host: str, scopes: tuple[s
         provider='google',
         scopes=_GOOGLE_PROFILE + scopes,
         category='Google',
-        setup=f'Turn on the {name} MCP API in the Google Cloud project that owns GOOGLE_CLIENT_ID.',
+        setup=setup or f'Turn on the {name} MCP API in the Google Cloud project that owns GOOGLE_CLIENT_ID.',
         # A refresh token only comes back for offline access, and again on
         # later sign-ins only with prompt=consent.
         extra_params={'access_type': 'offline', 'prompt': 'consent', 'include_granted_scopes': 'true'},
         options=options,
+        setting=setting,
     )
 
 
@@ -111,11 +121,14 @@ CATALOG: tuple[CatalogApp, ...] = (
         category='Developer',
         token_help='Or paste a personal access token from github.com/settings/tokens.',
     ),
-    _google('gmail', 'Gmail', 'Search and read mail, and write drafts.', 'gmailmcp.googleapis.com', (
+    _google('gmail', 'Gmail', 'Search, read and label mail, and write drafts.', 'gmailmcp.googleapis.com', (
         'https://www.googleapis.com/auth/gmail.readonly',
         'https://www.googleapis.com/auth/gmail.compose',
+        # Google's label and unlabel tools need it.
+        'https://www.googleapis.com/auth/gmail.modify',
     ), options=(
         # gmail.compose already allows sending, so this needs no new sign-in.
+        # Google's server has no send tool, so ours (native.py) does it.
         AppOption('send', 'Send email', 'Agents can send mail and saved drafts. Each send asks you first.'),
     )),
     _google('google-calendar', 'Google Calendar', 'Your calendars, events and free time.', 'calendarmcp.googleapis.com', (
@@ -124,8 +137,9 @@ CATALOG: tuple[CatalogApp, ...] = (
         'https://www.googleapis.com/auth/calendar.events.readonly',
     ), options=(
         AppOption('edit', 'Create and change events',
-                  'Agents can add, change and delete events. Each change asks you first.',
-                  scopes=('https://www.googleapis.com/auth/calendar.events',)),
+                  'Agents can add, change and delete events, and answer invitations. Each change asks you first.',
+                  scopes=('https://www.googleapis.com/auth/calendar.events',),
+                  tools=('create_event', 'update_event', 'delete_event', 'respond_to_event')),
     )),
     _google('google-drive', 'Google Drive', 'Find, read and create files in Drive.', 'drivemcp.googleapis.com',
             _GOOGLE_DRIVE_READ),
@@ -141,6 +155,52 @@ CATALOG: tuple[CatalogApp, ...] = (
         'https://www.googleapis.com/auth/presentations.readonly',
         'https://www.googleapis.com/auth/presentations',
     )),
+    _google('google-chat', 'Google Chat', 'Search and read your spaces and messages.', 'chatmcp.googleapis.com', (
+        'https://www.googleapis.com/auth/chat.spaces.readonly',
+        'https://www.googleapis.com/auth/chat.memberships.readonly',
+        'https://www.googleapis.com/auth/chat.messages.readonly',
+    ), options=(
+        AppOption('send', 'Send messages',
+                  'Agents can send Chat messages, mark them read or unread, and change notification settings. '
+                  'Each one asks you first.',
+                  scopes=(
+                      'https://www.googleapis.com/auth/chat.messages.create',
+                      'https://www.googleapis.com/auth/chat.users.readstate',
+                      'https://www.googleapis.com/auth/chat.users.spacesettings',
+                  ),
+                  tools=('send_message', 'mark_as_read', 'mark_as_unread', 'update_notification_settings')),
+    ), setup=('Turn on the Google Chat API and Chat MCP API in the Google Cloud project that owns GOOGLE_CLIENT_ID. '
+              'Sending messages also needs a Chat app: Google Chat API > Configuration, interactive features off.')),
+    # People is the one Google server that isn't on its own *mcp host.
+    _google('google-contacts', 'Google Contacts', 'Look up your contacts and people in your organization.',
+            'people.googleapis.com', (
+                'https://www.googleapis.com/auth/userinfo.profile',
+                'https://www.googleapis.com/auth/contacts.readonly',
+                'https://www.googleapis.com/auth/directory.readonly',
+            ), setup='Turn on the People API in the Google Cloud project that owns GOOGLE_CLIENT_ID.'),
+    # One tool (search_corpus) over Gmail, Drive, Calendar and Chat at once.
+    _google('google-search', 'Search all of Google', 'One search across your Gmail, Drive, Calendar and Chat.',
+            'workspacemcp.googleapis.com', (
+                'https://www.googleapis.com/auth/gmail.readonly',
+                'https://www.googleapis.com/auth/drive.readonly',
+                'https://www.googleapis.com/auth/calendar.readonly',
+                'https://www.googleapis.com/auth/chat.messages.readonly',
+                'https://www.googleapis.com/auth/chat.spaces.readonly',
+                'https://www.googleapis.com/auth/chat.memberships.readonly',
+            ), setup=('Turn on the Google Workspace MCP API in the Google Cloud project that owns GOOGLE_CLIENT_ID.')),
+    _google('google-classroom', 'Google Classroom', 'Courses, rosters, coursework and announcements.',
+            'classroommcp.googleapis.com', (
+                'https://www.googleapis.com/auth/classroom.courses.readonly',
+                'https://www.googleapis.com/auth/classroom.rosters.readonly',
+                'https://www.googleapis.com/auth/classroom.profile.emails',
+                'https://www.googleapis.com/auth/classroom.announcements',
+                'https://www.googleapis.com/auth/classroom.coursework.students',
+                'https://www.googleapis.com/auth/classroom.student-submissions.students.readonly',
+                'https://www.googleapis.com/auth/classroom.guardianlinks.students.readonly',
+                'https://www.googleapis.com/auth/classroom.topics.readonly',
+                'https://www.googleapis.com/auth/classroom.topics',
+            ), setup='Turn on the Google Classroom API and Classroom MCP API in the Google Cloud project that owns GOOGLE_CLIENT_ID.',
+            setting='COGNITRIX_GOOGLE_CLASSROOM'),
     CatalogApp(
         id='slack', name='Slack', description='Search and read messages, and send them.',
         url='https://mcp.slack.com/mcp', auth='provider', provider='slack', scopes=SLACK_SCOPES,
@@ -168,7 +228,27 @@ PROVIDERS = tuple(PROVIDER_LABEL)
 
 
 def get(app_id: str | None) -> CatalogApp | None:
+    """Any catalog app, offered or not: existing connections keep working."""
     return _BY_ID.get(str(app_id or ''))
+
+
+def offered(app: CatalogApp) -> bool:
+    """Whether people can pick the app now (its admin setting, if any, is on)."""
+    if not app.setting:
+        return True
+    from cognitrix.app_settings import get_bool
+
+    return get_bool(app.setting, False)
+
+
+def listed() -> list[CatalogApp]:
+    """The apps Settings > Connected apps shows."""
+    return [app for app in CATALOG if offered(app)]
+
+
+def gated_tools(app: CatalogApp | None) -> dict[str, AppOption]:
+    """Server tool name -> the option that unlocks it."""
+    return {name: o for o in (app.options if app else ()) for name in o.tools}
 
 
 def _saved_name(provider: str, part: str) -> str:

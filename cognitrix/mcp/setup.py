@@ -27,9 +27,19 @@ _PROBE_CODE = 'cognitrix-setup-check'
 GOOGLE_APIS = (
     'gmail.googleapis.com', 'calendar-json.googleapis.com', 'drive.googleapis.com',
     'docs.googleapis.com', 'sheets.googleapis.com', 'slides.googleapis.com',
+    'chat.googleapis.com', 'people.googleapis.com',
     'gmailmcp.googleapis.com', 'calendarmcp.googleapis.com', 'drivemcp.googleapis.com',
     'docsmcp.googleapis.com', 'sheetsmcp.googleapis.com', 'slidesmcp.googleapis.com',
+    'chatmcp.googleapis.com', 'workspacemcp.googleapis.com',
 )
+# Only asked for when an admin offers Google Classroom.
+CLASSROOM_APIS = ('classroom.googleapis.com', 'classroommcp.googleapis.com')
+
+
+def google_apis() -> tuple[str, ...]:
+    """The APIs to turn on for the Google apps this server offers."""
+    classroom = catalog.get('google-classroom')
+    return GOOGLE_APIS + (CLASSROOM_APIS if classroom and catalog.offered(classroom) else ())
 
 # What each provider answers for a wrong client, and for a right client with a bad code.
 _BAD_CLIENT = {
@@ -46,7 +56,7 @@ _BAD_REDIRECT = {'redirect_uri_mismatch', 'bad_redirect_uri'}
 
 
 def _apps(provider: str) -> list[catalog.CatalogApp]:
-    return [a for a in catalog.CATALOG if a.provider == provider]
+    return [a for a in catalog.listed() if a.provider == provider]
 
 
 def all_scopes(provider: str) -> list[str]:
@@ -91,14 +101,15 @@ def _steps(provider: str, redirect_uri: str, base: str) -> list[dict[str, Any]]:
     if provider == 'google':
         return [
             _step('Pick a Google Cloud project',
-                  'Use an existing project or create one. The Gmail, Calendar, Drive, Docs, Sheets and Slides '
-                  'servers are in Google\'s Workspace Developer Preview, so the account that owns the project '
-                  'has to join that program first.',
+                  'Use an existing project or create one. Google\'s Workspace MCP servers (Gmail, Calendar, '
+                  'Drive, Docs, Sheets, Slides, Chat, Contacts and Search all of Google) are in Google\'s '
+                  'Workspace Developer Preview, so the account that owns the project has to join that program '
+                  'first.',
                   link=('Open Google Cloud console', 'https://console.cloud.google.com/projectcreate')),
             _step('Turn on the APIs',
                   'Each app needs its normal API and its MCP API. Run this in Cloud Shell, or turn each one on '
                   'under APIs & Services › Library.',
-                  copy=('Command', 'gcloud services enable ' + ' '.join(GOOGLE_APIS))),
+                  copy=('Command', 'gcloud services enable ' + ' '.join(google_apis()))),
             _step('Set up the consent screen',
                   'Under Google Auth Platform, fill in Branding. For Audience pick Internal, or External and '
                   'add every person who will connect as a test user.',
@@ -108,8 +119,16 @@ def _steps(provider: str, redirect_uri: str, base: str) -> list[dict[str, Any]]:
                   copy=('Scopes', '\n'.join(all_scopes('google')))),
             _step('Create the client',
                   'Under Clients › Create client choose "Web application", add the redirect address below as '
-                  'an authorized redirect URI, and tick "Use this client for an AI-powered agent".',
+                  'an authorized redirect URI, and tick "Use this client for an AI-powered agent". Google refuses '
+                  'MCP calls from a client without that tick, so if you made the client earlier, open it and '
+                  'tick it now.',
                   copy=('Redirect address', redirect_uri)),
+            _step('Let agents send in Chat (optional)',
+                  'Only needed for "Send messages" on Google Chat. Open Google Chat API › Configuration, give '
+                  'the Chat app a name, avatar address and description, turn "Enable interactive features" off '
+                  'and save. Reading Chat works without it.',
+                  link=('Open Google Chat API settings',
+                        'https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat')),
             _step('Save the client ID and secret', 'Paste them below, then press Check.'),
         ]
     if provider == 'github':
