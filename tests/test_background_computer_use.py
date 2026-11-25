@@ -265,7 +265,7 @@ def test_blocked_windows_are_refused(driver, fake):
         driver.type_text(4, 'dir')
     assert blocked_reason('KeePassXC.exe') == 'it is a password manager'
     assert 'administrator' in blocked_reason('app.exe', elevated=True)
-    assert "Cognitrix's own" in blocked_reason('cognitrix-desktop.exe')
+    assert blocked_reason('cognitrix-desktop.exe') is None  # Cognitrix itself: see own_app_busy
     assert 'terminal' in blocked_reason('x.exe', kind='console')
     assert blocked_reason('notepad.exe') is None
 
@@ -277,16 +277,30 @@ async def test_list_shows_why_a_window_cant_be_controlled(driver, monkeypatch):
     assert "1: 'Calc' (calc.exe)" in out
 
 
-async def test_own_window_is_listed_and_can_be_looked_at_but_not_controlled(driver, fake, monkeypatch):
-    fake.windows[6] = WindowInfo(6, 'Cognitrix', 'cognitrix.exe', 15, rect=(0, 0, 800, 600),
-                                 blocked=blocked_reason('cognitrix.exe'))
+async def test_own_window_can_be_controlled_unless_a_card_waits(driver, fake, monkeypatch):
+    from cognitrix.safety.approval_gate import _WEB_PENDING
+
+    fake.windows[6] = WindowInfo(6, 'Cognitrix', 'cognitrix.exe', 15, rect=(0, 0, 800, 600), own=True)
     fake.trees[6] = [Element('Button', 'New chat', actions=['invoke'], rect=(10, 10, 90, 40))]
     monkeypatch.setattr(tools, 'get_driver', lambda: driver)
     out = (await tools.list_windows.run(search='cognitrix', computer='person')).content
-    assert "6: 'Cognitrix' (cognitrix.exe) - can't control: it is Cognitrix's own window" in out
+    assert "6: 'Cognitrix' (cognitrix.exe) - this is Cognitrix itself" in out
+    assert "can't control" not in out
     driver.look(6)
-    with pytest.raises(Blocked):
-        driver.type_text(6, 'hi')
+    assert driver.act_on_element(6, 0).status != FAILED
+
+    # An approval card is open: no agent may click it for the person.
+    _WEB_PENDING['r1'] = {'future': None}
+    try:
+        driver.look(6)  # looking is still fine
+        with pytest.raises(Blocked, match='approval or question card'):
+            driver.act_on_element(6, 0)
+        with pytest.raises(Blocked):
+            driver.type_text(6, 'hi', use_screen=True)
+        driver.look(2)
+        driver.type_text(2, 'other apps are unaffected')
+    finally:
+        _WEB_PENDING.pop('r1', None)
 
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='Windows backend')
@@ -294,7 +308,7 @@ def test_windows_backend_lists_its_own_window(monkeypatch):
     from cognitrix.computer import windows as win
 
     backend = win.WindowsBackend()
-    own = WindowInfo(7, 'Cognitrix', 'cognitrix.exe', os.getpid(), blocked=blocked_reason('', own=True))
+    own = WindowInfo(7, 'Cognitrix', 'cognitrix.exe', os.getpid(), own=True)
     other = WindowInfo(8, 'Notes', 'notepad.exe', 11)
     infos = {7: own, 8: other, 9: None}
     monkeypatch.setattr(backend, '_info', lambda hwnd: infos[hwnd])
