@@ -213,7 +213,11 @@ function AskCard({ question, onAnswer, onCancel, onStopTimer }: QuestionCardProp
     if (Number.isInteger(n) && n >= 1 && n <= item.options.length) {
       event.preventDefault();
       pick(item.options[n - 1].id);
-    } else if (event.key === 'Enter' && answered(draft)) {
+    } else if (
+      event.key === 'Enter' && answered(draft)
+      // Other buttons (Cancel, Back, Something else…) keep their own Enter.
+      && (target === event.currentTarget || ['radio', 'checkbox'].includes(target.getAttribute('role') ?? ''))
+    ) {
       event.preventDefault();
       next();
     }

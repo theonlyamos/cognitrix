@@ -169,4 +169,13 @@ describe('QuestionCard', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancel question' }));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+  it('leaves Enter on other buttons alone', async () => {
+    const onAnswer = vi.fn().mockResolvedValue(undefined);
+    const onCancel = vi.fn().mockResolvedValue(undefined);
+    render(<QuestionCard question={question()} onAnswer={onAnswer} onCancel={onCancel} onStopTimer={vi.fn()} />);
+    screen.getByRole('button', { name: 'Cancel question' }).focus();
+    await userEvent.keyboard('{Enter}');
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
 });
