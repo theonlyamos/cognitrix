@@ -259,8 +259,12 @@ keeps what later agents can use:
 Each chat or task run is read once (a chat that grows by 6+ messages has only
 its new part read). Chats with a message in the last 2 hours (10 minutes for
 "Review now"), incognito, public-link and very short chats are skipped. One
-model call per piece of work on the main assistant's model, at most 10 per
-run, within the daily proactive token limit at night. Settings > Memory has
+model call per piece of work on the main assistant's model. A run reads
+everything finished since the last one, oldest first so nothing ages out of
+the 14-day look-back (a safety ceiling of 200 per run). At night it stops at
+the daily proactive token limit or after 90 minutes, and the rest waits for
+the next night. While it runs, its `stats` hold the progress and a heartbeat,
+so a long run isn't mistaken for a stuck one. Settings > Memory has
 the nightly switch, "Review now" and the list of what was kept, each with
 Remove (Undo for an improved skill or note). The Inbox says what was learned.
 ## 7. Backup to Notion (built Nov 2026)
@@ -272,4 +276,5 @@ After every tidy that finishes (nightly or Tidy now), `cognitrix/memory/notion_b
 - Restore from Notion (same section) brings memories back approved, skipping ones already saved. Agent-only notes go to the agent with the same name; when that agent or project no longer exists they come back as proposals for the person to approve, so they never reach the wrong agent. The summary is restored when there isn't one yet.
 - Connecting Notion on an install with no memories looks for a backup and, if there is one, puts "Memory backup found in Notion" in the Inbox.
 - A fresh install's nightly tidy never overwrites a bigger backup it could restore from: the status says to restore first, and only Back up now replaces it.
-- API: `GET/PUT /memories/notion`, `POST /memories/notion/backup`, `POST /memories/notion/restore`.
+- Skills (`cognitrix/skills/notion_backup.py`): the person's own skills, including the ones the chat review writes, go to a second page, "Cognitrix skills backup", after a review that wrote or improved a skill and after each tidy, only when they changed since the last backup (a fingerprint is kept in `NotionSkillsBackup`). Same switch as the memory backup. Bodies are stored as lists of lines in the JSON block. Restore adds missing skills and keeps any skill with the same name already on this install (or a shared one). A fresh install never overwrites a page holding skills it doesn't have; connecting Notion with no skills puts "Skills backup found in Notion" in the Inbox. Back up now and Restore from Notion do memories and skills together.
+- API: `GET/PUT /memories/notion` (with a `skills` part), `POST /memories/notion/backup`, `POST /memories/notion/restore` (with a `skills` result).

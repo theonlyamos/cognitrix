@@ -6,6 +6,7 @@ from cognitrix.assistant.proactivity import MODELS as PROACTIVITY_MODELS
 from cognitrix.memory.dream import MODELS as DREAM_MODELS
 from cognitrix.memory.notion_backup import MODELS as NOTION_BACKUP_MODELS
 from cognitrix.memory.review import MODELS as REVIEW_MODELS
+from cognitrix.skills.notion_backup import MODELS as NOTION_SKILLS_BACKUP_MODELS
 from cognitrix.models.memory import MemoryChange, MemoryProfile
 
 MODELS = (
@@ -16,6 +17,7 @@ MODELS = (
     *DREAM_MODELS,
     *REVIEW_MODELS,
     *NOTION_BACKUP_MODELS,
+    *NOTION_SKILLS_BACKUP_MODELS,
     MemoryChange,
     MemoryProfile,
 )

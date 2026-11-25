@@ -226,20 +226,24 @@ describe('Notion backup', () => {
     lib.notionBackupStatus.mockResolvedValue(notionState({
       status: 'ok', last_ok: '2026-11-22 07:00:00', count: 12, page_url: 'https://www.notion.so/abc',
     }));
-    lib.notionBackupNow.mockResolvedValue(notionState({ status: 'ok', count: 13, last_ok: '2026-11-22 07:30:00' }));
+    const skills = { status: 'ok' as const, message: '', last_at: null, last_ok: '2026-11-22 07:30:00', page_url: 'https://www.notion.so/def', count: 5 };
+    lib.notionBackupNow.mockResolvedValue(notionState({ status: 'ok', count: 13, last_ok: '2026-11-22 07:30:00', skills }));
     lib.restoreFromNotion.mockResolvedValue({
       restored: 4, already: 9, waiting: 1, left_out: 0, about_you: false, saved: '', page_url: null,
-      state: notionState({ status: 'ok', count: 13 }),
+      skills: { restored: 2, already: 3, kept: 0, left_out: 0 },
+      state: notionState({ status: 'ok', count: 13, skills }),
     });
     render(<MemoryRouter><MemorySettings /></MemoryRouter>);
     expect(await screen.findByText(/Memories saved: 12/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open the page in Notion' })).toHaveAttribute('href', 'https://www.notion.so/abc');
 
     fireEvent.click(screen.getByRole('button', { name: 'Back up now' }));
-    expect(await screen.findByText('Backed up to Notion. Memories saved: 13.')).toBeInTheDocument();
+    expect(await screen.findByText('Backed up to Notion. Memories saved: 13. Skills saved: 5.')).toBeInTheDocument();
+    expect(screen.getByText(/^Last backed up .* Skills saved: 5\.$/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the skills page in Notion' })).toHaveAttribute('href', 'https://www.notion.so/def');
 
     fireEvent.click(screen.getByRole('button', { name: 'Restore from Notion' }));
-    expect(await screen.findByText(/4 new, 9 already here, 1 waiting/)).toBeInTheDocument();
+    expect(await screen.findByText(/4 new, 9 already here, 1 waiting.*Skills: 2 added, 3 already here/)).toBeInTheDocument();
     await waitFor(() => expect(lib.listMemories).toHaveBeenCalledTimes(2));
   });
 

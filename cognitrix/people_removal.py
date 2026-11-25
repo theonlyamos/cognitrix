@@ -49,6 +49,7 @@ PRIVATE = (
     ('cognitrix.memory.review', 'ReviewedSource', 'user_id'),
     ('cognitrix.memory.review', 'LearnedItem', 'user_id'),
     ('cognitrix.memory.notion_backup', 'NotionBackup', 'user_id'),
+    ('cognitrix.skills.notion_backup', 'NotionSkillsBackup', 'user_id'),
     ('cognitrix.assistant.proactivity', 'ProactivitySettings', 'user_id'),
     ('cognitrix.assistant.proactivity', 'ProactivityDay', 'user_id'),
     ('cognitrix.assistant.brief', 'Brief', 'user_id'),

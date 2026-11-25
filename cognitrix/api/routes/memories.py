@@ -296,8 +296,12 @@ async def undo_dream(dream_id: str, ctx: AuthContext = Depends(jwt_only)):
 
 
 async def _notion_state(owner: str) -> dict:
+    from cognitrix.skills import notion_backup as skills_backup
+
     row = await notion_backup.get_state(owner)
-    return notion_backup.public_state(row, await notion_backup.find_connection(owner) is not None)
+    state = notion_backup.public_state(row, await notion_backup.find_connection(owner) is not None)
+    state['skills'] = skills_backup.public_state(await skills_backup.get_state(owner))
+    return state
 
 
 @memories_api.get('/notion')
@@ -316,21 +320,36 @@ async def notion_settings(body: NotionBackupBody, ctx: AuthContext = Depends(jwt
 
 @memories_api.post('/notion/backup')
 async def notion_backup_now(ctx: AuthContext = Depends(jwt_only)):
-    """Back up now: write memories to the Notion page right away (replaces an older backup)."""
+    """Back up now: write memories and skills to their Notion pages right away (replaces older backups)."""
+    from cognitrix.skills import notion_backup as skills_backup
+
     owner = _owner(ctx)
     await notion_backup.backup(owner, trigger='manual')
+    await skills_backup.backup(owner, trigger='manual')
     return await _notion_state(owner)
 
 
 @memories_api.post('/notion/restore')
 async def notion_restore(ctx: AuthContext = Depends(jwt_only)):
-    """Bring memories back from the Notion backup page."""
+    """Bring memories and skills back from their Notion backup pages."""
+    from cognitrix.skills import notion_backup as skills_backup
+
     owner = _owner(ctx)
+    result: dict = {'restored': 0, 'already': 0, 'waiting': 0, 'left_out': 0}
+    skills: dict = {'restored': 0, 'already': 0, 'kept': 0, 'left_out': 0}
+    errors: list[notion_backup.BackupError] = []
     try:
         result = await notion_backup.restore(owner)
     except notion_backup.BackupError as exc:
-        raise HTTPException(status_code=400, detail=exc.message) from None
-    return {**result, 'state': await _notion_state(owner)}
+        errors.append(exc)
+    if not errors or errors[0].status != notion_backup.NOT_CONNECTED:
+        try:
+            skills = await skills_backup.restore(owner)
+        except notion_backup.BackupError as exc:
+            errors.append(exc)
+    if len(errors) == 2 or (errors and errors[0].status == notion_backup.NOT_CONNECTED):
+        raise HTTPException(status_code=400, detail=errors[0].message) from None
+    return {**result, 'skills': skills, 'state': await _notion_state(owner)}
 
 
 @memories_api.post('/{memory_id}/approve')

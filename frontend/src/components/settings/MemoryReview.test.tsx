@@ -46,6 +46,16 @@ beforeEach(() => {
 });
 
 describe('ReviewSection', () => {
+  it('shows how far a running review has got', async () => {
+    lib.reviewStatus.mockResolvedValue(status({
+      running: true,
+      runs: [{ id: 'r2', trigger: 'manual', status: 'running', started: '2026-11-22 03:00:00', finished: null,
+        summary: '', stats: { at: 11, total: 40, beat: '2026-11-22 03:20:00' } }],
+    }));
+    renderIt();
+    expect(await screen.findByText('Reading 12 of 40 finished chats and tasks.')).toBeTruthy();
+  });
+
   it('lists what the review kept with where it came from', async () => {
     renderIt();
     expect(await screen.findByText('monthly-invoice-totals')).toBeTruthy();

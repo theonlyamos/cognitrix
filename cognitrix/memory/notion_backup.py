@@ -360,8 +360,8 @@ def _page_ref(text: str) -> tuple[str, str]:
     return (id_match.group(1).replace('-', '') if id_match else ''), url
 
 
-def _search_hits(raw: str) -> list[tuple[str, str]]:
-    """Pages titled like the backup page, as (id, url), from a search result."""
+def _search_hits(raw: str, title: str = PAGE_TITLE) -> list[tuple[str, str]]:
+    """Pages with this title (the backup page), as (id, url), from a search result."""
     hits: list[tuple[str, str]] = []
     try:
         data = json.loads(raw)
@@ -372,7 +372,7 @@ def _search_hits(raw: str) -> list[tuple[str, str]]:
         for item in results:
             if not isinstance(item, dict):
                 continue
-            if str(item.get('title') or '').strip() != PAGE_TITLE:
+            if str(item.get('title') or '').strip() != title:
                 continue
             page_id, url = _page_ref(json.dumps(item))
             page_id = str(item.get('id') or page_id).replace('-', '')
@@ -380,7 +380,7 @@ def _search_hits(raw: str) -> list[tuple[str, str]]:
                 hits.append((page_id, str(item.get('url') or url)))
         return hits
     # Unknown shape: take any page id next to the title.
-    for chunk in raw.split(PAGE_TITLE)[1:]:
+    for chunk in raw.split(title)[1:]:
         page_id, url = _page_ref(chunk[:600])
         if page_id:
             hits.append((page_id, url))
@@ -474,7 +474,8 @@ async def _restored_waiting(user_id: str) -> int:
 
 
 async def after_tidy(user_id: str) -> None:
-    """Called when a tidy finished. Quiet when backups are off; the status row covers failures."""
+    """Called when a tidy finished. Quiet when backups are off; the status row covers failures.
+    Skills are backed up too when they changed since their last backup."""
     try:
         state = await get_state(user_id)
         if not state.enabled:
@@ -482,6 +483,9 @@ async def after_tidy(user_id: str) -> None:
         await backup(user_id, trigger='tidy')
     except Exception:
         logger.exception('Notion memory backup after tidy failed for %s', user_id)
+    from cognitrix.skills import notion_backup as skills_backup
+
+    await skills_backup.after_change(user_id)
 
 
 # ---------------------------------------------------------------- restore
