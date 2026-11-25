@@ -104,6 +104,7 @@ def tool(*args: Any, **kwargs: Any):
             max_attempts=kwargs.get('max_attempts', 3),
             supported_interfaces=kwargs.get('supported_interfaces'),
             occupies_execution_slot=kwargs.get('occupies_execution_slot', True),
+            runs_in_thread=not inspect.iscoroutinefunction(func),
             approval_mode=kwargs.get('approval_mode', 'risk_based'),
             internal_params=internal,
         )

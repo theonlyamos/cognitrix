@@ -149,3 +149,31 @@ def test_tool_round_and_script_limits_default_to_none():
 
     assert session_base.MAX_TOOL_ROUNDS == 0
     assert code_mode.MAX_CALLS_PER_SCRIPT == 0
+
+
+@pytest.mark.asyncio
+async def test_a_tool_in_a_worker_thread_is_left_to_its_own_limits(monkeypatch):
+    """A worker thread can't be stopped, so the slot and path lock stay held
+    until it ends instead of the model being told it stopped."""
+    import cognitrix.agents.base as agent_base
+
+    slow = Tool(name="Slow Sync", description="d", parameters={}, runs_in_thread=True)
+    agent = _agent(monkeypatch, [slow])
+    monkeypatch.setattr(agent_base, "tool_timeout_seconds", lambda: 0.01)
+
+    async def fake_run_tool(self, tool, params, **kwargs):
+        await asyncio.sleep(0.05)
+        return ToolResult(success=True, data="finished")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+    result = await agent.call_tools([{"name": "Slow Sync", "arguments": {}, "tool_call_id": "s"}])
+    assert result["result"][0]["data"] == "finished"
+
+
+def test_sync_tools_are_marked_as_running_in_a_thread():
+    from cognitrix.tools.misc import WebFetch, call_agent
+
+    assert WebFetch.runs_in_thread is True
+    assert call_agent.runs_in_thread is False

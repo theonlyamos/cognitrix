@@ -889,8 +889,12 @@ class AgentManager:
                         lock_held = True
                     if constrained:
                         async with execution_slots or contextlib.nullcontext():
+                            # A worker thread can't be stopped: cancelling only
+                            # its awaiter would free the slot and path lock while
+                            # it still runs, so sync tools keep their own limits.
+                            limit = None if getattr(tool, 'runs_in_thread', False) else time_limit
                             try:
-                                async with asyncio.timeout(time_limit):
+                                async with asyncio.timeout(limit):
                                     result = await resilient_manager.run_tool(
                                         tool=tool,
                                         params=params,
@@ -898,8 +902,8 @@ class AgentManager:
                                         attempt_recovery=attempt_recovery,
                                     )
                             except TimeoutError:
-                                logger.warning("Tool %s ran past %ss and was stopped", tool.name, time_limit)
-                                minutes = round((time_limit or 0) / 60, 1)
+                                logger.warning("Tool %s ran past %ss and was stopped", tool.name, limit)
+                                minutes = round((limit or 0) / 60, 1)
                                 result = ToolResult(
                                     success=False,
                                     error=(

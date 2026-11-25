@@ -1536,7 +1536,9 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
     ownRunSeenRef.current = null;
     ownRunGoneRef.current = 0;
     finishTurn();
-    void loadConversation(sid);
+    // Tagged with the new generation, so a turn started before the history
+    // arrives isn't overwritten by this load.
+    void loadConversation(sid, turnGenerationRef.current);
   }, [chatRuns, activeSessionId, busy, followSid, finishTurn, loadConversation]);
 
   // Mid-reply silence: the model is thinking without showing it, or writing
