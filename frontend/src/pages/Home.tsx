@@ -2351,9 +2351,9 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
             phone={isPhone}
             onLiveVoice={() => setLiveVoice(true)}
             liveVoiceDisabled={!isConnected}
+            model={<ChatModelPicker agentLlm={currentAgent?.llm} value={chatModel} onChange={changeChatModel} />}
             settings={(
               <>
-                <ChatModelPicker agentLlm={currentAgent?.llm} value={chatModel} onChange={changeChatModel} />
                 {(pcs.length > 0 || chatPc) && (
                   <ComputerChip
                     devices={pcs}

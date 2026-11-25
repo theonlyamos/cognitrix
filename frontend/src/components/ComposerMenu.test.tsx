@@ -106,4 +106,29 @@ describe('ComposerMenu', () => {
     await user.click(item);
     expect(onToggle).toHaveBeenCalledTimes(2);
   });
+
+  it('puts effort and fast right after the model, before the other chips', () => {
+    setup({
+      reasoning: 'high',
+      fast: { on: true, onToggle: vi.fn() },
+      model: <span data-testid="model-chip">Opus 5.5</span>,
+      settings: <span data-testid="folder-chip">folder</span>,
+    });
+    const model = screen.getByTestId('model-chip');
+    const effort = screen.getByRole('button', { name: /Reasoning high/i });
+    const fast = screen.getByRole('button', { name: 'Turn off fast mode' });
+    const folder = screen.getByTestId('folder-chip');
+    const follows = (a: Element, b: Element) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(follows(model, effort) && follows(effort, fast) && follows(fast, folder)).toBe(true);
+  });
+
+  it('changes effort from its own chip', async () => {
+    const user = userEvent.setup();
+    const p = setup({ reasoning: 'high' });
+    await user.click(screen.getByRole('button', { name: /Reasoning high/i }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    await user.click(screen.getByRole('option', { name: /low/ }));
+    expect(p.onReasoning).toHaveBeenCalledWith('low');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
 });
