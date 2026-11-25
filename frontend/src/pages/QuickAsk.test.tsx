@@ -105,4 +105,23 @@ describe('QuickAsk', () => {
     expect(screen.getByRole('button', { name: /set up voice/i })).toBeInTheDocument();
     expect(voice.start).not.toHaveBeenCalled();
   });
+
+  it('starts a new chat when the one it was using is gone', async () => {
+    let calls = 0;
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      calls += 1;
+      const sent = JSON.parse(init.body as string);
+      if (calls === 1) return sse(['chunk', { content: 'First answer.', session_id: 'old' }]);
+      if (sent.session_id === 'old') return new Response(JSON.stringify({ detail: 'Session not found' }), { status: 404 });
+      return sse(['chunk', { content: 'Fresh answer.', session_id: 'new' }]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<QuickAsk />);
+    await act(async () => voice.onText?.('One'));
+    expect(await screen.findByText('First answer.')).toBeInTheDocument();
+    await act(async () => voice.onText?.('Two'));
+    expect(await screen.findByText('Fresh answer.')).toBeInTheDocument();
+    const bodies = fetchMock.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string).session_id);
+    expect(bodies).toEqual([null, 'old', null]);
+  });
 });

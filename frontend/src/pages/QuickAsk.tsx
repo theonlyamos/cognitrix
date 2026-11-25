@@ -324,7 +324,7 @@ export default function QuickAsk() {
     setTurns((all) => [...all, { id, question: message, answer: '', error: null, busy: true }]);
     setQuestion('');
     try {
-      const response = await fetch(`${API_BASE}/agents/${agentId}/generate`, {
+      const send = (session: string | null) => fetch(`${API_BASE}/agents/${agentId}/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -332,9 +332,16 @@ export default function QuickAsk() {
           Authorization: `Bearer ${localStorage.getItem('token') ?? ''}`,
           ...(browserTimezone() ? { 'X-Timezone': browserTimezone() } : {}),
         },
-        body: JSON.stringify({ message, stream: true, session_id: sessionId }),
+        body: JSON.stringify({ message, stream: true, session_id: session }),
         signal: controller.signal,
       });
+      let response = await send(sessionId);
+      // The quick ask chat was deleted (or belongs to another agent now):
+      // start a new one instead of failing every question until a restart.
+      if (response.status === 404 && sessionId) {
+        setSessionId(null);
+        response = await send(null);
+      }
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.detail || tr('ui.quickAsk.requestFailedStatus', { status: response.status }));
