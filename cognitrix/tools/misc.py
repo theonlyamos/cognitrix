@@ -1655,16 +1655,101 @@ async def _helper_chat(authority, agent, parent):
     return await agent_chats.create_chat(str(authority.user_id), agent, started_by)
 
 
+# How long Call Agent waits by default, and at most, before it gives up on
+# an answer. Longer work belongs in hand-off mode.
+CALL_AGENT_WAIT_MINUTES = 10
+CALL_AGENT_MAX_WAIT_MINUTES = 30
+# The whole-turn cap of a handed-off helper (background chat turns default to
+# the much shorter API chat timeout).
+HANDOFF_TURN_SECONDS = 3600.0
+_CALL_AGENT_MODES = ('wait', 'handoff')
+_MINUTE = 60.0
+
+
+async def _handoff_chat(authority):
+    """The caller's saved chat that a handed-off answer can come back to,
+    and '' — or None and why hand-off isn't possible from this turn."""
+    from cognitrix.sessions import agent_chats  # noqa: WPS433
+    from cognitrix.sessions.base import Session  # noqa: WPS433
+
+    if authority.restricted or not authority.user_id:
+        return None, 'only a signed-in person\'s chat can receive the answer later'
+    if authority.task_id or not authority.session_id:
+        return None, 'this turn has no chat for the answer to come back to'
+    current = await Session.get(authority.session_id)
+    if current is None:
+        return None, 'this turn has no chat for the answer to come back to'
+    if getattr(current, 'incognito', False):
+        return None, 'this is an incognito chat'
+    if getattr(current, 'group_chat', False):
+        return None, 'group chats cannot receive handed-off answers'
+    if agent_chats.running_agent_chats(str(authority.user_id)) >= agent_chats.MAX_RUNNING_PER_USER:
+        return None, f'{agent_chats.MAX_RUNNING_PER_USER} agent chats are already working'
+    return current, ''
+
+
+def _handoff_report(name: str, chat_id: str, status: str, reply: str) -> str:
+    from cognitrix.sessions.agent_chats import MESSAGE_MAX_CHARS, REPORT_PREFIX  # noqa: WPS433
+
+    if status == 'complete':
+        body = reply[:MESSAGE_MAX_CHARS] or '(no answer)'
+        return (f'{REPORT_PREFIX}{name} (agent) finished the job you handed off with Call Agent '
+                f'(chat id {chat_id}):\n\n{body}\n\n'
+                'Carry on with what you were doing, using this result.')
+    what = 'was stopped' if status == 'stopped' else 'failed'
+    return (f'{REPORT_PREFIX}The job you handed off to {name} with Call Agent (chat id {chat_id}) {what} '
+            'before it finished. Its chat shows how far it got. Tell the person if it matters.')
+
+
+def _start_handoff(authority, agent, saved, current, task: str, child_context, depth: int) -> None:
+    """Run the helper's chat in the background; its answer comes back to
+    the caller's chat as a new message (steered into a running turn, or a
+    new turn once that chat is free)."""
+    from cognitrix.sessions import agent_chats  # noqa: WPS433
+    from cognitrix.teams.group_chat import _strip_think  # noqa: WPS433
+
+    user_key = str(authority.user_id)
+    caller_id, caller_agent_id = str(current.id), str(current.agent_id or authority.agent_id or '')
+    sid = str(saved.id)
+
+    def setup():
+        # The background turn has a fresh context: keep the delegation depth
+        # counting, so a handed-off helper can't hand off without end.
+        _CALL_AGENT_DEPTH.set(depth + 1)
+        return HANDOFF_TURN_SECONDS
+
+    async def done(status: str, reply: str) -> None:
+        text = _handoff_report(agent.name, sid, status, _strip_think(reply or '').strip())
+        try:
+            outcome = await agent_chats.deliver_report(
+                user_key, caller_agent_id, caller_id, text, sender=agent.name)
+        except Exception:
+            logger.exception('Could not hand the answer of chat %s back to chat %s', sid, caller_id)
+            outcome = 'dropped'
+        if outcome == 'dropped':
+            await agent_chats._alert_once(
+                user_key, caller_id, f'{agent.name} finished a handed-off job',
+                'The chat that asked for it was busy. Open it and ask for the result.')
+
+    # Not tracked for pick-up after a restart: a resumed turn would run with
+    # full authority instead of a helper's read-only one.
+    agent_chats.run_in_background(
+        user_key, agent, saved, task, on_done=done, setup=setup, tool_context=child_context)
+
+
 @tool(category='system')
-async def call_agent(name: str, task: str, *, interface: str = 'task', parent=None):
-    """Run a task with a sub agent
+async def call_agent(name: str, task: str, mode: str = 'wait', wait_minutes: int = CALL_AGENT_WAIT_MINUTES,
+                     *, interface: str = 'task', parent=None):
+    """Give a job to another agent, who can read the working folders but cannot change files or run commands. Pick the mode by how long the job takes. mode 'wait' (default): the answer is this tool's result; use it for quick asks you need before you can go on, like a lookup, a short question, a second opinion or a quick review. mode 'handoff': returns at once while the agent works in the background, and its answer arrives in this chat as a new message when it is done; use it for anything that takes more than a few minutes (research, a long document, a big review) or to run several jobs at the same time. After a hand-off, carry on with other work, or tell the person what is running and end your turn; don't wait or poll for it.
 
     Args:
         name (str): Name of the agent to call
-        task (str): The task|query to perform|answer
+        task (str): The job, with everything the agent needs to know: it sees only this
+        mode (str): 'wait' (default) or 'handoff'
+        wait_minutes (int): In wait mode, how long to wait for the answer before the job is stopped (default 10, at most 30)
 
     Returns:
-        str: The result of the task
+        str: The agent's answer (wait), or a note that the job was handed off (handoff)
 
     Raises:
         Exception: If the agent is not found or the task fails
@@ -1676,10 +1761,22 @@ async def call_agent(name: str, task: str, *, interface: str = 'task', parent=No
     if authority.run_id is not None:
         return 'Error calling agent: delegation is unavailable inside durable task runs'
 
+    mode = str(mode or 'wait').strip().lower().replace('-', '').replace('_', '')
+    if mode == 'handover':
+        mode = 'handoff'
+    if mode not in _CALL_AGENT_MODES:
+        return f"Error calling agent: mode must be 'wait' or 'handoff', not {mode!r}"
+    try:
+        wait_minutes = float(wait_minutes)
+    except (TypeError, ValueError):
+        wait_minutes = CALL_AGENT_WAIT_MINUTES
+    wait_minutes = min(max(wait_minutes, 1), CALL_AGENT_MAX_WAIT_MINUTES)
+
     depth = _CALL_AGENT_DEPTH.get()
     if depth >= MAX_AGENT_CALL_DEPTH:
         return f"Error calling agent: delegation depth limit ({MAX_AGENT_CALL_DEPTH}) reached"
     token = _CALL_AGENT_DEPTH.set(depth + 1)
+    note = ''
     try:
         from cognitrix.agents.access import find_visible_agent  # noqa: WPS433
         from cognitrix.sessions.base import Session  # noqa: WPS433
@@ -1696,6 +1793,13 @@ async def call_agent(name: str, task: str, *, interface: str = 'task', parent=No
         # Preserve identity when there is no turn-scoped authority to drop.
         if child_context == authority:
             child_context = authority
+
+        current = None
+        if mode == 'handoff':
+            current, why = await _handoff_chat(authority)
+            if current is None:
+                mode = 'wait'
+                note = f"(Hand-off isn't possible here: {why}. Waited for the answer instead.)\n\n"
 
         chunks: list[str] = []
 
@@ -1722,22 +1826,32 @@ async def call_agent(name: str, task: str, *, interface: str = 'task', parent=No
         except Exception:
             logger.exception('Could not save a chat for Call Agent; running it unsaved')
             saved = None
-        if saved is None:
-            session = Session(agent_id=str(agent.id), user_id=authority.user_id)
-            await session(
-                task,
-                agent,
-                session_interface,
-                True,
-                capture,
-                {},
-                save_history=False,
-                tool_context=child_context,
-                record_history=True,
-                persist_history=False,
-                compact_history=False,
-            )
-        else:
+
+        if mode == 'handoff':
+            if saved is not None:
+                _start_handoff(authority, agent, saved, current, task, child_context, depth)
+                return (f"Handed off to {name} (chat id {saved.id}). It is working in the background, and its "
+                        'answer will arrive in this chat as a new message when it is done. Carry on with other '
+                        "work, or tell the person what is running and end your turn. Don't wait or poll for it.")
+            note = "(Hand-off isn't possible here: the job's chat could not be saved. Waited for the answer instead.)\n\n"
+
+        async def run_helper():
+            if saved is None:
+                session = Session(agent_id=str(agent.id), user_id=authority.user_id)
+                await session(
+                    task,
+                    agent,
+                    session_interface,
+                    True,
+                    capture,
+                    {},
+                    save_history=False,
+                    tool_context=child_context,
+                    record_history=True,
+                    persist_history=False,
+                    compact_history=False,
+                )
+                return
             # A fresh chat of the person's own: save it like any chat, and
             # mark it running so the chat list shows it working and the chat
             # can be opened and followed live.
@@ -1771,11 +1885,23 @@ async def call_agent(name: str, task: str, *, interface: str = 'task', parent=No
                 raise
             finally:
                 run.finish(terminal)
+
         # The helper's thinking is not part of its answer: passing it on only
         # fills the caller's context (a reviewer can think for pages).
         from cognitrix.teams.group_chat import _strip_think  # noqa: WPS433
 
-        return _strip_think(''.join(chunks)).strip() or f"Agent '{name}' returned no output."
+        try:
+            await asyncio.wait_for(run_helper(), timeout=wait_minutes * _MINUTE)
+        except TimeoutError:
+            so_far = _strip_think(''.join(chunks)).strip()
+            where = f' Its chat (chat id {saved.id}) shows how far it got.' if saved is not None else ''
+            partial = f'\n\nWhat it had written so far:\n{so_far[-4000:]}' if so_far else ''
+            return (f"{note}Agent '{name}' did not finish within {wait_minutes:g} minutes, so it was stopped.{where} "
+                    "For long work, call it again with mode='handoff': its answer then comes back to this "
+                    f'chat as a new message when it is done.{partial}')
+
+        answer = _strip_think(''.join(chunks)).strip() or f"Agent '{name}' returned no output."
+        return note + answer
     except Exception as e:
         return f"Error calling agent: {str(e)}"
     finally:
