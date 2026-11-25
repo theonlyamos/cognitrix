@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-app-notify"
+description = "Enables the app_notify command without any pre-configured scope."
+commands.allow = ["app_notify"]
+
+[[permission]]
+identifier = "deny-app-notify"
+description = "Denies the app_notify command without any pre-configured scope."
+commands.deny = ["app_notify"]

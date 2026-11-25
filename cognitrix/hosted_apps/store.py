@@ -25,7 +25,7 @@ import jwt
 from cognitrix.artifact_pages.models import EVERYONE, SHARE_ROLES
 from cognitrix.artifact_pages.store import ROLE_OWNER, can_edit, names, role_of, shares, task_info  # noqa: F401
 from cognitrix.computer.sandbox.apps import AppHostError, pack_folder, unpack
-from cognitrix.hosted_apps.models import HostedApp, HostedAppVersion
+from cognitrix.hosted_apps.models import POWERS, HostedApp, HostedAppGrant, HostedAppVersion
 from cognitrix.hosted_apps.runner import RunnerError, default_runtime, runner_for
 
 logger = logging.getLogger('cognitrix.apps')
@@ -485,6 +485,7 @@ async def delete_app(app: HostedApp) -> None:
 
         shutil.rmtree(shots_dir() / app.slug, ignore_errors=True)
     await HostedAppVersion.delete_many({'app_id': str(app.id)})
+    await HostedAppGrant.delete_many({'app_id': str(app.id)})
     await HostedApp.delete_many({'id': str(app.id)})
 
 
@@ -804,6 +805,42 @@ def read_open_token(token: str, slug: str) -> tuple[str, bool] | None:
 
 def app_path(slug: str, token: str) -> str:
     return f'/a/{slug}/~{token}/'
+
+
+# ------------------------------------------------------------------ what the person allowed
+
+async def grant(app: HostedApp, user_key: str) -> HostedAppGrant | None:
+    rows = await HostedAppGrant.find({'app_id': str(app.id), 'user_id': user_key}) or []
+    return rows[0] if rows else None
+
+
+async def permissions(app: HostedApp, user_key: str) -> dict[str, list[str]]:
+    row = await grant(app, user_key)
+    return {'allowed': list(row.allowed) if row else [], 'asked': list(row.asked) if row else []}
+
+
+async def set_permission(app: HostedApp, user_key: str, power: str, allowed: bool) -> dict[str, list[str]]:
+    """The person's answer about one power. Only they can give it, from Cognitrix's own
+    page around the app (never from inside the app)."""
+    if power not in POWERS:
+        raise AppError('unknown_power', f'Apps can\'t ask for "{power}"')
+    row = await grant(app, user_key)
+    granted = set(row.allowed if row else [])
+    asked = set(row.asked if row else [])
+    (granted.add if allowed else granted.discard)(power)
+    asked.add(power)
+    changes = {'allowed': [p for p in POWERS if p in granted], 'asked': [p for p in POWERS if p in asked],
+               'updated': now()}
+    if row is None:
+        await HostedAppGrant(app_id=str(app.id), user_id=user_key, created=now(), **changes).save()
+    else:
+        await HostedAppGrant.update_one({'id': str(row.id)}, changes)
+    return {'allowed': changes['allowed'], 'asked': changes['asked']}
+
+
+async def allowed(app: HostedApp, user_key: str, power: str) -> bool:
+    row = await grant(app, user_key)
+    return bool(row and power in row.allowed)
 
 
 # ------------------------------------------------------------------ output

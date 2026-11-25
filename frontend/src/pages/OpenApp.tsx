@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, X } from 'lucide-react';
+import { AppBridgeDialogs, useAppBridge } from '@/components/hosted-apps/AppBridge';
 import { AppStatusBadge } from '@/components/hosted-apps/parts';
 import { api, errorMessage } from '@/lib/api';
-import { isDesktop, windowAction } from '@/lib/desktop';
+import { desktop, isDesktop, windowAction } from '@/lib/desktop';
+import { installedChanged, useInstalledApp } from '@/lib/installedApps';
 import { APP_FRAME_SANDBOX, openUrl, type AppSummary } from '@/lib/hostedApps';
 import { tr } from '@/lib/i18n';
 
@@ -13,10 +15,25 @@ import { tr } from '@/lib/i18n';
 export default function OpenApp() {
   const { slug = '' } = useParams();
   const navigate = useNavigate();
-  const ownWindow = useSearchParams()[0].get('window') === '1';
+  const [params] = useSearchParams();
+  const ownWindow = params.get('window') === '1';
+  const trayItem = params.get('tray') || undefined;
   const [url, setUrl] = useState('');
   const [app, setApp] = useState<AppSummary | null>(null);
   const [error, setError] = useState('');
+  const frame = useRef<HTMLIFrameElement>(null);
+  const { installed } = useInstalledApp(slug);
+  const { ask, confirm } = useAppBridge({ frame, app, ownWindow, installed, trayItem });
+  const [removed, setRemoved] = useState(false);
+  const uninstall = async () => {
+    try {
+      await desktop.uninstallApp(slug);
+      installedChanged();
+      setRemoved(true);
+    } catch {
+      /* the shortcut stays; Settings › Desktop app can remove it too */
+    }
+  };
 
   useEffect(() => {
     let live = true;
@@ -55,6 +72,11 @@ export default function OpenApp() {
         <div className="max-w-sm text-center">
           <h1 className="text-[17px] font-semibold">{tr('ui.openApp.thisAppDidnTOpen')}</h1>
           <p className="mt-2 text-[13.5px] text-fg-dim">{error}</p>
+          {installed && !removed && (
+            <button type="button" onClick={() => void uninstall()}
+              className="mt-4 mr-2 inline-flex h-9 items-center rounded-md border border-line px-3 text-[13px] font-medium hover:bg-panel-2">{tr('ui.openApp.removeItFromThisComputer')}</button>
+          )}
+          {removed && <p role="status" className="mt-3 text-[13px] text-fg-dim">{tr('ui.openApp.removedItsShortcutIsGone')}</p>}
           <Link to="/apps" className="mt-4 inline-flex h-9 items-center rounded-md border border-line px-3 text-[13px] font-medium hover:bg-panel-2">{tr('ui.openApp.goToApps')}</Link>
         </div>
       </div>
@@ -87,12 +109,13 @@ export default function OpenApp() {
         )}
       </header>
       {url ? (
-        <iframe src={url} title={app?.title || tr('ui.openApp.app')} sandbox={APP_FRAME_SANDBOX} className="min-h-0 w-full flex-1 border-0 bg-white" />
+        <iframe ref={frame} src={url} title={app?.title || tr('ui.openApp.app')} sandbox={APP_FRAME_SANDBOX} className="min-h-0 w-full flex-1 border-0 bg-white" />
       ) : (
         <div className="grid flex-1 place-items-center px-4 text-center text-[13.5px] text-fg-dim">
           {tr('ui.openApp.openingTheAppItMay')}
         </div>
       )}
+      <AppBridgeDialogs title={app?.title || slug} ask={ask} confirm={confirm} />
     </div>
   );
 }

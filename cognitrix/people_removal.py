@@ -76,6 +76,7 @@ PRIVATE = (
     ('cognitrix.meetings.notes', 'MeetingNote', 'user_id'),
     ('cognitrix.artifact_pages.models', 'ArtifactConsent', 'user_id'),
     ('cognitrix.artifact_pages.models', 'ArtifactData', 'user_id'),
+    ('cognitrix.hosted_apps.models', 'HostedAppGrant', 'user_id'),
     ('cognitrix.usage.caps', 'SpendingCap', 'user_id'),
     ('cognitrix.sessions.resume', 'ChatTurnLease', 'user_id'),
 )

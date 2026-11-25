@@ -120,4 +120,34 @@ class HostedAppVersion(Model):
         return _int(value)
 
 
-MODELS = (HostedApp, HostedAppVersion)
+POWERS = ('notify', 'apps')
+"""What an app may ask the person who opens it for, on top of showing itself:
+
+- ``notify``: system notifications (the desktop app's, or the browser's);
+- ``apps``: the person's connected apps (reads freely; any change asks each time).
+
+The desktop app's tray icon is a third one, kept per computer by the desktop app."""
+
+
+class HostedAppGrant(Model):
+    """What one person allowed an app to do for them (and what they were asked)."""
+    app_id: str
+    user_id: str
+    allowed: list = Field(default_factory=list)
+    asked: list = Field(default_factory=list)
+    """Powers the person answered about, yes or no: those aren't asked again."""
+    created: str = ''
+    updated: str = ''
+
+    @field_validator('allowed', 'asked', mode='before')
+    @classmethod
+    def _powers(cls, value):
+        return [p for p in value if p in POWERS] if isinstance(value, list) else []
+
+    @field_validator('created', 'updated', mode='before')
+    @classmethod
+    def _text_default(cls, value):
+        return _text(value)
+
+
+MODELS = (HostedApp, HostedAppVersion, HostedAppGrant)

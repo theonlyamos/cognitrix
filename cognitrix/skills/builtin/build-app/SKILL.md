@@ -49,6 +49,15 @@ a second one: edit its folder and publish again with its `app_id`.
    - No cookies or localStorage. Who is viewing comes from the `X-Cognitrix-User-Name`, `-Email` and
      `-Id` request headers (percent-encoded UTF-8; decode them).
    - No websockets: poll instead.
+   - People can install an app on their computer (desktop app). In the browser code, `window.cognitrix`
+     can then ask them for more; each call asks the person the first time and rejects if they say no,
+     so always handle a rejected promise:
+     `cognitrix.notify(title, body)` shows a system notification (good for reminders and finished work);
+     `cognitrix.tray.set({tooltip, title, items: [{id, label}]})` and `cognitrix.tray.onClick(id => ...)`
+     give an installed app its own tray (menu bar) icon and menu;
+     `cognitrix.apps.list()` and `cognitrix.apps.call(app, tool, args)` use the person's connected apps
+     (Gmail, Calendar, ...) as them: reads run, changes ask the person each time.
+     Use these only when the user wants that; they're all optional.
    - Don't commit `node_modules` or `.venv`; install them with the install command.
 4. **Try it** if you can run commands: start it with `PORT=8765 APP_DATA_DIR=./.data` and fetch a page.
    Skip this when the shell isn't available; publishing reports start errors with the log.

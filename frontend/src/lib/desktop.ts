@@ -65,6 +65,17 @@ export const desktop = {
   openExternal: (url: string) => invokeDesktop<void>('open_external', { url }),
   /** An app from the Apps page in a window of its own (brought forward if already open). */
   openAppWindow: (slug: string, title: string) => invokeDesktop<void>('open_app_window', { slug, title }),
+  /** Apps installed on this computer (Start menu / Applications / apps menu shortcuts). */
+  listInstalledApps: () => invokeDesktop<InstalledApp[]>('list_installed_apps'),
+  /** `icon` is a 256 x 256 PNG (see makeAppIcon). Reinstalling updates the shortcut. */
+  installApp: (slug: string, title: string, icon: Uint8Array, desktopShortcut: boolean) =>
+    invokeDesktop<InstalledApp>('install_app', { slug, title, icon: Array.from(icon), desktop: desktopShortcut }),
+  uninstallApp: (slug: string) => invokeDesktop<void>('uninstall_app', { slug }),
+  setAppTrayAllowed: (slug: string, allowed: boolean) => invokeDesktop<InstalledApp>('set_app_tray_allowed', { slug, allowed }),
+  setAppTray: (slug: string, tray: AppTray | null) => invokeDesktop<InstalledApp>('set_app_tray', { slug, tray }),
+  /** A notification from an app; clicking it opens the app's window. */
+  appNotify: (slug: string, appTitle: string, title: string, body: string) =>
+    invokeDesktop<boolean>('app_notify', { slug, appTitle, title, body }),
   getSettings: () => invokeDesktop<DesktopSettings>('get_desktop_settings'),
   setSettings: (patch: Partial<Pick<DesktopSettings, 'close_to_tray' | 'notify_desktop' | 'start_with_windows' | 'agent_cursor'>>) =>
     invokeDesktop<DesktopSettings>('set_desktop_settings', { patch }),
@@ -86,6 +97,23 @@ export const desktop = {
   /** Downloads, installs and restarts the app. Rejects with the reason. */
   installUpdate: () => invokeDesktop<void>('install_update'),
 };
+
+export interface InstalledApp {
+  slug: string;
+  title: string;
+  desktop_shortcut: boolean;
+  tray_allowed: boolean;
+  tray_asked: boolean;
+  installed_at: number;
+  /** Where the shortcut is, for the person: "Start menu › Cognitrix Apps". */
+  place: string;
+}
+
+export interface AppTray {
+  tooltip: string;
+  title: string;
+  items: { id: string; label: string }[];
+}
 
 export interface UpdateInfo {
   /** This build can update itself (a signed release build). */

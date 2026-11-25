@@ -9,6 +9,9 @@
     POST   /api/v1/hosted-apps/{id}/promote         make a kept version live again
     POST   /api/v1/hosted-apps/{id}/redeploy        publish its folder again as a new version
     GET    /api/v1/hosted-apps/{id}/logs            the end of its output
+    GET    /api/v1/hosted-apps/{id}/permissions     what I allowed it (notifications, connected apps)
+    PUT    /api/v1/hosted-apps/{id}/permissions     my answer about one of them
+    POST   /api/v1/hosted-apps/{id}/bridge          a connected-app call the app made (window.cognitrix)
     DELETE /api/v1/hosted-apps/{id}
 
 The app itself is served at ``/a/<slug>/~<token>/...`` (``app_proxy`` below,
@@ -33,8 +36,8 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from pydantic import BaseModel, Field
 
 from cognitrix.common.security import AuthContext, jwt_only
-from cognitrix.hosted_apps import store
-from cognitrix.hosted_apps.models import HostedApp
+from cognitrix.hosted_apps import bridge, store
+from cognitrix.hosted_apps.models import POWERS, HostedApp
 from cognitrix.hosted_apps.runner import RunnerError, default_runtime, runner_for
 from cognitrix.session_ownership import principal_key
 
@@ -253,6 +256,63 @@ async def delete_app(ref: str, ctx: AuthContext = Depends(jwt_only)):
     return {'ok': True}
 
 
+# ------------------------------------------------------------------ what the app may ask for
+
+@hosted_apps_api.get('/{ref}/permissions')
+async def get_permissions(ref: str, ctx: AuthContext = Depends(jwt_only)):
+    app, _ = await _app(ref, ctx)
+    return {**await store.permissions(app, _me(ctx)), 'powers': list(POWERS)}
+
+
+class PermissionAnswer(BaseModel):
+    power: str
+    allowed: bool
+
+
+@hosted_apps_api.put('/{ref}/permissions')
+async def set_permission(ref: str, body: PermissionAnswer, ctx: AuthContext = Depends(jwt_only)):
+    """The person's own answer, from Cognitrix's page around the app: an app can't call
+    this (it runs in an opaque origin, with no sign-in)."""
+    app, _ = await _app(ref, ctx)
+    try:
+        return {**await store.set_permission(app, _me(ctx), body.power, body.allowed), 'powers': list(POWERS)}
+    except store.AppError as exc:
+        raise _bad(exc) from None
+
+
+class BridgeCall(BaseModel):
+    kind: str
+    payload: dict = {}
+    confirmed: bool = False
+    """The person said yes to this one change (set by Cognitrix's page, never by the app)."""
+
+
+@hosted_apps_api.post('/{ref}/bridge')
+async def app_bridge(ref: str, body: BridgeCall, ctx: AuthContext = Depends(jwt_only)):
+    """A connected-app call an app made through ``window.cognitrix``, relayed by the
+    person's window. It uses the person's own connected apps, and only if they allowed it."""
+    from cognitrix.api.routes.artifact_pages import _apps_call, _apps_list
+    from cognitrix.artifact_pages.store import PageError
+
+    app, _ = await _app(ref, ctx)
+    me = _me(ctx)
+    if body.kind not in ('apps.list', 'apps.call'):
+        raise HTTPException(status_code=400, detail='Unknown call')
+    if not await store.allowed(app, me, 'apps'):
+        raise HTTPException(status_code=403, detail='You have not allowed this app to use your connected apps')
+    payload = body.payload or {}
+    try:
+        if body.kind == 'apps.list':
+            return {'value': await _apps_list(me, include_changes=True)}
+        return {'value': await _apps_call(me, str(payload.get('app') or ''), str(payload.get('tool') or ''),
+                                          payload.get('arguments') or {}, confirmed=body.confirmed,
+                                          caller=f'App {app.slug}')}
+    except PageError as exc:
+        if exc.code == 'confirm':
+            raise HTTPException(status_code=409, detail={'code': 'confirm', 'message': exc.message}) from None
+        raise HTTPException(status_code=exc.status, detail=exc.message) from None
+
+
 # ------------------------------------------------------------------ the app itself
 
 _HOP = {'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers',
@@ -408,6 +468,17 @@ async def app_request(slug: str, rest: str, request: Request):
     out_headers.update(_cors({'Content-Security-Policy': APP_CSP, 'Referrer-Policy': 'no-referrer',
                               'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex',
                               'Cache-Control': upstream.headers.get('cache-control', 'private, no-cache')}))
+
+    content_type = upstream.headers.get('content-type', '')
+    encoded = upstream.headers.get('content-encoding', 'identity').lower() not in ('', 'identity')
+    if request.method == 'GET' and content_type.lower().startswith('text/html') and not encoded:
+        # The app's pages get window.cognitrix (hosted_apps/bridge.py) first in their <head>.
+        try:
+            body = await upstream.aread()
+        finally:
+            await upstream.aclose()
+        return Response(bridge.inject(body), status_code=upstream.status_code, headers=out_headers,
+                        media_type=content_type)
 
     async def stream():
         try:
