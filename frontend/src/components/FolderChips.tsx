@@ -192,18 +192,34 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
         <button
           type="button"
           disabled={disabled}
-          onClick={() => { setAdding(false); setOpen((v) => !v); }}
+          // With no folder yet, go straight to the picker (recents, Browse, paste).
+          onClick={() => { setAdding(!main); setOpen((v) => !v); }}
           aria-haspopup="dialog"
           aria-expanded={open}
-          aria-label={main ? tr('ui.folderChips.foldersMapChange', { map: folders.map(folderName).join(', ') }) : tr('ui.folderChips.foldersLabelChange', { label })}
+          aria-label={main ? tr('ui.folderChips.foldersMapChange', { map: folders.map(folderName).join(', ') }) : tr('ui.folderChips.addAFolder')}
           title={folders.length ? folders.map((f) => `${f.path} (${f.access === 'write' ? 'read & write' : 'read only'})`).join('\n') : tr('ui.folderChips.theAgentWorksInA')}
+          data-empty={main ? undefined : ''}
           className={cn(composerBtn, open && 'bg-panel-2 text-fg')}
         >
-          <FolderIcon size={15} />
-          <span className="hidden text-fg-dim lg:inline">{tr('ui.folderChips.workingIn')}</span>
-          <span className={cn('hidden max-w-[11rem] truncate sm:inline', main && 'text-fg')}>{label}</span>
-          {folders.length > 1 && <span className="font-mono text-[11px] text-fg-dim"><span className="hidden sm:inline">+{folders.length - 1}</span><span className="sm:hidden">{folders.length}</span></span>}
-          <ChevronIcon />
+          {main ? (
+            <>
+              <span className="text-accent-ink"><FolderIcon size={15} /></span>
+              <span className="hidden max-w-[11rem] truncate text-fg sm:inline">{label}</span>
+              {folders.length > 1 && <span className="font-mono text-[11px] text-fg-dim"><span className="hidden sm:inline">+{folders.length - 1}</span><span className="sm:hidden">{folders.length}</span></span>}
+              <ChevronIcon />
+            </>
+          ) : (
+            <>
+              <span className="relative">
+                <FolderIcon size={17} />
+                <span aria-hidden className="absolute -bottom-1 -right-1.5 grid h-3 w-3 place-items-center rounded-full bg-panel">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                </span>
+              </span>
+              {/* Only shown in the phone sheet, where every setting has a label. */}
+              <span className="hidden">{tr('ui.folderChips.addFolder')}</span>
+            </>
+          )}
         </button>
         {open && (
           <>

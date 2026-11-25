@@ -107,12 +107,15 @@ describe('FolderChips as one button', () => {
     expect(onChange).toHaveBeenLastCalledWith([{ ...FOLDERS[1], primary: true }]);
   });
 
-  it('says the scratch folder is used when there are none, and can add one', async () => {
+  it('is an icon button when there are none, and opens straight to adding one', async () => {
     const user = userEvent.setup();
     render(<FolderChips variant="button" folders={[]} onChange={vi.fn()} emptyLabel="Scratch folder" />);
-    await user.click(screen.getByRole('button', { name: 'Folders: Scratch folder. Change' }));
-    expect(screen.getByText(/private scratch folder/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Add folder' }));
+    const button = screen.getByRole('button', { name: 'Add a folder' });
+    expect(button).toHaveAttribute('title', expect.stringMatching(/private space/));
+    expect(button).not.toHaveTextContent('Scratch folder');
+    await user.click(button);
     expect(screen.getByLabelText('Folder path')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '‹ Folders' }));
+    expect(screen.getByText(/private scratch folder/)).toBeInTheDocument();
   });
 });
