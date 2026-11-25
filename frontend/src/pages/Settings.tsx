@@ -33,6 +33,9 @@ import { ComputersSettings } from '@/components/settings/Computers';
 import { ThisPcLink } from '@/components/settings/ThisPcLink';
 import { SignInsSettings } from '@/components/settings/SignIns';
 import { AppSettings } from '@/components/settings/AppSettings';
+import { AppIcon } from '@/components/hosted-apps/InstallApp';
+import { openAppWindow } from '@/lib/hostedApps';
+import { installedChanged, useInstalledApps } from '@/lib/installedApps';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -316,6 +319,39 @@ function UpdateRow() {
   );
 }
 
+/** Settings › Desktop app: the apps installed on this computer from their pages. */
+function InstalledAppsGroup() {
+  const { apps, reload } = useInstalledApps();
+  const [error, setError] = useState('');
+  const remove = async (slug: string) => {
+    setError('');
+    try {
+      await desktop.uninstallApp(slug);
+      installedChanged();
+      void reload();
+    } catch (err) {
+      setError(reason(err, tr('ui.settings.couldNotUninstallIt')));
+    }
+  };
+  return (
+    <>
+      <SectionHeader title={tr('ui.settings.installedApps')} description={tr('ui.settings.appsAgentsBuiltThatYou')} />
+      <Group>
+        {apps.length === 0 ? (
+          <p className="px-3.5 py-3 text-[13px] text-fg-dim">{tr('ui.settings.noneYetOpenAnApp')}</p>
+        ) : apps.map((a) => (
+          <SettingRow key={a.slug} label={a.title} lead={<AppIcon title={a.title} slug={a.slug} size={28} />}
+            detail={`${a.place}${a.tray_allowed ? ' · tray icon' : ''}`}>
+            <button type="button" onClick={() => void openAppWindow(a)} className={quietButtonClass}>{tr('ui.settings.open')}</button>
+            <button type="button" onClick={() => void remove(a.slug)} className={buttonClass}>{tr('ui.settings.uninstall')}</button>
+          </SettingRow>
+        ))}
+      </Group>
+      {error && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{error}</p>}
+    </>
+  );
+}
+
 function DesktopSection() {
   const { prefs, error, update } = useDesktopPrefs(true);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -365,6 +401,7 @@ function DesktopSection() {
         </Group>
       )}
       {error && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{error}</p>}
+      <div className="mt-6"><InstalledAppsGroup /></div>
     </>
   );
 }

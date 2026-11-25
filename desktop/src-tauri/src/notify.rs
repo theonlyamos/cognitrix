@@ -27,6 +27,8 @@ pub struct Notice<'a> {
     /// one sends `notification-action` to the main window, which answers it
     /// with the signed-in session, without bringing the window forward.
     pub approval: Option<String>,
+    /// An installed app's slug: clicking opens that app's window instead.
+    pub app: Option<String>,
 }
 
 /// What the Approve and Deny buttons tell the window.
@@ -83,6 +85,7 @@ pub fn test(app: &AppHandle) -> Result<(), String> {
             path: Some("/settings/desktop".into()),
             urgent: false,
             approval: None,
+            app: None,
         },
     )
 }
@@ -192,14 +195,19 @@ mod platform {
         if notice.approval.is_some() {
             toast = toast.add_button("Approve", "approve").add_button("Deny", "deny");
         }
-        if notice.path.is_some() {
+        if notice.path.is_some() && notice.app.is_none() {
             toast = toast.add_button(if notice.urgent { "Review" } else { "Open" }, "open");
         }
         let handle = app.clone();
         let path = notice.path;
         let approval = notice.approval;
+        let from_app = notice.app;
         toast
             .on_activated(move |action| {
+                if let Some(slug) = &from_app {
+                    crate::installed::open_app(&handle, slug.clone(), None, None);
+                    return Ok(());
+                }
                 match (action.as_deref(), approval.as_deref()) {
                     (Some("approve"), Some(id)) => super::send_action(&handle, id, true),
                     (Some("deny"), Some(id)) => super::send_action(&handle, id, false),

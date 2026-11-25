@@ -574,7 +574,9 @@ async def _my_apps(me: str) -> list:
     return [config_from_row(r) for r in rows if getattr(r, 'enabled', True)]
 
 
-async def _apps_list(me: str) -> list[dict[str, Any]]:
+async def _apps_list(me: str, include_changes: bool = False) -> list[dict[str, Any]]:
+    """The viewer's connected apps and their tools: only tools that change nothing,
+    unless ``include_changes`` (installed Apps, which ask before each change)."""
     from cognitrix.mcp import apps
     from cognitrix.mcp.client import get_dynamic_client
     from cognitrix.mcp.registry import prepare
@@ -589,13 +591,23 @@ async def _apps_list(me: str) -> list[dict[str, Any]]:
         tools = []
         for info in await apps.list_tools(client, config):
             name = str(info.get('name') or '')
-            if mcp_only_reads(name, info.get('annotations')):
-                tools.append({'name': name, 'description': str(info.get('description') or '')[:300]})
+            reads = mcp_only_reads(name, info.get('annotations'))
+            if reads or include_changes:
+                tool = {'name': name, 'description': str(info.get('description') or '')[:300]}
+                if include_changes:
+                    tool['changes'] = not reads
+                tools.append(tool)
         out.append({'app': config.name, 'connected': True, 'tools': tools})
     return out
 
 
-async def _apps_call(me: str, app: str, tool_name: str, arguments: Any) -> Any:
+async def _apps_call(me: str, app: str, tool_name: str, arguments: Any, *, confirmed: bool | None = None,
+                     caller: str = 'Artifact page') -> Any:
+    """Run one of the viewer's connected app tools.
+
+    Pages (``confirmed`` None) may only read. Apps may also change things, one call at a
+    time: without the person's yes for this call (``confirmed`` False) it raises
+    ``confirm`` (409) for the window to ask them."""
     from cognitrix.mcp import apps
     from cognitrix.mcp.client import get_dynamic_client
     from cognitrix.mcp.registry import matches, prepare
@@ -615,12 +627,15 @@ async def _apps_call(me: str, app: str, tool_name: str, arguments: Any) -> Any:
         raise store.PageError('no_tool', f'"{app}" has no tool called "{tool_name}"', 404)
     # Pages only read: any change, even one that can be undone, stays with agents and their approvals.
     if not mcp_only_reads(tool_name, info.get('annotations')):
-        raise store.PageError('not_read_only', f'"{tool_name}" can change things, so pages may not call it', 403)
+        if confirmed is None:
+            raise store.PageError('not_read_only', f'"{tool_name}" can change things, so pages may not call it', 403)
+        if not confirmed:
+            raise store.PageError('confirm', f'"{tool_name}" on {config.name} can change things', 409)
     result = await apps.call_tool(client, config, tool_name, arguments if isinstance(arguments, dict) else {})
     text = _content_to_text(result)
     if result is None or (isinstance(text, str) and text.lstrip().startswith('Error:')):
         # What went wrong stays in the server log; the page only learns that it failed.
-        logger.warning('Artifact page call to %s on %s failed: %s', tool_name, app, str(text)[:500])
+        logger.warning('%s call to %s on %s failed: %s', caller, tool_name, app, str(text)[:500])
         raise store.PageError('app_failed', f'"{app}" could not run "{tool_name}". Try again later.', 502)
     try:
         return json.loads(text) if isinstance(text, str) else text

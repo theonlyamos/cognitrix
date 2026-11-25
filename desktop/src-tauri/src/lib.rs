@@ -6,6 +6,7 @@
 //! desktop shell and turns on the title bar, tray and notification features.
 
 mod engine;
+mod installed;
 mod notify;
 mod overlay;
 mod session;
@@ -43,7 +44,7 @@ fn quick_ask_shortcut() -> Shortcut {
 
 /// Only the engine's own pages (and the bundled start screen) open inside
 /// the app. Anything else goes to the default browser.
-fn allow_navigation(app: &AppHandle, url: &Url) -> bool {
+pub(crate) fn allow_navigation(app: &AppHandle, url: &Url) -> bool {
     let local_app = matches!(url.scheme(), "tauri" | "asset")
         || (url.scheme() == "http" && url.host_str() == Some("tauri.localhost"))
         || (url.scheme() == "https" && url.host_str() == Some("tauri.localhost"));
@@ -71,7 +72,7 @@ fn open_in_browser(app: &AppHandle, url: &Url) {
 /// an artifact or an app, or `window.open`. The webview would otherwise drop
 /// it silently, so the link opens in the default browser instead and no bare
 /// webview window appears.
-fn open_new_window(app: &AppHandle, url: &Url) -> NewWindowResponse<tauri::Wry> {
+pub(crate) fn open_new_window(app: &AppHandle, url: &Url) -> NewWindowResponse<tauri::Wry> {
     open_in_browser(app, url);
     NewWindowResponse::Deny
 }
@@ -163,6 +164,7 @@ pub(crate) fn on_engine_ready(app: &AppHandle, base: &str) {
             }
         }
     }
+    installed::on_engine_ready(app);
 }
 
 pub(crate) fn show_main(app: &AppHandle, path: Option<String>) {
@@ -200,6 +202,11 @@ fn link_route(url: &str) -> Option<String> {
 static PENDING_LINK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 fn open_link(app: &AppHandle, url: &str) {
+    // cognitrix://app/<slug>: an installed app's launcher (macOS).
+    if let Some(slug) = installed::slug_from_link(url) {
+        installed::open_app(app, slug, None, None);
+        return;
+    }
     if let Some(route) = link_route(url) {
         if let Ok(mut pending) = PENDING_LINK.lock() {
             *pending = Some(route.clone());
@@ -262,7 +269,7 @@ pub(crate) fn toggle_quick_ask(app: &AppHandle) {
 pub(crate) fn notify(app: &AppHandle, title: &str, body: &str, path: Option<&str>) -> bool {
     notify::show(
         app,
-        notify::Notice { title, body, path: notify::clean_path(path.map(str::to_owned)), urgent: false, approval: None },
+        notify::Notice { title, body, path: notify::clean_path(path.map(str::to_owned)), urgent: false, approval: None, app: None },
     )
 }
 
@@ -457,6 +464,7 @@ async fn desktop_notify(
             path: notify::clean_path(path),
             urgent: urgent.unwrap_or(false),
             approval: notify::clean_approval(approval),
+            app: None,
         },
     )
 }
@@ -488,45 +496,13 @@ async fn test_notification(app: AppHandle) -> Result<(), String> {
 /// Windows, creating a WebView2 window inside a synchronous command deadlocks.
 #[tauri::command]
 async fn open_app_window(app: AppHandle, slug: String, title: Option<String>) -> Result<(), String> {
-    let valid = !slug.is_empty()
-        && slug.len() <= 48
-        && slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-    if !valid {
+    if !installed::valid_slug(&slug) {
         return Err("Not an app name".into());
     }
-    let label = format!("app-{slug}");
-    if let Some(existing) = app.get_webview_window(&label) {
-        let _ = existing.unminimize();
-        let _ = existing.show();
-        let _ = existing.set_focus();
-        return Ok(());
-    }
-    let main = app.get_webview_window(MAIN).ok_or("The app window isn't open")?;
-    let current = main.url().map_err(|e| e.to_string())?;
-    if current.scheme() != "http" || current.host_str() != Some("127.0.0.1") {
+    if app.state::<engine::Engine>().status().url.is_none() {
         return Err("The engine isn't running yet".into());
     }
-    let mut url = current.clone();
-    url.set_path(&format!("/apps/open/{slug}"));
-    url.set_query(Some("window=1"));
-    url.set_fragment(None);
-    let handle = app.clone();
-    let name = title.unwrap_or_else(|| slug.clone());
-    WebviewWindowBuilder::new(&app, label, WebviewUrl::External(url))
-        .title(name.chars().take(120).collect::<String>())
-        .inner_size(1280.0, 820.0)
-        .min_inner_size(480.0, 360.0)
-        .center()
-        .background_color(tauri::window::Color(11, 12, 14, 255))
-        .additional_browser_args(BROWSER_ARGS)
-        .on_navigation({
-            let handle = handle.clone();
-            move |url| allow_navigation(&handle, url)
-        })
-        .on_new_window(move |url, _| open_new_window(&handle, &url))
-        .build()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    installed::open_app_now(&app, slug, title, None)
 }
 
 #[tauri::command]
@@ -550,8 +526,12 @@ fn hide_quick_ask(app: AppHandle) {
 pub fn run() {
     let app = tauri::Builder::default()
         // Must be first: a second launch focuses the running app instead.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            show_main(app, None);
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // An installed app's shortcut opens that app, not the main window.
+            match installed::slug_from_args(&argv) {
+                Some(slug) => installed::open_app(app, slug, None, None),
+                None => show_main(app, None),
+            }
         }))
         // After single-instance: a cognitrix:// link opened while the app
         // runs reaches this instance through it.
@@ -585,10 +565,24 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let main = build_main_window(&handle)?;
-            if !std::env::args().any(|arg| arg == MINIMIZED_FLAG) {
+            // Started by an installed app's shortcut: only that app's window
+            // opens (once the engine is up); Cognitrix stays in the tray.
+            let launched_app = installed::slug_from_args(std::env::args());
+            let app_link = {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                handle.deep_link().get_current().ok().flatten().is_some_and(|urls| {
+                    urls.iter().any(|u| installed::slug_from_link(u.as_str()).is_some())
+                })
+            };
+            if !std::env::args().any(|arg| arg == MINIMIZED_FLAG) && launched_app.is_none() && !app_link {
                 main.show()?;
             }
             tray::create(&handle)?;
+            installed::init(&handle);
+            if let Some(slug) = launched_app {
+                installed::open_app(&handle, slug, None, None);
+            }
+            // (A cognitrix://app/ link opens its app in watch_links below.)
             init_autostart(&handle);
             notify::init(&handle);
             if let Err(e) = handle.global_shortcut().register(quick_ask_shortcut()) {
@@ -627,6 +621,12 @@ pub fn run() {
             desktop_notify,
             show_main_window,
             open_app_window,
+            installed::install_app,
+            installed::uninstall_app,
+            installed::list_installed_apps,
+            installed::set_app_tray_allowed,
+            installed::set_app_tray,
+            installed::app_notify,
             hide_quick_ask,
             overlay_stop,
             get_saved_session,

@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Check, Copy, ExternalLink, Maximize2, Pause, Pencil, Pin, Play, RefreshCw, Share2, Trash2 } from 'lucide-react';
 import { AccessLabel, AppStatusBadge, Sparkline } from '@/components/hosted-apps/parts';
 import { AppShareDialog } from '@/components/hosted-apps/AppShareDialog';
+import { AppBridgeDialogs, useAppBridge } from '@/components/hosted-apps/AppBridge';
+import { AppPermissionsPanel, InstallAppButton } from '@/components/hosted-apps/InstallApp';
 import { DeleteAppDialog } from '@/components/hosted-apps/DeleteAppDialog';
 import { ErrorState, LoadingState } from '@/components/list-ui';
 import { api, errorMessage } from '@/lib/api';
 import { ago } from '@/lib/artifactPages';
 import { CHAT_DRAFT_KEY } from '@/lib/chatDraft';
 import { APP_FRAME_SANDBOX, appLink, openAppWindow, openUrl, type AppDetail as Detail } from '@/lib/hostedApps';
+import { desktop, type InstalledApp } from '@/lib/desktop';
+import { installedChanged, useInstalledApp } from '@/lib/installedApps';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
 
@@ -106,7 +110,13 @@ function Logs({ app }: { app: Detail }) {
   );
 }
 
-function Overview({ app, onChanged, onDeleted }: { app: Detail; onChanged: (d: Detail) => void; onDeleted: () => void }) {
+function Overview({ app, onChanged, onDeleted, installed, onInstalledChanged }: {
+  app: Detail;
+  onChanged: (d: Detail) => void;
+  onDeleted: () => void;
+  installed: InstalledApp | null;
+  onInstalledChanged: () => void;
+}) {
   const owner = app.role === 'owner';
   const canEdit = app.role !== 'view';
   const [busy, setBusy] = useState('');
@@ -153,6 +163,7 @@ function Overview({ app, onChanged, onDeleted }: { app: Detail; onChanged: (d: D
           </select>
         ) : app.sleep_after ? tr('ui.appDetail.sleepAfterMinWithNo', { sleep_after: app.sleep_after }) : tr('ui.appDetail.never')}</dd>
       </dl>
+      <AppPermissionsPanel app={app} installed={installed} onChanged={onInstalledChanged} />
       {app.last_error && <p className="rounded-md border border-danger-ink/30 bg-danger-ink/5 p-2.5 text-[12.5px] text-danger-ink">{app.last_error}</p>}
       {canEdit && (
         <div className="flex flex-wrap gap-2">
@@ -172,7 +183,15 @@ function Overview({ app, onChanged, onDeleted }: { app: Detail; onChanged: (d: D
         <DeleteAppDialog title={app.title} folder={app.folder} onCancel={() => setConfirmDelete(false)}
           onConfirm={async () => {
             // A failure closes the dialog too, so its message shows under the buttons.
-            await act('delete', async () => { await api.delete(`/hosted-apps/${app.id}`); onDeleted(); });
+            await act('delete', async () => {
+              await api.delete(`/hosted-apps/${app.id}`);
+              // Its shortcut on this computer would only open an error now.
+              if (installed) {
+                await desktop.uninstallApp(app.slug).catch(() => undefined);
+                installedChanged();
+              }
+              onDeleted();
+            });
             setConfirmDelete(false);
           }} />
       )}
@@ -201,6 +220,9 @@ export default function AppDetail() {
   const [phoneTab, setPhoneTab] = useState<PhoneTab>('app');
   const [sharing, setSharing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const { installed, reload: reloadInstalled } = useInstalledApp(app?.slug ?? '');
+  const { ask, confirm } = useAppBridge({ frame: frameRef, app, ownWindow: false, installed });
 
   const live = app ? app.version > 0 : false;
   useEffect(() => {
@@ -234,13 +256,14 @@ export default function AppDetail() {
   const editInChat = () => { openChat(app); navigate('/home'); };
 
   const appFrame = live && frame ? (
-    <iframe key={frame} src={frame} title={app.title} sandbox={APP_FRAME_SANDBOX} className="h-full w-full border-0 bg-white" />
+    <iframe ref={frameRef} key={frame} src={frame} title={app.title} sandbox={APP_FRAME_SANDBOX} className="h-full w-full border-0 bg-white" />
   ) : (
     <div className="grid h-full place-items-center p-6 text-center text-[13px] text-fg-dim">
       {app.status === 'building' ? tr('ui.appDetail.buildingVersionMax', { max: Math.max(1, app.latest) }) : app.last_error || tr('ui.appDetail.thisAppHasNoRunning')}
     </div>
   );
-  const sideBody = side === 'overview' ? <Overview app={app} onChanged={setApp} onDeleted={() => navigate('/apps', { replace: true })} />
+  const sideBody = side === 'overview' ? <Overview app={app} onChanged={setApp} onDeleted={() => navigate('/apps', { replace: true })}
+    installed={installed} onInstalledChanged={() => void reloadInstalled()} />
     : side === 'versions' ? <Versions app={app} onChanged={setApp} /> : <Logs app={app} />;
 
   return (
@@ -257,6 +280,7 @@ export default function AppDetail() {
           {app.role !== 'view' && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={editInChat}><Pencil size={14} />{tr('ui.appDetail.editInChat')}</button>}
           {live && <button type="button" className={cn(button, 'w-9 justify-center px-0')} onClick={openFull} aria-label={tr('ui.appDetail.fullScreen')} title={tr('ui.appDetail.fullScreenEscToCome')}><Maximize2 size={14} /></button>}
           {live && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={() => void openAppWindow(app).catch(() => openFull())} title={tr('ui.appDetail.openInItsOwnWindow')}><ExternalLink size={14} />{tr('ui.appDetail.open')}</button>}
+          {live && <InstallAppButton app={app} installed={installed} onChanged={() => void reloadInstalled()} className="hidden md:inline-flex" />}
           {app.role === 'owner' ? (
             <button type="button" className={cn(button, 'border-transparent bg-accent text-accent-foreground hover:bg-accent/90')} onClick={() => setSharing(true)} aria-label={tr('ui.appDetail.share')}>
               <Share2 size={14} /><span className="hidden md:inline">{tr('ui.appDetail.share')}</span>
@@ -295,6 +319,7 @@ export default function AppDetail() {
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">{sideBody}</div>
         </aside>
       </div>
+      <AppBridgeDialogs title={app.title} ask={ask} confirm={confirm} />
       {sharing && <AppShareDialog app={app} onClose={() => setSharing(false)} onChanged={setApp} />}
     </div>
   );
