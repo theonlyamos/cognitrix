@@ -61,6 +61,7 @@ const fr: Messages = {
   'settings.section.desktop': 'Application de bureau',
   'settings.section.engine': 'Moteur',
   'settings.section.server': 'Serveur',
+  'settings.section.advanced': 'Avancé',
 
   'appearance.description': "L'apparence et le comportement de Cognitrix. Les thèmes suivent votre compte ; le reste se règle par appareil.",
   'appearance.theme': 'Thème',

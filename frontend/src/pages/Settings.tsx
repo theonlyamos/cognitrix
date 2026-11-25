@@ -46,6 +46,16 @@ const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stoppe
 
 type SectionId = 'account' | 'appearance' | 'notifications' | 'models' | 'usage' | 'assistant' | 'memory' | 'voice' | 'apps' | 'computers' | 'people' | 'advanced' | 'desktop' | 'engine';
 
+/** Menu label key for each section. Typed so a new section can't ship without its label. */
+const SECTION_KEY: Record<SectionId, MessageKey> = {
+  account: 'settings.section.account', appearance: 'settings.section.appearance',
+  notifications: 'settings.section.notifications', models: 'settings.section.models',
+  usage: 'settings.section.usage', assistant: 'settings.section.assistant',
+  memory: 'settings.section.memory', voice: 'settings.section.voice', apps: 'settings.section.apps',
+  computers: 'settings.section.computers', people: 'settings.section.people',
+  advanced: 'settings.section.advanced', desktop: 'settings.section.desktop', engine: 'settings.section.engine',
+};
+
 interface SectionMeta {
   id: SectionId;
   label: string;
@@ -611,7 +621,7 @@ export default function Settings() {
     [desktopApp],
   );
   const shown = visible.filter(
-    (s) => matches(s, query) || t(`settings.section.${s.id}` as MessageKey).toLowerCase().includes(query.trim().toLowerCase()),
+    (s) => matches(s, query) || t(SECTION_KEY[s.id]).toLowerCase().includes(query.trim().toLowerCase()),
   );
   const active = visible.find((s) => s.id === section);
 
@@ -640,7 +650,7 @@ export default function Settings() {
   };
   const groupLabel = (g: string) => t(g === 'THIS COMPUTER' && !desktopApp ? 'settings.group.system' : GROUP_KEY[g]);
   const labelFor = (s: SectionMeta) =>
-    t(s.id === 'engine' && !desktopApp ? 'settings.section.server' : s.id === 'people' && !admin ? 'settings.section.audit' : (`settings.section.${s.id}` as MessageKey));
+    t(s.id === 'engine' && !desktopApp ? 'settings.section.server' : s.id === 'people' && !admin ? 'settings.section.audit' : SECTION_KEY[s.id]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 bg-bg text-fg">

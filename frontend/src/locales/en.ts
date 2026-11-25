@@ -62,6 +62,7 @@ const en = {
   'settings.section.desktop': 'Desktop app',
   'settings.section.engine': 'Engine',
   'settings.section.server': 'Server',
+  'settings.section.advanced': 'Advanced',
 
   'appearance.description': 'How Cognitrix looks and behaves. Themes follow your account; the rest is set per device.',
   'appearance.theme': 'Theme',
