@@ -709,10 +709,6 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
                     pass
 
         def _pagecheck(self) -> None:
-            import shutil as _shutil
-            import tempfile as _tempfile
-            from pathlib import Path as _Path
-
             from cognitrix.computer.sandbox import pagecheck
 
             b = self._body()
@@ -720,23 +716,17 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
             if browser is None:
                 self._reply(200, {'ok': False, 'error': 'no_browser', 'message': 'No Chromium on this computer.'})
                 return
-            folder = _tempfile.mkdtemp(prefix='cognitrix-page-')
+            views = [str(v) for v in (b.get('views') or pagecheck.VIEWS)]
+            for view in views:
+                pagecheck.parse_view(view)
             try:
-                target = _Path(folder) / 'page.html'
-                target.write_text(str(b.get('html') or ''), encoding='utf-8')
-                views = [str(v) for v in (b.get('views') or pagecheck.VIEWS)]
-                for view in views:
-                    pagecheck.parse_view(view)
-                try:
-                    results = pagecheck.check_views(target.as_uri(), views, browser=browser,
-                                                    full_page=bool(b.get('full_page', True)),
-                                                    scroll_y=int(b.get('scroll_y') or 0), no_sandbox=True)
-                except pagecheck.PageCheckError as exc:
-                    self._reply(200, {'ok': False, 'error': 'browser_failed', 'message': str(exc)})
-                    return
-                self._reply(200, {'ok': True, 'views': results})
-            finally:
-                _shutil.rmtree(folder, ignore_errors=True)
+                results = pagecheck.check_html(str(b.get('html') or ''), str(b.get('csp') or ''), views,
+                                               browser=browser, full_page=bool(b.get('full_page', True)),
+                                               scroll_y=int(b.get('scroll_y') or 0), no_sandbox=True)
+            except pagecheck.PageCheckError as exc:
+                self._reply(200, {'ok': False, 'error': 'browser_failed', 'message': str(exc)})
+                return
+            self._reply(200, {'ok': True, 'views': results})
 
         def _apps(self, method: str, parts: list[str]) -> None:
             from urllib.parse import parse_qs, urlsplit

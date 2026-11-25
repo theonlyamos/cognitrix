@@ -448,6 +448,58 @@ def check_views(url: str, views: list[str] | tuple[str, ...] = VIEWS, *, browser
     return results
 
 
+class _OnePage:
+    """Serve one document on a free local port with the viewer's headers (its
+    Content-Security-Policy, which also sandboxes the page into an opaque
+    origin), so a check sees and blocks what people's viewer does."""
+
+    def __init__(self, html: str, csp: str) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        body = html.encode('utf-8')
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                if self.path.split('?')[0] != '/page':
+                    self.send_response(404)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                if csp:
+                    self.send_header('Content-Security-Policy', csp)
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}/page'
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def check_html(html: str, csp: str, views: list[str] | tuple[str, ...] = VIEWS, *, browser: str,
+               full_page: bool = True, scroll_y: int = 0, no_sandbox: bool = False) -> list[dict]:
+    """:func:`check_views` for one self-contained document, served with ``csp``."""
+    hosting = _OnePage(html, csp)
+    try:
+        return check_views(hosting.url, views, browser=browser, full_page=full_page, scroll_y=scroll_y,
+                           no_sandbox=no_sandbox)
+    finally:
+        hosting.close()
+
+
 # ------------------------------------------------------------------ no browser: a text check
 
 class _Links(HTMLParser):

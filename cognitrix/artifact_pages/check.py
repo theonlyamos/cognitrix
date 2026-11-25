@@ -15,9 +15,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
-import tempfile
-from pathlib import Path
 from typing import Any
 
 from cognitrix.artifact_pages import frame
@@ -49,24 +46,18 @@ def _running_as_root() -> bool:
     return hasattr(os, 'geteuid') and os.geteuid() == 0
 
 
-def _check_here(html: str, views: list[str], browser: str, full_page: bool, scroll_y: int) -> list[dict]:
-    folder = tempfile.mkdtemp(prefix='cognitrix-artifact-')
-    try:
-        target = Path(folder) / 'page.html'
-        target.write_text(html, encoding='utf-8')
-        return pagecheck.check_views(target.as_uri(), views, browser=browser, full_page=full_page,
-                                     scroll_y=scroll_y, no_sandbox=_running_as_root())
-    finally:
-        shutil.rmtree(folder, ignore_errors=True)
+def _check_here(html: str, csp: str, views: list[str], browser: str, full_page: bool, scroll_y: int) -> list[dict]:
+    return pagecheck.check_html(html, csp, views, browser=browser, full_page=full_page, scroll_y=scroll_y,
+                                no_sandbox=_running_as_root())
 
 
-def _check_in_sandbox(owner: str, html: str, views: list[str], full_page: bool, scroll_y: int) -> list[dict]:
+def _check_in_sandbox(owner: str, html: str, csp: str, views: list[str], full_page: bool, scroll_y: int) -> list[dict]:
     from cognitrix.computer import DriverError, Unsupported
     from cognitrix.computer.sandbox.client import get_manager
 
     try:
         box = get_manager().sandbox(owner)
-        out = box.request('POST', '/pagecheck', {'html': html, 'views': views, 'full_page': full_page,
+        out = box.request('POST', '/pagecheck', {'html': html, 'csp': csp, 'views': views, 'full_page': full_page,
                                                   'scroll_y': scroll_y}, timeout=150)
     except (DriverError, Unsupported) as exc:
         message = str(exc)
@@ -83,10 +74,12 @@ async def look(page: Any, source: str, owner: str, *, views: list[str], full_pag
                scroll_y: int = 0) -> list[dict]:
     """One result per view (see ``pagecheck.check_views``). Raises PageError."""
     html = frame.render(source, page.format, page.title)
+    # Served with the viewer's policy, so the check blocks (and reports) what people's viewer blocks.
+    csp = frame.content_security_policy()
     browser = pagecheck.find_browser()
     if browser is not None:
         try:
-            return await asyncio.to_thread(_check_here, html, views, browser, full_page, int(scroll_y or 0))
+            return await asyncio.to_thread(_check_here, html, csp, views, browser, full_page, int(scroll_y or 0))
         except pagecheck.PageCheckError as exc:
             logger.info('Check Artifact on this machine failed: %s', exc)
             local_error = str(exc)
@@ -97,4 +90,4 @@ async def look(page: Any, source: str, owner: str, *, views: list[str], full_pag
     if not sandbox_mode():
         raise PageError('no_browser', f'{local_error} Install one (or set COGNITRIX_CHECK_BROWSER), or turn on '
                                       "the agents' computer in Settings > Computer.")
-    return await asyncio.to_thread(_check_in_sandbox, owner, html, views, full_page, int(scroll_y or 0))
+    return await asyncio.to_thread(_check_in_sandbox, owner, html, csp, views, full_page, int(scroll_y or 0))

@@ -107,6 +107,7 @@ async def test_without_a_browser_the_agents_computer_looks(monkeypatch):
     assert out == [{'view': 'phone-dark', 'ok': True}]
     assert sent['path'] == '/pagecheck' and sent['body']['views'] == ['phone-dark']
     assert '<!doctype html>' in sent['body']['html']  # rendered the way the viewer serves it
+    assert "default-src 'none'" in sent['body']['csp'] and 'sandbox' in sent['body']['csp']
 
 
 def _pixel(png_b64: str, x: int, y: int) -> tuple[int, int, int]:
@@ -159,6 +160,7 @@ async def test_a_real_browser_sees_dark_mode_and_errors():
     html = ('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<style>body{margin:0;background:#fff}@media (prefers-color-scheme:dark){body{background:#000}}'
             '</style></head><body><p>Draft A</p><div style="height:3000px"></div>'
+            '<img src="http://127.0.0.1:9/x.png">'
             '<script>console.error("boom")</script></body></html>')
     out = await check.look(SimpleNamespace(format='html', title='T'), html, 'u1',
                            views=['desktop-light', 'phone-dark'])
@@ -167,5 +169,7 @@ async def test_a_real_browser_sees_dark_mode_and_errors():
     assert light['width'] == 1280 and dark['width'] == 390 and dark['page_width'] == 390
     assert light['page_height'] > 3000 and light['shot_height'] == pagecheck.MAX_SHOT_HEIGHT
     assert 'boom' in light['console']
+    # Served with the viewer's policy: what the viewer blocks is blocked (and reported) here too.
+    assert any('Content Security Policy' in line for line in light['console'] + light['failed'])
     assert _pixel(light['screenshot'], 5, 200) == (255, 255, 255)
     assert _pixel(dark['screenshot'], 5, 200) == (0, 0, 0)
