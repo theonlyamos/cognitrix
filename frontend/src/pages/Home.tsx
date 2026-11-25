@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatHorizon } from '@/components/ThemeArtwork';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
+import { QuoteChips, SelectionReply } from '@/components/SelectionReply';
+import { withQuotes } from '@/lib/quoteReply';
 import { WaitingMessages, type WaitingMessage } from '@/components/WaitingMessages';
 import { useSession, type ChatMessage, type ToolArtifact, type ToolUse } from '@/context/SessionContext';
 import { useSSE, type SSEEvent } from '@/hooks/useSSE';
@@ -208,6 +210,17 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
 
   // Composer attachments (images → vision, other files → agent workspace).
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Bits of an agent's reply picked with Reply: sent as quotes on top of the next message.
+  const [quotes, setQuotes] = useState<string[]>([]);
+  const quotesRef = useRef(quotes);
+  quotesRef.current = quotes;
+  const addQuote = useCallback((text: string) => {
+    setQuotes((prev) => (prev.includes(text) ? prev : [...prev, text]));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
+  const removeQuote = useCallback((index: number) => {
+    setQuotes((prev) => prev.filter((_, i) => i !== index));
+  }, []);
   const [editSource, setEditSource] = useState<EditSource | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -1067,6 +1080,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
 
   const resetThreadState = useCallback(() => {
     clearStopFallback();
+    setQuotes([]);
     turnGenerationRef.current += 1;
     clearMessages();
     setWaiting(false);
@@ -1122,6 +1136,9 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
           expectedGeneration !== undefined
           && turnGenerationRef.current !== expectedGeneration
         ) return false;
+        // Quotes belong to the chat they were picked in: keep them only
+        // when this is the same chat reloading (a turn just ended).
+        if (activeRef.current !== id) setQuotes([]);
         clearComposerMedia();
         adoptSession(id);
         const run = runs.find((item) => item.session_id === id);
@@ -1621,13 +1638,19 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
 
   const send = useCallback(
     async (text: string, executionMode: ExecutionMode = 'chat', replace: Rework | null = rework, opts: { keepComposer?: boolean } = {}): Promise<boolean> => {
-      const msg = text.trim();
+      const typed = text.trim();
+      // Quoted reply text goes on top, but only with words of the person's own.
+      const quoted = opts.keepComposer || !typed ? [] : quotesRef.current;
+      const msg = withQuotes(typed, quoted);
+      // Clear the quotes only once the message really goes out.
+      const dropQuotes = () => { if (quoted.length) setQuotes([]); };
       const pending = opts.keepComposer ? [] : attachmentsRef.current;
       const pendingEditSource = opts.keepComposer ? null : editSource;
       if (
         busy && question === null && msg && pending.length === 0 && pendingEditSource === null
         && !replace && executionMode === 'chat' && !opts.keepComposer
       ) {
+        dropQuotes();
         return steer(msg);
       }
       // A question card is open: words typed in the chat box answer it.
@@ -1636,6 +1659,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
         && !replace && executionMode === 'chat' && !opts.keepComposer
       ) {
         setInput('');
+        dropQuotes();
         try {
           await postQuestionAction(question, 'answer', { text: msg });
           return true;
@@ -1686,6 +1710,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
         ? `${msg}${msg ? '\n' : ''}📎 ${pending.map((a) => a.name).join(', ')}`
         : msg;
       if (!replace?.keep) addMessage('user', shown);
+      dropQuotes();
       if (!opts.keepComposer) {
         setInput('');
         setAttachments([]);
@@ -1746,6 +1771,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
           setInput(text);
           setAttachments(pending);
           setEditSource(pendingEditSource);
+          if (quoted.length) setQuotes(quoted);
         }
         addMessage('assistant', tr('ui.home.unableToReachTheAgent'));
         finishTurn();
@@ -2281,6 +2307,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
             </button>
           </div>
         )}
+        <QuoteChips quotes={quotes} onRemove={removeQuote} />
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 border-b border-line px-3 pb-1 pt-2.5">
             {attachments.map((a) => (
@@ -2703,6 +2730,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
 
   const chillComposer = (
     <div className="relative">
+      <QuoteChips quotes={quotes} onRemove={removeQuote} variant="chill" />
       {attachments.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-1.5 px-1">
           {attachments.map((a) => (
@@ -2908,6 +2936,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
 
   if (chill) {
     return (
+      <>
       <ChillScreen
         empty={empty && !waiting}
         name={user?.name}
@@ -2957,6 +2986,8 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
         onOpenChat={(id) => { closeStage(); switchConversation(id); }}
         onFullMode={switchToFull}
       />
+      <SelectionReply onReply={addQuote} />
+      </>
     );
   }
 
@@ -3244,6 +3275,7 @@ export default function Home({ chill = false }: { chill?: boolean } = {}) {
           />
         </aside>
       )}
+      <SelectionReply onReply={addQuote} />
     </div>
   );
 }

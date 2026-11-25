@@ -59,6 +59,62 @@ describe('Home explicit execution mode', () => {
     localStorage.setItem('chatSession:agent-1', '');
   });
 
+  it('quotes text picked in a reply into the next message', async () => {
+    harness.messages = [
+      { id: 'u1', role: 'user', content: 'Which port?' },
+      { id: 'a1', role: 'assistant', content: 'Use port 8080 for the server.' },
+    ] as ChatMessage[];
+    try {
+      const user = userEvent.setup();
+      renderHome();
+      // Wait for the Markdown view, so the picked text stays on the page.
+      await waitFor(() => expect(document.querySelector('[data-reply-source] p')).not.toBeNull());
+      const reply = document.querySelector('[data-reply-source] p')!;
+      const range = document.createRange();
+      range.selectNodeContents(reply);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      fireEvent.pointerUp(document);
+      fireEvent.click(await screen.findByRole('button', { name: 'Reply' }));
+      expect(await screen.findByRole('button', { name: 'Remove quote' })).toBeInTheDocument();
+      await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'why this one?{enter}');
+
+      await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/agents/chat', expect.objectContaining({
+        message: '> Use port 8080 for the server.\n\nwhy this one?',
+      })));
+      expect(screen.queryByRole('button', { name: 'Remove quote' })).not.toBeInTheDocument();
+    } finally {
+      harness.messages = [];
+    }
+  });
+
+  it('keeps the quote in the box when sending fails', async () => {
+    harness.messages = [
+      { id: 'a1', role: 'assistant', content: 'Use port 8080 for the server.' },
+    ] as ChatMessage[];
+    apiPost.mockImplementation((url: string) => (url === '/agents/chat' ? Promise.reject(new Error('down')) : Promise.resolve({ data: {} })));
+    try {
+      const user = userEvent.setup();
+      renderHome();
+      await waitFor(() => expect(document.querySelector('[data-reply-source] p')).not.toBeNull());
+      const range = document.createRange();
+      range.selectNodeContents(document.querySelector('[data-reply-source] p')!);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      fireEvent.pointerUp(document);
+      fireEvent.click(await screen.findByRole('button', { name: 'Reply' }));
+      await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'why?{enter}');
+
+      await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/agents/chat', expect.objectContaining({
+        message: '> Use port 8080 for the server.\n\nwhy?',
+      })));
+      expect(await screen.findByRole('button', { name: 'Remove quote' })).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: 'Message the agent' })).toHaveValue('why?');
+    } finally {
+      harness.messages = [];
+    }
+  });
+
   it('uses chat mode for Enter', async () => {
     const user = userEvent.setup();
     renderHome();
