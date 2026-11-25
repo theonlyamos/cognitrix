@@ -234,10 +234,19 @@ fn hide(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || {
         for label in [CURSOR, STOP] {
             if let Some(window) = handle.get_webview_window(label) {
-                let _ = window.hide();
+                hide_window(&window);
             }
         }
     });
+}
+
+/// Hide a window shown by show_quietly. On Windows that showed it behind the
+/// windowing library's back, which still thinks it's hidden, so its hide()
+/// does nothing; hide it the same native way.
+fn hide_window(window: &WebviewWindow) {
+    if !native::hide(window) {
+        let _ = window.hide();
+    }
 }
 
 /// The bounding box of every monitor, in physical pixels.
@@ -332,7 +341,18 @@ fn show_quietly(window: &WebviewWindow) {
 }
 
 /// Stop the agent shown on the pill (or every agent using the computer).
+/// The cursor and the pill go away at once, whatever the engine answers, so a
+/// slow or finished run can never leave them on screen. Blocks for up to a few
+/// seconds on the engine: don't call it on the main thread.
 pub fn stop(app: &AppHandle, agent_id: Option<String>) -> Result<(), String> {
+    *app.state::<OverlayState>().last_action.lock().unwrap() = None;
+    hide(app);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(pill) = handle.get_webview_window(STOP) {
+            let _ = pill.eval("window.agentStopped && window.agentStopped()");
+        }
+    });
     let (port, token) = engine_endpoint(app).ok_or("The engine isn't running")?;
     let body = serde_json::json!({ "agent_id": agent_id }).to_string();
     let request = format!(
@@ -348,8 +368,6 @@ pub fn stop(app: &AppHandle, agent_id: Option<String>) -> Result<(), String> {
     if !String::from_utf8_lossy(&head).contains(" 200") {
         return Err("The engine refused the stop request".into());
     }
-    *app.state::<OverlayState>().last_action.lock().unwrap() = None;
-    hide(app);
     Ok(())
 }
 
@@ -369,6 +387,7 @@ mod native {
     const WS_EX_LAYERED: isize = 0x0008_0000;
     const WS_EX_NOACTIVATE: isize = 0x0800_0000;
     const WDA_EXCLUDEFROMCAPTURE: u32 = 0x0000_0011;
+    const SW_HIDE: i32 = 0;
     const SW_SHOWNOACTIVATE: i32 = 4;
     const HWND_TOPMOST: isize = -1;
     const SWP_NOMOVE: u32 = 0x0002;
@@ -410,6 +429,14 @@ mod native {
         }
         true
     }
+
+    pub fn hide(window: &WebviewWindow) -> bool {
+        let Some(hwnd) = handle(window) else { return false };
+        unsafe {
+            ShowWindow(hwnd, SW_HIDE);
+        }
+        true
+    }
 }
 
 #[cfg(not(windows))]
@@ -419,6 +446,10 @@ mod native {
     pub fn make_overlay(_window: &WebviewWindow, _click_through: bool) {}
 
     pub fn show_no_activate(_window: &WebviewWindow) -> bool {
+        false
+    }
+
+    pub fn hide(_window: &WebviewWindow) -> bool {
         false
     }
 }

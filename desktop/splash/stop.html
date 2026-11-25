@@ -47,6 +47,12 @@
     stop.textContent = 'Stop';
   };
 
+  // The app hid the pill: be ready for the next time it shows.
+  window.agentStopped = function () {
+    stop.disabled = false;
+    stop.textContent = 'Stop';
+  };
+
   stop.addEventListener('click', async () => {
     stop.disabled = true;
     stop.textContent = 'Stopping…';
