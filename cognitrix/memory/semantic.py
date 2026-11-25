@@ -117,8 +117,18 @@ async def scores(query: str, texts: list[str]) -> list[float] | None:
         return None
     if not vectors:
         return None
-    q, rest = vectors[0], vectors[1:]
-    return [cosine(q, v) for v in rest]
+    sims = _unit(vectors)
+    return [float(x) for x in sims[1:] @ sims[0]]
+
+
+def _unit(vectors: Sequence[Sequence[float]]):
+    """Rows scaled to length 1, so a matrix product gives every cosine at once."""
+    import numpy as np
+
+    arr = np.asarray(vectors, dtype=np.float32)
+    norms = np.linalg.norm(arr, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return arr / norms
 
 
 async def similar_pairs(texts: list[str], threshold: float) -> list[tuple[int, int, float]] | None:
@@ -131,11 +141,12 @@ async def similar_pairs(texts: list[str], threshold: float) -> list[tuple[int, i
         return None
     if not vectors:
         return None
-    pairs = []
-    for i in range(len(vectors)):
-        for j in range(i + 1, len(vectors)):
-            score = cosine(vectors[i], vectors[j])
-            if score >= threshold:
-                pairs.append((i, j, score))
+    import numpy as np
+
+    # One matrix product instead of n² Python loops: 500 memories took seconds before.
+    unit = _unit(vectors)
+    sims = unit @ unit.T
+    rows, cols = np.nonzero(np.triu(sims >= threshold, k=1))
+    pairs = [(int(i), int(j), float(sims[i, j])) for i, j in zip(rows, cols, strict=True)]
     pairs.sort(key=lambda p: -p[2])
     return pairs

@@ -11,6 +11,7 @@ forget and search them. See docs/designs/global-memory.md.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -33,7 +34,10 @@ from cognitrix.models.memory import (
 logger = logging.getLogger('cognitrix.log')
 
 MAX_CHARS = 300
-"""Longest single memory. Memories are one fact each, not documents."""
+"""Longest new memory. Memories are one fact each, not documents."""
+STORED_MAX_CHARS = 600
+"""Longest a memory can grow when related details are folded into it (an
+update, a tidy merge, an import). New saves stay at MAX_CHARS."""
 MAX_PER_USER = 500
 PROMPT_BUDGET_CHARS = 6000
 """About 1,500 tokens of memories in the system prompt."""
@@ -161,15 +165,15 @@ def memory_policy(agent: Any) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- content checks
 
-def clean_content(text: Any) -> str:
+def clean_content(text: Any, limit: int = MAX_CHARS) -> str:
     text = re.sub(r'\s+', ' ', str(text or '')).strip()
     if not text:
         raise MemoryError_('content_required', 'Write the fact to remember.')
-    if len(text) > MAX_CHARS:
+    if len(text) > limit:
         raise MemoryError_(
             'too_long',
-            f'Memories hold at most {MAX_CHARS} characters; this one has {len(text)}. '
-            'Keep one short fact per memory.')
+            f'Memories hold at most {limit} characters; this one has {len(text)}. '
+            'Keep one subject per memory.')
     if looks_secret(text):
         raise MemoryError_(
             'looks_secret',
@@ -224,6 +228,41 @@ def asked_to_remember(text: str | None) -> bool:
 
 def _similar(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
+def normalize(text: str) -> str:
+    """Lower case, no punctuation, single spaces. \\w keeps letters in every script."""
+    return re.sub(r'[^\w ]+', '', re.sub(r'\s+', ' ', str(text or '').casefold())).replace('_', '').strip()
+
+
+COVER_MIN_CHARS = 12
+"""Shorter texts are never treated as said by a longer one ("Likes tea" in
+"Likes tea cakes" would be wrong more often than right)."""
+
+
+def covers(longer: str, shorter: str, shorter_normal: str | None = None) -> bool:
+    """True when ``longer`` says everything ``shorter`` does, word for word
+    (``shorter`` appears in it whole, on word boundaries)."""
+    small = shorter_normal if shorter_normal is not None else normalize(shorter)
+    big = normalize(longer)
+    if len(small) < COVER_MIN_CHARS or len(big) <= len(small):
+        return False
+    if f' {small} ' not in f' {big} ':
+        return False
+    # "Never wants X" doesn't say "Wants X".
+    return not (_NEGATIONS & set(big.split())) - set(small.split())
+
+
+def lasts_as_long(wider_until: str, narrower_until: str) -> bool:
+    """True when a memory valid until ``wider_until`` is true for at least as
+    long as one valid until ``narrower_until`` ('' means no end date)."""
+    if not wider_until:
+        return True
+    return bool(narrower_until) and wider_until >= narrower_until
+
+
+_NEGATIONS = {'not', 'never', 'no', 'dont', 'doesnt', 'didnt', 'isnt', 'wont', 'cant', 'stopped', 'longer',
+              'anymore', 'without', 'except', 'unless'}
 
 
 # ---------------------------------------------------------------- reading
@@ -288,11 +327,27 @@ async def visible_memories(user_id: str, agent: Any) -> list[Memory]:
     return _order([r for r in rows if _visible(r, agent_id, read_global)])
 
 
+SHORT_ID_LEN = 8
+"""Agents see the first 8 characters of a memory's id: a full id costs about
+30 extra characters on every line of the prompt's memory section."""
+
+
+def short_id(row: Any) -> str:
+    return str(getattr(row, 'id', row) or '')[:SHORT_ID_LEN]
+
+
 async def get_memory(user_id: str, memory_id: str) -> Memory | None:
-    row = await Memory.get(str(memory_id or '').strip())
-    if row is None or str(row.user_id) != str(user_id):
+    """The person's memory with this id, or with this short id (a unique start of one)."""
+    wanted = str(memory_id or '').strip()
+    if not wanted:
         return None
-    return row
+    row = await Memory.get(wanted)
+    if row is not None:
+        return row if str(row.user_id) == str(user_id) else None
+    if len(wanted) < 6:
+        return None
+    matches = [r for r in await Memory.find({'user_id': str(user_id)}) if str(r.id).startswith(wanted)]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _words(text: str) -> set[str]:
@@ -337,15 +392,55 @@ async def search(user_id: str, agent: Any, query: str, k: int = 10) -> list[Memo
     return hits
 
 
+RELATED = 0.45
+"""Cosine closeness at which two memories are probably about the same subject
+(the shipped MiniLM model gives ~0.45-0.6 for "Wants a Monday briefing for X"
+vs "... for Y", and ~0.1-0.3 for unrelated facts). Never enough on its own to
+call two memories the same: "Prefers tea over coffee" vs "Prefers coffee over
+tea" scores 0.99."""
+
+_GENERIC = {
+    'the', 'and', 'for', 'with', 'that', 'this', 'their', 'they', 'them', 'his', 'her', 'has', 'have', 'had',
+    'was', 'are', 'is', 'from', 'into', 'about', 'also', 'when', 'what', 'which', 'who', 'its', 'our', 'your',
+    'wants', 'want', 'prefers', 'prefer', 'likes', 'like', 'loves', 'uses', 'use', 'using', 'needs', 'works',
+    'user', 'person', 'always', 'usually', 'often', 'some', 'more', 'most', 'very', 'any', 'all', 'one',
+    'on', 'in', 'at', 'to', 'of', 'by', 'or', 'an', 'be', 'it', 'as', 'so', 'not', 'no',
+}
+
+
+def topic_words(text: str) -> set[str]:
+    """Words that say what a memory is about (no filler like "wants" or "the"),
+    cut to 5 letters so "briefing" and "briefings" match."""
+    return {w[:5] for w in re.findall(r'\w+', str(text or '').casefold())
+            if len(w) > 2 and w not in _GENERIC and not w.isdigit()}
+
+
+async def related(user_id: str, agent: Any, text: str, *, exclude: str = '', k: int = 3) -> list[Memory]:
+    """Memories this agent sees that are probably about the same subject as ``text``."""
+    rows = [r for r in await visible_memories(user_id, agent) if str(r.id) != str(exclude)]
+    if not rows:
+        return []
+    by_meaning = await rank_by_meaning(rows, text)
+    if by_meaning is not None:
+        return [r for r, score in by_meaning if score >= RELATED][:k]
+    words = topic_words(text)
+    scored = sorted(((len(words & topic_words(r.content)), i, r) for i, r in enumerate(rows)),
+                    key=lambda t: (-t[0], t[1]))
+    return [r for n, _i, r in scored if n >= 2][:k]
+
+
 async def mark_used(rows: list[Memory]) -> None:
     """Note that agents found these useful just now (for ranking and tidying)."""
     stamp = now_str()
-    for row in rows:
+
+    async def one(row: Memory) -> None:
         try:
             await Memory.update_one({'id': row.id}, {'last_used': stamp,
                                                      'use_count': int(row.use_count or 0) + 1})
         except Exception:
             logger.debug('Could not mark memory %s used', row.id, exc_info=True)
+
+    await asyncio.gather(*(one(r) for r in rows))
 
 
 # ---------------------------------------------------------------- prompt
@@ -441,7 +536,7 @@ def _build_block(rows: list[Memory], query: str, budget: int, *, profile_text: s
         else:
             ordered = pinned + rank(rest, query)
     for row in ordered:
-        line = f"- {row.content}" + (" [this agent only]" if row.scope == 'agent' else '') + f" (id {row.id})"
+        line = f"- {row.content}" + (" [this agent only]" if row.scope == 'agent' else '') + f" (id {short_id(row)})"
         if used + len(line) > budget and not row.pinned:
             left_out += 1
             continue
@@ -602,7 +697,8 @@ async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: st
               pending: bool = False, replaces: str = '', kind: str = '', valid_until: str = '',
               by: str | None = None, dream_id: str = '', project_id: str = '') -> tuple[Memory, bool]:
     """Save a memory. Returns (row, created). A near-duplicate of an existing
-    memory in the same scope returns that memory with created False.
+    memory in the same scope, or a fact an existing memory already says in
+    full, returns that memory with created False.
 
     ``pending`` saves it as a proposal the person approves (``confirm``) or
     discards; ``replaces`` names the memory an approved proposal takes over from."""
@@ -615,15 +711,19 @@ async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: st
         project_id = project.id if project is not None else ''
     if scope == 'project' and not project_id:
         raise MemoryError_('project_required', 'A project memory can only be saved in a project chat.')
-    text = clean_content(content)
+    # New facts from agents and the Settings form are one short fact; imports,
+    # restores and approved tidy proposals may carry a merged memory.
+    text = clean_content(content, MAX_CHARS if source in ('agent', 'user') and not replaces else STORED_MAX_CHARS)
     kind = clean_kind(kind)
     valid_until = clean_valid_until(valid_until)
     existing = list(await Memory.find({'user_id': str(user_id)}))
+    normal = normalize(text)
     for row in existing:
-        same_scope = row.scope == scope and (
-            scope == 'global' or (scope == 'agent' and row.agent_id == str(agent_id))
-            or (scope == 'project' and row.project_id == str(project_id)))
-        if same_scope and str(row.id) != str(replaces) and _similar(row.content, text) >= DUPLICATE_RATIO:
+        if not _same_scope(row, scope, agent_id, project_id) or str(row.id) == str(replaces):
+            continue
+        if _similar(row.content, text) >= DUPLICATE_RATIO:
+            return row, False
+        if covers(row.content, text, normal) and lasts_as_long(row.valid_until, valid_until) and not expired(row):
             return row, False
     if len(existing) >= MAX_PER_USER:
         raise MemoryError_(
@@ -646,6 +746,41 @@ async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: st
     return row, True
 
 
+def _same_scope(row: Memory, scope: str, agent_id: str = '', project_id: str = '') -> bool:
+    return row.scope == scope and (
+        scope == 'global' or (scope == 'agent' and row.agent_id == str(agent_id))
+        or (scope == 'project' and row.project_id == str(project_id)))
+
+
+async def grow_into(user_id: str, content: Any, *, scope: str = 'global', agent_id: str = '',
+                    project_id: str = '', kind: str = '', valid_until: str = '') -> Memory | None:
+    """When a new fact says everything an existing agent-saved memory says and
+    more ("Learns French" then "Learns French as a beginner, with 10-minute
+    role-plays"), update that memory in place and return it; else None.
+    Keeps one memory per subject without a tidy having to merge them later."""
+    try:
+        text = clean_content(content)
+    except MemoryError_:
+        return None
+    if scope == 'project' and not project_id:
+        project = _turn_project()
+        project_id = project.id if project is not None else ''
+    for row in await Memory.find({'user_id': str(user_id)}):
+        if (row.pending or row.pinned or row.source == 'user'
+                or not _same_scope(row, scope, agent_id, project_id) or not covers(text, row.content)):
+            continue
+        changes: dict[str, Any] = {}
+        kind = clean_kind(kind) if kind in KINDS else ''
+        if kind and not row.kind:
+            changes['kind'] = kind
+        # No new date keeps the one it had, like an ordinary update.
+        until = clean_valid_until(valid_until) if valid_until else row.valid_until
+        if until != row.valid_until:
+            changes['valid_until'] = until
+        return await update(row, content=text, by='agent', note='Grew with a new detail', **changes)
+    return None
+
+
 _UNSET: Any = object()
 
 
@@ -655,7 +790,7 @@ async def update(row: Memory, *, content: Any = None, pinned: bool | None = None
                  by: str = 'agent', dream_id: str = '', note: str = '') -> Memory:
     changes: dict[str, Any] = {}
     if content is not None:
-        changes['content'] = clean_content(content)
+        changes['content'] = clean_content(content, STORED_MAX_CHARS)
     if pinned is not None:
         changes['pinned'] = bool(pinned)
     if kind is not _UNSET:

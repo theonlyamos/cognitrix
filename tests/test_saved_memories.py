@@ -166,7 +166,7 @@ async def test_tool_save_update_forget_search(db):
         assert row.scope == 'global' and row.source == 'agent' and row.source_session_id == 'chat-1'
 
         found = await _run(agent, action='search', query='cognitrix')
-        assert str(row.id) in found.content
+        assert f"(id {saved.short_id(row)}," in found.content
 
         updated = await _run(agent, action='update', memory_id=str(row.id), content='Works on Cognitrix and Hearth.')
         assert 'Memory updated' in updated.content

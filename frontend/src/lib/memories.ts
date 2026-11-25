@@ -48,6 +48,8 @@ export interface MemoryList {
   settings: MemorySettings;
   limit: number;
   max_chars: number;
+  /** Editing allows longer text: tidy merges fold related details into one memory. */
+  edit_max_chars?: number;
 }
 
 export async function listMemories(): Promise<MemoryList> {
