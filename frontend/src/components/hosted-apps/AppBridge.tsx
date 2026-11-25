@@ -89,7 +89,8 @@ export function useAppBridge({ frame, app, ownWindow, installed, trayItem }: {
       return row.tray_allowed ? 'granted' : row.tray_asked ? 'denied' : 'prompt';
     }
     if (power !== 'notify' && power !== 'apps') return 'unavailable';
-    if (!perms.current) perms.current = await getPermissions(app.id);
+    // Always the current answer: it may have changed on the app's page or in another window.
+    perms.current = await getPermissions(app.id).catch(() => perms.current ?? { allowed: [], asked: [] });
     if (perms.current.allowed.includes(power)) return 'granted';
     return perms.current.asked.includes(power) ? 'denied' : 'prompt';
   }, [app]);

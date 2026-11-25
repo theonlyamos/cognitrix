@@ -211,9 +211,30 @@ fn remove_shortcuts(app: &AppHandle, record: &InstalledApp) {
 /// The file name for this app's shortcut, kept apart from other installed
 /// apps that have the same title.
 fn shortcut_name(others: &[InstalledApp], slug: &str, title: &str) -> String {
-    let name = file_name(title, slug);
-    let taken = others.iter().any(|a| a.slug != slug && file_name(&a.title, &a.slug).eq_ignore_ascii_case(&name));
-    if taken { format!("{name} ({slug})") } else { name }
+    // The names other apps' shortcuts really have (their file stems), not their titles.
+    let taken: Vec<String> = others
+        .iter()
+        .filter(|a| a.slug != slug)
+        .flat_map(|a| {
+            let mut names: Vec<String> = a
+                .shortcuts
+                .iter()
+                .filter_map(|p| Path::new(p).file_stem().map(|s| s.to_string_lossy().to_lowercase()))
+                .collect();
+            names.push(file_name(&a.title, &a.slug).to_lowercase());
+            names
+        })
+        .collect();
+    let free = |name: &str| !taken.contains(&name.to_lowercase());
+    let base = file_name(title, slug);
+    if free(&base) {
+        return base;
+    }
+    let with_slug = format!("{base} ({slug})");
+    if free(&with_slug) {
+        return with_slug;
+    }
+    (2..).map(|n| format!("{base} ({slug} {n})")).find(|name| free(name)).unwrap_or(with_slug)
 }
 
 #[derive(Serialize)]
@@ -928,6 +949,12 @@ mod tests {
         let other = InstalledApp { slug: "b".into(), title: "Board".into(), ..Default::default() };
         assert_eq!(shortcut_name(&[other.clone()], "a", "Board"), "Board (a)");
         assert_eq!(shortcut_name(&[other], "b", "Board"), "Board");
+        // An app titled like another's suffixed shortcut doesn't take that file.
+        let a = InstalledApp { slug: "a".into(), title: "Board".into(), shortcuts: vec!["/s/Board.lnk".into()], ..Default::default() };
+        let b = InstalledApp { slug: "b".into(), title: "Board".into(), shortcuts: vec!["/s/Board (b).lnk".into()], ..Default::default() };
+        assert_eq!(shortcut_name(&[a.clone(), b.clone()], "c", "Board (b)"), "Board (b) (c)");
+        let c = InstalledApp { slug: "c".into(), title: "x".into(), shortcuts: vec!["/s/Board (b) (c).lnk".into()], ..Default::default() };
+        assert_eq!(shortcut_name(&[a, b, c], "c", "Board (b)"), "Board (b) (c)");
     }
 
     #[test]

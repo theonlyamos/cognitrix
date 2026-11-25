@@ -38,9 +38,14 @@ function setup() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.get.mockResolvedValue({ data: { allowed: [], asked: [] } });
-  api.put.mockImplementation((_url: string, body: { power: string; allowed: boolean }) =>
-    Promise.resolve({ data: { allowed: body.allowed ? [body.power] : [], asked: [body.power] } }));
+  // The server's copy of the answers: the bridge reads it fresh each time.
+  const saved = { allowed: [] as string[], asked: [] as string[] };
+  api.get.mockImplementation(() => Promise.resolve({ data: { ...saved } }));
+  api.put.mockImplementation((_url: string, body: { power: string; allowed: boolean }) => {
+    saved.allowed = body.allowed ? [...saved.allowed, body.power] : saved.allowed.filter((p) => p !== body.power);
+    saved.asked = [...saved.asked, body.power];
+    return Promise.resolve({ data: { ...saved } });
+  });
 });
 
 describe('the app bridge', () => {
@@ -99,6 +104,16 @@ describe('the app bridge', () => {
     await waitFor(() => expect(result('t1')?.value).toBe('unavailable'));
     await send({ type: 'call', id: 't2', kind: 'tray.set', payload: { items: [] } });
     await waitFor(() => expect(result('t2')?.error).toMatch(/desktop app/));
+  });
+});
+
+describe('a changed answer', () => {
+  it('applies to the running app without a reload', async () => {
+    api.get.mockResolvedValueOnce({ data: { allowed: ['notify'], asked: ['notify'] } }); // when the window opened
+    api.get.mockResolvedValue({ data: { allowed: [], asked: ['notify'] } }); // then turned off on the app's page
+    const { send, result } = setup();
+    await send({ type: 'call', id: 'c1', kind: 'permission.query', payload: { power: 'notify' } });
+    await waitFor(() => expect(result('c1')?.value).toBe('denied'));
   });
 });
 

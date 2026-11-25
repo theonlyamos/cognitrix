@@ -44,7 +44,7 @@ def _ctx(user):
 def test_runtime_goes_first_in_the_head():
     from cognitrix.hosted_apps.bridge import SCRIPT, inject
 
-    page = b'<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"></head><body><header>x</header></body></html>'
+    page = b'<!DOCTYPE html><html lang="en"><head><title>T</title></head><body><header>x</header></body></html>'
     out = inject(page)
     assert out.index(SCRIPT) == page.index(b'<head>') + len(b'<head>')
     # No <head>: after <html>; only a doctype: after it (never before, which would mean quirks mode).
@@ -54,6 +54,11 @@ def test_runtime_goes_first_in_the_head():
     # <header> is not <head>, and a page that already has it isn't changed twice.
     assert inject(b'<body><header>x</header>').startswith(SCRIPT)
     assert inject(out) == out
+    # The encoding declaration stays in the first 1024 bytes, ahead of the runtime.
+    with_charset = b'<!doctype html><html><head><meta charset="utf-8"><title>T</title></head></html>'
+    assert inject(with_charset).index(b'<meta charset="utf-8">') < inject(with_charset).index(SCRIPT)
+    http_equiv = b'<head><meta http-equiv="Content-Type" content="text/html; charset=utf-8">'
+    assert inject(http_equiv).startswith(http_equiv + SCRIPT)
 
 
 async def test_proxy_adds_the_runtime_to_pages_only(db, tmp_path):  # noqa: F811

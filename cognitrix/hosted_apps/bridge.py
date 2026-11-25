@@ -96,6 +96,7 @@ MAX_HTML = 5 * 1024 * 1024
 _HEAD = re.compile(rb'<head(\s[^>]*)?>', re.I)
 _HTML = re.compile(rb'<html(\s[^>]*)?>', re.I)
 _DOCTYPE = re.compile(rb'^\s*<!doctype[^>]*>', re.I)
+_CHARSET = re.compile(rb'<meta\s[^>]*charset[^>]*>', re.I)
 
 
 def inject(body: bytes) -> bytes:
@@ -103,6 +104,11 @@ def inject(body: bytes) -> bytes:
     if len(body) > MAX_HTML or b'data-cognitrix-runtime' in body[:4096]:
         return body
     window = body[:65536]
+    # Browsers only look for the page's encoding in its first 1024 bytes: keep a
+    # <meta charset> there by putting the runtime after it.
+    charset = _CHARSET.search(body[:1024])
+    if charset:
+        return body[:charset.end()] + SCRIPT + body[charset.end():]
     for pattern in (_HEAD, _HTML, _DOCTYPE):
         match = pattern.search(window)
         if match:
