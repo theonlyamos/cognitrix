@@ -274,7 +274,11 @@ async def free_pass(user_id: str, rows: list[Any], dream_id: str, *, auto: bool,
         for row in group:
             if _protected(row):
                 continue
-            wider = next((o for o in group if o is not row and saved.covers(o.content, row.content)), None)
+            # Only a memory true for at least as long can stand in for it: an expired
+            # "Learns French on a summer course" must not take "Learns French" with it.
+            wider = next((o for o in group if o is not row and saved.covers(o.content, row.content)
+                          and saved.lasts_as_long(o.valid_until, row.valid_until)
+                          and not (o.valid_until and o.valid_until < today)), None)
             if wider is None:
                 continue
             if auto and not _person_typed(row):

@@ -253,6 +253,14 @@ def covers(longer: str, shorter: str, shorter_normal: str | None = None) -> bool
     return not (_NEGATIONS & set(big.split())) - set(small.split())
 
 
+def lasts_as_long(wider_until: str, narrower_until: str) -> bool:
+    """True when a memory valid until ``wider_until`` is true for at least as
+    long as one valid until ``narrower_until`` ('' means no end date)."""
+    if not wider_until:
+        return True
+    return bool(narrower_until) and wider_until >= narrower_until
+
+
 _NEGATIONS = {'not', 'never', 'no', 'dont', 'doesnt', 'didnt', 'isnt', 'wont', 'cant', 'stopped', 'longer',
               'anymore', 'without', 'except', 'unless'}
 
@@ -713,7 +721,9 @@ async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: st
     for row in existing:
         if not _same_scope(row, scope, agent_id, project_id) or str(row.id) == str(replaces):
             continue
-        if _similar(row.content, text) >= DUPLICATE_RATIO or covers(row.content, text, normal):
+        if _similar(row.content, text) >= DUPLICATE_RATIO:
+            return row, False
+        if covers(row.content, text, normal) and lasts_as_long(row.valid_until, valid_until) and not expired(row):
             return row, False
     if len(existing) >= MAX_PER_USER:
         raise MemoryError_(
@@ -763,7 +773,8 @@ async def grow_into(user_id: str, content: Any, *, scope: str = 'global', agent_
         kind = clean_kind(kind) if kind in KINDS else ''
         if kind and not row.kind:
             changes['kind'] = kind
-        until = clean_valid_until(valid_until) if valid_until else ''
+        # No new date keeps the one it had, like an ordinary update.
+        until = clean_valid_until(valid_until) if valid_until else row.valid_until
         if until != row.valid_until:
             changes['valid_until'] = until
         return await update(row, content=text, by='agent', note='Grew with a new detail', **changes)

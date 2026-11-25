@@ -145,6 +145,26 @@ async def test_free_pass_drops_memories_another_one_already_says(db):  # noqa: F
     assert 'Is learning French.' not in contents and len(contents) == 3
 
 
+async def test_covered_memory_survives_a_shorter_lived_one(db):  # noqa: F811
+    from cognitrix.memory import dream, saved
+
+    user = await _user('Amos', 'amos@example.com')
+    uid = str(user.id)
+    await _raw(user, 'Is learning French.')
+    await _raw(user, 'Is learning French as a beginner on a short summer course.', valid_until='2020-08-31')
+    await _raw(user, 'Plays the guitar.')
+    await _raw(user, 'Plays the guitar in a band until Friday.', valid_until='2099-01-01')
+    run = await dream.run_dream(uid, 'manual', llm=_LLM({'operations': [], 'profile': ''}))
+    stats = dream.stats_of(run)
+    assert stats['expired'] == 1 and stats['duplicates'] == 0
+    contents = sorted(r.content for r in await saved.list_memories(uid))
+    assert contents == ['Is learning French.', 'Plays the guitar in a band until Friday.', 'Plays the guitar.']
+
+    # Saving: a dated memory doesn't stand in for a lasting fact.
+    _row, created = await saved.add(uid, 'Plays the guitar in a band')
+    assert created
+
+
 async def test_saving_skips_what_is_already_said_and_grows_memories(db, monkeypatch):  # noqa: F811
     from cognitrix.memory import saved, semantic
 
@@ -164,6 +184,12 @@ async def test_saving_skips_what_is_already_said_and_grows_memories(db, monkeypa
         rows = await saved.list_memories(uid)
         assert [r.content for r in rows] == ['Is learning French as a beginner, with 10-minute role-plays.']
         assert str(rows[0].id) == str(full.id)
+
+        # Growing keeps an end date when the new save gives none.
+        dated, _ = await saved.add(uid, 'Is on leave in Kumasi.', valid_until='2099-12-31')
+        result = await _run(agent, action='save', content='Is on leave in Kumasi with family.')
+        assert result.content.startswith('Memory updated')
+        assert (await saved.get_memory(uid, str(dated.id))).valid_until == '2099-12-31'
 
         # A memory on the same subject is pointed out so the agent can fold it in.
         monkeypatch.setenv('COGNITRIX_MEMORY_EMBEDDINGS', '1')
