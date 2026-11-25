@@ -95,3 +95,32 @@ async def test_reviewer_never_answers_a_person_only_call(tmp_path, monkeypatch):
         web_turn_ctx.reset(token)
     assert result.approved and not result.auto
     assert reviewed == [] and asked == [True]
+
+
+@pytest.mark.asyncio
+async def test_allow_all_commands_never_covers_coding_agent(tmp_path, monkeypatch):
+    """"Allow all commands in this chat" is a Bash grant: a Coding Agent call
+    still gets its own card, and that card has no allow-all-commands button."""
+    gate = ApprovalGate(cache_dir=str(tmp_path))
+    events: list[dict] = []
+
+    async def emit(event):
+        events.append(event)
+
+    token = web_turn_ctx.set({'emit': emit, 'session_id': 's1', 'bypass': False, 'user_key': 'u1'})
+    try:
+        gate.session_cache.add(gate._shell_key('a1', 'web'))
+        risk = RiskAssessment(RiskLevel.HIGH, ['coding_agent'], 'Hands the work to Codex')
+        call = SimpleNamespace(tool_name='Coding Agent', params={'task': 'x', 'mode': 'full'}, app=None, access=None)
+        result = await gate.check_approval(call, risk, interface='web', scope='a1', person_only=True, timeout=0.05)
+        assert not result.approved and not result.cached
+        asked = [e for e in events if e.get('type') == 'approval_request']
+        assert len(asked) == 1 and asked[0]['full_shell'] is False
+
+        # The same grant still covers a full-shell Bash command.
+        shell_risk = RiskAssessment(RiskLevel.HIGH, ['shell'], 'Runs in the full shell (redirect)')
+        bash_call = SimpleNamespace(tool_name='Bash', params={'command': 'echo hi > f'}, app=None, access=None)
+        result = await gate.check_approval(bash_call, shell_risk, interface='web', scope='a1', person_only=True)
+        assert result.approved and result.cached
+    finally:
+        web_turn_ctx.reset(token)
