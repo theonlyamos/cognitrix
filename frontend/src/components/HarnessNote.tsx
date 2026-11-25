@@ -1,13 +1,18 @@
 import { useId } from 'react';
-import { ASK_HARNESSES, HARNESS_INSTALL, HARNESS_MODES, NO_TOOL_HARNESSES, PROVIDER_LABELS, isHarness } from '@/lib/providers';
+import { ASK_HARNESSES, HARNESS_INSTALL, HARNESS_MODES, NO_TOOL_HARNESSES, PROVIDER_LABELS, hasFastMode, isHarness } from '@/lib/providers';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
 import { tr } from '@/lib/i18n';
 
 /** Under a provider picker set to a coding agent CLI: whether it's installed,
  *  how to get it, and what it may do to files. */
 export default function HarnessNote({
-  provider, mode, onModeChange, selectClass = '',
-}: { provider: string; mode: string; onModeChange: (mode: string) => void; selectClass?: string }) {
+  provider, mode, onModeChange, fast, onFastChange, selectClass = '',
+}: {
+  provider: string; mode: string; onModeChange: (mode: string) => void;
+  /** The CLI's fast mode, for CLIs that have one. Left out, no switch is shown. */
+  fast?: boolean; onFastChange?: (fast: boolean) => void;
+  selectClass?: string;
+}) {
   const { info } = useSystemInfo();
   const id = useId();
   if (!isHarness(provider)) return null;
@@ -39,6 +44,24 @@ export default function HarnessNote({
         </select>
         <span className="text-[12px] font-normal text-fg-dim">{current.detail}</span>
       </label>
+      {onFastChange && hasFastMode(provider) && (
+        <label className="flex items-start gap-2 text-[13px] font-medium text-fg">
+          <input
+            type="checkbox"
+            checked={!!fast}
+            onChange={(e) => onFastChange(e.target.checked)}
+            className="mt-0.5 h-4 w-4 flex-none accent-[var(--accent)]"
+          />
+          <span className="flex flex-col gap-0.5">
+            {tr('ui.harnessNote.fastMode')}
+            <span className="text-[12px] font-normal text-fg-dim">
+              {tr('ui.harnessNote.valueYouCanAlsoSwitch', { value: provider === 'codex'
+                ? tr('ui.harnessNote.quickerRepliesOnGpt6')
+                : tr('ui.harnessNote.quickerRepliesOnOpusAnd') })}
+            </span>
+          </span>
+        </label>
+      )}
     </div>
   );
 }

@@ -582,3 +582,60 @@ def test_newer_openai_models_use_the_responses_api_for_tools():
     assert not base._wants_responses_api(
         LLM(provider='openai', model='gpt-6.1-sol', api_key='k', base_url='http://localhost:1234/v1'))
     assert not base._wants_responses_api(LLM(provider='openrouter', model='openai/gpt-6.1-sol', api_key='k'))
+
+
+# --- fast mode -----------------------------------------------------------------
+
+def test_claude_code_fast_mode_uses_a_settings_file(tmp_path):
+    fast_file = tmp_path / h.FAST_SETTINGS_NAME
+    argv, _ = _cmd('claude-code', model='opus', fast=True, fast_settings_file=str(fast_file))
+    assert argv[argv.index('--settings') + 1] == str(fast_file)
+    assert json.loads(fast_file.read_text(encoding='utf-8')) == {'fastMode': True}
+    plain, _ = _cmd('claude-code', model='opus')
+    assert '--settings' not in plain
+
+
+def test_codex_fast_mode_sets_the_service_tier():
+    argv, _ = _cmd('codex', fast=True)
+    assert 'service_tier=fast' in argv and argv[argv.index('service_tier=fast') - 1] == '-c'
+    assert argv[-1] == '-'
+    resumed, _ = _cmd('codex', fast=True, resume='t1')
+    assert 'service_tier=fast' in resumed and resumed[-2:] == ['t1', '-']
+    assert 'service_tier=fast' not in _cmd('codex')[0]
+
+
+def test_other_clis_ignore_fast_mode():
+    for key in ('gemini-cli', 'copilot-cli', 'opencode', 'antigravity-cli'):
+        assert _cmd(key, fast=True, new_session='s') == _cmd(key, new_session='s')
+
+
+def test_fast_mode_follows_the_chat_switch_then_the_agent():
+    from types import SimpleNamespace
+
+    from cognitrix.providers.base import turn_fast_mode
+
+    on = SimpleNamespace(provider='claude-code', fast_mode=True)
+    off = SimpleNamespace(provider='codex', fast_mode=False)
+    other = SimpleNamespace(provider='gemini-cli', fast_mode=True)
+    assert h.fast_mode_for(on) is True
+    assert h.fast_mode_for(off) is False
+    assert h.fast_mode_for(other) is False
+    token = turn_fast_mode.set(False)
+    try:
+        assert h.fast_mode_for(on) is False
+    finally:
+        turn_fast_mode.reset(token)
+    token = turn_fast_mode.set(True)
+    try:
+        assert h.fast_mode_for(off) is True
+        assert h.fast_mode_for(other) is False
+    finally:
+        turn_fast_mode.reset(token)
+
+
+def test_llm_keeps_fast_mode():
+    from cognitrix.providers.base import LLM
+
+    llm = LLM(provider='claude-code', model='opus', fast_mode=True)
+    assert llm.fast_mode is True
+    assert LLM(**llm.model_dump(exclude={'client'})).fast_mode is True

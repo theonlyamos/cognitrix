@@ -144,7 +144,7 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
           {draft.provider === 'chatgpt' && <div className="md:col-span-2"><PlanNote provider={draft.provider} /></div>}
           {isHarness(draft.provider) && (
             <div className="md:col-span-2">
-              <HarnessNote provider={draft.provider} mode={draft.harnessMode} onModeChange={(harnessMode) => update({ harnessMode })} selectClass={inputClass} />
+              <HarnessNote provider={draft.provider} mode={draft.harnessMode} onModeChange={(harnessMode) => update({ harnessMode })} fast={draft.fastMode} onFastChange={(fastMode) => update({ fastMode })} selectClass={inputClass} />
             </div>
           )}
           <label htmlFor={ids.reasoning} className={labelClass}>

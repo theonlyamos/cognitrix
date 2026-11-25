@@ -1,5 +1,5 @@
 import { folderName, type WorkFolder } from '@/lib/folders';
-import { isHarness } from '@/lib/providers';
+import { hasFastMode, isHarness } from '@/lib/providers';
 
 import { dateLocale, tr } from '@/lib/i18n';
 export type AgentLevel = 'auto' | 'ask' | 'allow';
@@ -35,6 +35,7 @@ export interface AgentRecord {
     base_url?: string | null;
     reasoning_effort?: string | null;
     harness_mode?: string | null;
+    fast_mode?: boolean | null;
   };
   tools?: ToolInfo[];
   mcp_servers?: string[];
@@ -71,6 +72,8 @@ export interface AgentDraft {
   reasoning: string;
   /** For agents on a coding agent CLI: read_only, edit or full. */
   harnessMode: string;
+  /** For CLIs with a fast mode (FAST_HARNESSES): run in it. */
+  fastMode: boolean;
   temperature: number;
   maxTokens: string;
   baseUrl: string;
@@ -116,6 +119,7 @@ export function draftFrom(agent: AgentRecord): AgentDraft {
     model: agent.llm?.model || '',
     reasoning: agent.llm?.reasoning_effort || '',
     harnessMode: agent.llm?.harness_mode || 'edit',
+    fastMode: agent.llm?.fast_mode === true,
     temperature: agent.llm?.temperature ?? 0.4,
     maxTokens: agent.llm?.max_tokens ? String(agent.llm.max_tokens) : '',
     baseUrl: agent.llm?.base_url || '',
@@ -190,6 +194,7 @@ export function payloadFrom(id: string, draft: AgentDraft, catalog: ToolInfo[], 
       temperature: draft.temperature,
       reasoning_effort: draft.reasoning,
       ...(isHarness(draft.provider) ? { harness_mode: draft.harnessMode } : {}),
+      fast_mode: hasFastMode(draft.provider) && draft.fastMode,
       ...(draft.baseUrl ? { base_url: draft.baseUrl } : {}),
       ...(draft.maxTokens ? { max_tokens: Number(draft.maxTokens) } : {}),
     },

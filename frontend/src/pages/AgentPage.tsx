@@ -10,7 +10,7 @@ import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm } from '@/components/form';
 import { cn } from '@/lib/utils';
 import { REASONING_LEVELS } from '@/lib/reasoning';
-import { BASE_URLS, HARNESS_PROVIDERS, MODELS, PROVIDERS, PROVIDER_LABELS, ignoresTemperature, isHarness } from '@/lib/providers';
+import { BASE_URLS, HARNESS_PROVIDERS, MODELS, PROVIDERS, PROVIDER_LABELS, hasFastMode, ignoresTemperature, isHarness } from '@/lib/providers';
 import HarnessNote from '@/components/HarnessNote';
 import PlanNote from '@/components/PlanNote';
 import { listMcpServers, type McpServer } from '@/lib/mcp';
@@ -46,7 +46,7 @@ interface AgentData {
   name?: string;
   description?: string;
   system_prompt?: string;
-  llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number; reasoning_effort?: string; harness_mode?: string };
+  llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number; reasoning_effort?: string; harness_mode?: string; fast_mode?: boolean };
   tools?: Tool[];
   mcp_servers?: string[];
   folders?: WorkFolder[] | null;
@@ -79,6 +79,7 @@ export default function AgentPage() {
   const [temperature, setTemperature] = useState(0.4);
   const [reasoning, setReasoning] = useState('');
   const [harnessMode, setHarnessMode] = useState('edit');
+  const [fastMode, setFastMode] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [maxTokens, setMaxTokens] = useState('');
@@ -111,6 +112,7 @@ export default function AgentPage() {
     setTemperature(existing.llm?.temperature ?? 0.4);
     setReasoning(existing.llm?.reasoning_effort || '');
     setHarnessMode(existing.llm?.harness_mode || 'edit');
+    setFastMode(existing.llm?.fast_mode === true);
     setSystemPrompt(existing.system_prompt || '');
     setSelected(new Set((existing.tools || []).map((t) => t.name)));
     setMaxTokens(existing.llm?.max_tokens ? String(existing.llm.max_tokens) : '');
@@ -221,6 +223,7 @@ export default function AgentPage() {
           temperature,
           reasoning_effort: reasoning,
           ...(isHarness(provider) ? { harness_mode: harnessMode } : {}),
+          ...(hasFastMode(provider) ? { fast_mode: fastMode } : {}),
           ...(baseUrl ? { base_url: baseUrl } : {}),
           ...(maxTokens ? { max_tokens: Number(maxTokens) } : {}),
         },
@@ -379,7 +382,7 @@ export default function AgentPage() {
         </Field>
       </div>
       <PlanNote provider={provider} />
-      <HarnessNote provider={provider} mode={harnessMode} onModeChange={setHarnessMode} selectClass="h-11 w-full rounded border border-line bg-bg px-3 text-sm font-normal text-fg md:h-10" />
+      <HarnessNote provider={provider} mode={harnessMode} onModeChange={setHarnessMode} fast={fastMode} onFastChange={setFastMode} selectClass="h-11 w-full rounded border border-line bg-bg px-3 text-sm font-normal text-fg md:h-10" />
       </>
       )}
 

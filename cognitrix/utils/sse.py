@@ -864,11 +864,17 @@ class SSEManager:
                     stream_id=str(self.stream_id or 'default'),
                     user_key=str(self.user_key or ''),
                 ))
-                from cognitrix.providers.base import normalize_reasoning_effort, turn_reasoning_effort
+                from cognitrix.providers.base import (
+                    normalize_reasoning_effort,
+                    turn_fast_mode,
+                    turn_reasoning_effort,
+                )
 
                 effort_token = turn_reasoning_effort.set(
                     normalize_reasoning_effort(action.get('reasoning_effort')) or None
                 )
+                fast_value = action.get('fast_mode')
+                fast_token = turn_fast_mode.set(fast_value if isinstance(fast_value, bool) else None)
                 # The turn runs in the event stream's context, not in the
                 # request that sent the message, so the person's timezone
                 # travels with the queued message.
@@ -919,6 +925,7 @@ class SSEManager:
                     question_turn_ctx.reset(question_token)
                     web_turn_ctx.reset(token)
                     turn_reasoning_effort.reset(effort_token)
+                    turn_fast_mode.reset(fast_token)
                     client_timezone.reset(timezone_token)
         except asyncio.CancelledError:
             terminal = {

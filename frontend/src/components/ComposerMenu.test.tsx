@@ -87,4 +87,23 @@ describe('ComposerMenu', () => {
     expect(screen.getByRole('button', { name: 'Model' })).toBeInTheDocument();
     expect(screen.queryByText('This chat')).toBeNull();
   });
+
+  it('offers fast mode only when given, with a tag that turns it off', async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole('button', { name: 'More options' }));
+    expect(screen.queryByRole('menuitemcheckbox', { name: 'Fast mode' })).toBeNull();
+  });
+
+  it('toggles fast mode from the menu and from its tag', async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    setup({ fast: { on: true, onToggle } });
+    await user.click(screen.getByRole('button', { name: 'Turn off fast mode' }));
+    await user.click(screen.getByRole('button', { name: 'More options' }));
+    const item = screen.getByRole('menuitemcheckbox', { name: 'Fast mode' });
+    expect(item).toHaveAttribute('aria-checked', 'true');
+    await user.click(item);
+    expect(onToggle).toHaveBeenCalledTimes(2);
+  });
 });

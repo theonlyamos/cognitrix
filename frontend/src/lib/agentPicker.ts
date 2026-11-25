@@ -4,7 +4,7 @@ export interface PickerAgent {
   id: string;
   name: string;
   description?: string | null;
-  llm?: { provider?: string | null; model?: string | null } | null;
+  llm?: { provider?: string | null; model?: string | null; fast_mode?: boolean | null } | null;
   avatar?: { emoji?: string; hue?: number | null } | null;
 }
 
