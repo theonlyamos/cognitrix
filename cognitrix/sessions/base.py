@@ -44,7 +44,8 @@ MAX_CHAT_HISTORY = 1000
 # model that never stops calling tools). 10 was too low for build-style steps
 # (creating several files is >10 tool calls), which cut steps off mid-work;
 # 100 fits long multi-file/agentic turns while still bounding runaway loops. Configurable.
-MAX_TOOL_ROUNDS = int(app_setting('COGNITRIX_MAX_TOOL_ROUNDS', '100'))
+# 0 (the default) means no limit on tool rounds in one reply.
+MAX_TOOL_ROUNDS = int(app_setting('COGNITRIX_MAX_TOOL_ROUNDS', '0') or 0)
 
 # Compaction: when the stored history estimate crosses this fraction of the
 # model's usable window, fold the oldest turns into a summary message.
@@ -1229,7 +1230,7 @@ class Session(Model):
         cutoff_continues = 0
         try:
             while True:  # The loop now primarily handles tool calls, not initial message processing
-                if tool_rounds >= MAX_TOOL_ROUNDS and not wrap_up_requested and agent.llm.supports_tool_use:
+                if MAX_TOOL_ROUNDS and tool_rounds >= MAX_TOOL_ROUNDS and not wrap_up_requested and agent.llm.supports_tool_use:
                     # One last call without tools, so the user gets a summary
                     # of the work so far instead of a bare "stopped" notice.
                     logger.warning("Reached max tool rounds (%s); asking for a final answer", MAX_TOOL_ROUNDS)
@@ -1246,7 +1247,7 @@ class Session(Model):
                             "what you found, and what is left to do.]"
                         ),
                     }]
-                elif tool_rounds >= MAX_TOOL_ROUNDS:
+                elif MAX_TOOL_ROUNDS and tool_rounds >= MAX_TOOL_ROUNDS:
                     logger.warning("Exceeded max tool rounds (%s); stopping turn", MAX_TOOL_ROUNDS)
                     stop_msg = f"[Stopped after {MAX_TOOL_ROUNDS} tool rounds]"
                     if interface == 'cli':

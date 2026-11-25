@@ -352,9 +352,10 @@ async def test_large_tool_batch_creates_only_one_worker_per_execution_slot(monke
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
-    [(None, 4), ("", 4), ("invalid", 4), ("0", 4), ("-3", 4), ("9999", 4), ("7", 7)],
+    [(None, 0), ("", 0), ("invalid", 0), ("0", 0), ("-3", 0), ("9999", 9999), ("7", 7)],
 )
-def test_concurrency_config_uses_bounded_fallback(raw, expected):
+def test_concurrency_config_defaults_to_no_limit(raw, expected):
+    # 0 means no limit: the person asked for no cap on tool calls.
     import cognitrix.agents.base as agent_base
 
     assert agent_base._parse_max_concurrent_tool_calls(raw) == expected

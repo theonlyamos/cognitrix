@@ -44,6 +44,10 @@ class Tool(Model):
     occupies_execution_slot: bool = True
     """Whether execution consumes one slot from the shared tool concurrency cap."""
 
+    runs_in_thread: bool = False
+    """A sync tool run in a worker thread: it can't be cancelled, so the tool
+    call time limit leaves it to its own limits (Bash, web requests)."""
+
     approval_mode: str = 'risk_based'
     """risk_based, assigned_only, or always."""
 

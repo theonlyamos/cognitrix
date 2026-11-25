@@ -569,6 +569,7 @@ class _SnapshotBoundTool(MCPTool):
             # Run Code waits on nested tool calls; holding a slot meanwhile
             # deadlocks them when the slots run out.
             occupies_execution_slot=bool(getattr(delegate, "occupies_execution_slot", True)),
+            runs_in_thread=bool(getattr(delegate, "runs_in_thread", False)),
         )
         # odbms models intercept unknown/private attributes, so runtime-only
         # state lives directly in ``__dict__`` (the same pattern Agent uses for

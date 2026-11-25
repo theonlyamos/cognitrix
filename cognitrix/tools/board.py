@@ -137,7 +137,9 @@ def _found(rows: list, board: str, what: str) -> str:
         f'- {service.post_line(p)}' for p in rows)
 
 
-@tool(category=BOARD_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
+# Its waits (for replies from other agents) must not hold a tool slot.
+@tool(category=BOARD_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'],
+      occupies_execution_slot=False)
 async def board(action: str, text: str = '', kind: str = '', to: str = '', tags: str = '', post_id: str = '',
                 filter: str = '', board: str = '', close: bool = False, kinds: str = '', wake: str = '',
                 query: str = '', force: bool = False, thread: str = '', seconds: int = 0, when: str = '',
