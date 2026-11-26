@@ -186,6 +186,10 @@ class TaskRun(Model):
     trigger_event_id: str | None = None
     """TriggerEvent whose payload this run handles (webhook runs)."""
 
+    auto_approve: bool | None = None
+    """Queued by a CLI run with --dangerously-skip-permissions: every approval
+    in this run is answered Yes (safety/auto_approve_all.py)."""
+
     queue_job_id: str | None = None
     queued_at: str | None = None
 
