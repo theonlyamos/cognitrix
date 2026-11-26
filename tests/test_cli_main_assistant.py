@@ -143,6 +143,51 @@ async def test_approval_without_a_terminal_is_refused(monkeypatch):
     assert answers == [(('r1', False, 'owner-1'), {})]
 
 
+async def test_question_without_a_terminal_is_skipped_not_cancelled(monkeypatch):
+    from cognitrix.cli import app_turn
+    from cognitrix.questions import broker
+
+    calls = []
+
+    async def fake_resolve(request_id, owner, action, **kw):
+        calls.append((action, kw))
+        return True
+
+    monkeypatch.setattr(broker, 'resolve_question', fake_resolve)
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: False, raising=False)
+    channel = app_turn.TerminalChannel('owner-1', write=lambda *a, **k: None)
+    await channel.emit({'type': 'question_request', 'request_id': 'q1', 'prompt': 'Which one?',
+                        'questions': [{'prompt': 'Which one?', 'options': [{'id': 'a', 'label': 'A'}]}]})
+    assert calls and calls[0][0] == 'answer' and calls[0][1]['text'].startswith('[No answer:')
+
+
+async def test_api_key_alone_overrides_for_the_run(db, monkeypatch, tmp_path):  # noqa: F811
+    from argparse import Namespace
+
+    from cognitrix.cli import app_turn, core
+
+    _user_row, main, _decoy = await _main_and_decoy(monkeypatch)
+    ran = {}
+
+    async def fake_turn(session, agent, text, *, stream=True, output=None):
+        ran.update(agent=agent)
+
+    async def no_config():
+        return None
+
+    monkeypatch.setattr(app_turn, 'turn', fake_turn)
+    monkeypatch.setattr(core, 'run_configuration', no_config)
+    monkeypatch.chdir(tmp_path)
+    args = Namespace(agents=False, tasks=False, teams=False, sessions=False, agent='', user='',
+                     provider='', model='', api_key='sk-own-key-123456', api_base='http://localhost:9999/v1', temperature=None,
+                     max_tokens=0, load_tools=None, prompt='hi', prompt_file='', continue_session=False,
+                     clear_history=False, verbose=False, task=False, stream=False, ui='cli')
+    await core.start(args)
+    llm = ran['agent'].llm
+    assert llm.base_url == 'http://localhost:9999/v1' and llm.api_key == 'sk-own-key-123456'
+    assert llm.provider == 'anthropic' and llm.model == 'claude-sonnet-5-5'
+
+
 async def test_cli_overrides_do_not_change_the_saved_agent(db, monkeypatch, tmp_path):  # noqa: F811
     from argparse import Namespace
 
@@ -181,7 +226,12 @@ def test_profile_round_trip_and_size_cap():
     profile = {'id': 'a1', 'name': 'Jarvis', 'description': '', 'system_prompt': 'p' * 300_000,
                'llm': {'provider': 'anthropic', 'model': 'm'}, 'tools': ['Bash']}
     encoded = cli_agent.encode_profile(profile)
+    # The whole NAME=value entry fits Linux's per-string limit.
+    assert len(cli_agent.PROFILE_ENV) + 1 + len(encoded) + 1 < 128 * 1024
     assert len(base64.b64decode(encoded)) <= cli_agent._PROFILE_MAX_BYTES
+    # Multi-byte text too.
+    wide = cli_agent.encode_profile({**profile, 'system_prompt': 'é漢' * 200_000})
+    assert len(cli_agent.PROFILE_ENV) + 2 + len(wide) < 128 * 1024
     back = cli_agent.decode_profile(encoded)
     assert back['id'] == 'a1' and back['tools'] == [] and back['system_prompt'].startswith('ppp')
     assert cli_agent.decode_profile('not base64!') is None

@@ -198,7 +198,8 @@ class TerminalChannel:
         request_id = str(event.get('request_id') or '')
         if event.get('secret'):
             _err('\n? The agent asked for a sign-in. Save it in the app (Settings, Sign-ins) and ask again.')
-            await resolve_question(request_id, self.owner, 'cancel')
+            await self._skip(request_id, 'The person is in a terminal and can\'t enter a sign-in here. They can save '
+                                         'it in the app (Settings, Sign-ins).')
             return
         questions = event.get('questions') or [{
             'prompt': event.get('prompt'), 'options': event.get('options') or []}]
@@ -210,18 +211,31 @@ class TerminalChannel:
                 _err(f"  {n}. {option.get('label') or option.get('id')}")
         if not _interactive():
             _err('  Skipped: no terminal to answer in.')
-            await resolve_question(request_id, self.owner, 'cancel')
+            await self._skip(request_id, 'Nobody is at the terminal to answer. Carry on with your best judgement '
+                                         'and say what you assumed.')
             return
         answer = (await self._ask('  Answer (a number, or type a reply): ') or '').strip()
         if not answer:
-            await resolve_question(request_id, self.owner, 'cancel')
+            await self._skip(request_id, 'The person skipped this question. Carry on with your best judgement.')
             return
         first = questions[0].get('options') or []
         if len(questions) == 1 and answer.isdigit() and 1 <= int(answer) <= len(first):
             if await resolve_question(request_id, self.owner, 'answer', option_id=str(first[int(answer) - 1].get('id'))):
                 return
         if not await resolve_question(request_id, self.owner, 'answer', text=answer[:4000]):
-            await resolve_question(request_id, self.owner, 'cancel')
+            await self._skip(request_id, 'The answer could not be read. Carry on with your best judgement.')
+
+    async def _skip(self, request_id: str, note: str) -> None:
+        """Answer a question with a note instead of cancelling it: a cancel
+        stops the whole turn, and a skipped question should not."""
+        await skip_question(request_id, self.owner, note)
+
+
+async def skip_question(request_id: str, owner: str, note: str) -> None:
+    from cognitrix.questions.broker import resolve_question
+
+    if not await resolve_question(request_id, owner, 'answer', text=f'[No answer: {note}]'):
+        await resolve_question(request_id, owner, 'cancel')
 
 
 # --- one turn -----------------------------------------------------------------

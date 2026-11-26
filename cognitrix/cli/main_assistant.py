@@ -32,7 +32,9 @@ LEGACY_NAME = 'Assistant'
 # Fields of the main assistant handed to the sandbox CLI. Keys and connected
 # apps never are: the sandbox gets model keys only as proxy placeholders.
 _PROFILE_LLM_FIELDS = ('provider', 'model', 'temperature', 'max_tokens', 'reasoning_effort')
-_PROFILE_MAX_BYTES = 96 * 1024  # stays well under the per-variable limit on Linux
+# Linux caps one environment entry (NAME=value) at 128 KiB; base64 adds a third.
+_ENV_ENTRY_LIMIT = 128 * 1024
+_PROFILE_MAX_BYTES = 90_000
 
 
 @dataclass
@@ -108,17 +110,29 @@ def profile_of(agent: Any) -> dict[str, Any]:
     }
 
 
+def _fits(encoded: str) -> bool:
+    return len(PROFILE_ENV) + 1 + len(encoded) + 1 < _ENV_ENTRY_LIMIT
+
+
 def encode_profile(profile: dict[str, Any]) -> str:
-    raw = json.dumps(profile, ensure_ascii=False).encode('utf-8')
-    if len(raw) > _PROFILE_MAX_BYTES:
-        # A very long prompt: drop the tool list first, then cut the prompt.
-        profile = {**profile, 'tools': []}
-        raw = json.dumps(profile, ensure_ascii=False).encode('utf-8')
-        if len(raw) > _PROFILE_MAX_BYTES:
-            over = len(raw) - _PROFILE_MAX_BYTES
-            prompt = profile['system_prompt'].encode('utf-8')[:-(over + 16)].decode('utf-8', 'ignore')
-            raw = json.dumps({**profile, 'system_prompt': prompt}, ensure_ascii=False).encode('utf-8')
-    return base64.b64encode(raw).decode('ascii')
+    """The profile as one environment value that a command can still start
+    with: a very long one loses its tool list, then the end of its prompt."""
+    def enc(p: dict[str, Any]) -> str:
+        raw = json.dumps(p, ensure_ascii=False).encode('utf-8')
+        return base64.b64encode(raw).decode('ascii') if len(raw) <= _PROFILE_MAX_BYTES else ''
+
+    encoded = enc(profile)
+    if encoded and _fits(encoded):
+        return encoded
+    profile = {**profile, 'tools': []}
+    prompt = str(profile.get('system_prompt') or '')
+    while True:
+        encoded = enc({**profile, 'system_prompt': prompt})
+        if (encoded and _fits(encoded)) or not prompt:
+            return encoded or enc({**profile, 'system_prompt': ''})
+        raw_len = len(json.dumps({**profile, 'system_prompt': prompt}, ensure_ascii=False).encode('utf-8'))
+        over = max(raw_len - _PROFILE_MAX_BYTES, 1024)
+        prompt = prompt[: max(0, len(prompt) - over)]
 
 
 def decode_profile(value: str) -> dict[str, Any] | None:

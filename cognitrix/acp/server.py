@@ -363,7 +363,7 @@ class CognitrixAgent:
         (``interface='web'``, the person as owner), so the agent has the same
         prompt, tools, connected apps and permission rules. Approval cards are
         asked in the editor; questions are shown and skipped."""
-        from cognitrix.questions.broker import QuestionTurnContext, question_turn_ctx, resolve_question
+        from cognitrix.questions.broker import QuestionTurnContext, question_turn_ctx
         from cognitrix.safety.approval_gate import resolve_web_approval, web_turn_ctx
         from cognitrix.tools.utils import HostProcessMode, ToolExecutionContext
 
@@ -373,8 +373,12 @@ class CognitrixAgent:
             if isinstance(event, dict) and event.get('type') == 'approval_request':
                 await self._ask_card(chat, session_id, event, owner, resolve_web_approval)
             elif isinstance(event, dict) and event.get('type') == 'question_request':
+                from cognitrix.cli.app_turn import skip_question
+
                 await self._say(session_id, f"\n\n{event.get('prompt') or ''}\n")
-                await resolve_question(str(event.get('request_id') or ''), owner, 'cancel')
+                await skip_question(str(event.get('request_id') or ''), owner,
+                                    "The editor can't show question cards. Carry on with your best judgement, "
+                                    'or ask in your reply.')
             else:
                 await self._forward(chat, session_id, event)
 

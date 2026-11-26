@@ -117,8 +117,8 @@ async def start(args: Namespace):
             # Build provider config for first-time agent creation so CLI flags
             # (--api-key, --api-base, --model, --temperature, --max-tokens)
             # are honored before LLM validation runs.
-            if args.provider:
-                provider_overrides: dict[str, Any] = {'provider': args.provider}
+            if args.provider or args.api_key or args.api_base or args.model:
+                provider_overrides: dict[str, Any] = {'provider': args.provider or cli_agent._default_provider()}
                 if args.api_key:
                     provider_overrides['api_key'] = args.api_key
                 if args.api_base:
@@ -150,7 +150,8 @@ async def start(args: Namespace):
             print(cli_agent.describe(resolved), file=sys.stderr)
 
         # Configure agent with provided options (CLI overrides for this run).
-        if args.provider or args.model or args.temperature is not None or getattr(args, 'max_tokens', 0) > 0:
+        if (args.provider or args.model or args.api_key or args.api_base or args.temperature is not None
+                or getattr(args, 'max_tokens', 0) > 0):
             overrides: dict[str, Any] = {'provider': args.provider or assistant.llm.provider}
             if args.api_key:
                 overrides['api_key'] = args.api_key
