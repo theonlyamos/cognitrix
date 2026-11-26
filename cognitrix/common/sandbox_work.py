@@ -486,11 +486,33 @@ class SandboxWork:
     def run(self, command: str, cwd: str | None = None, timeout: float = 120, background: bool = False,
             env: dict | None = None, stdin: str | None = None, label: str | None = None) -> dict:
         # The person's saved variables (Settings, Computer), then the call's own.
-        base = cognitrix_cli_env() if runs_cognitrix(command) else {}
+        base = {**cognitrix_cli_env(), **self._main_assistant_env()} if runs_cognitrix(command) else {}
         merged = self.hide_keys({**base, **sandbox_env(self.user_id), **(env or {})})
         body = {'command': command, 'cwd': cwd, 'timeout': timeout, 'background': background,
                 'env': merged, 'stdin': stdin, 'label': label}
         return self._call('POST', '/run', body, timeout=(15 if background else float(timeout) + 30))
+
+    def _main_assistant_env(self) -> dict[str, str]:
+        """The person's main assistant for the CLI in the sandbox, which has
+        no account of its own (cognitrix/cli/main_assistant.py). Run from a
+        tool's worker thread; nothing when there is no loop to ask on."""
+        import asyncio
+
+        from cognitrix.tools.tool import calling_loop
+        loop = calling_loop.get()
+        if loop is None or loop.is_closed():
+            return {}
+        try:
+            if asyncio.get_running_loop() is loop:
+                return {}  # on the loop itself: waiting here would hang it
+        except RuntimeError:
+            pass
+        from cognitrix.cli.main_assistant import profile_env
+        try:
+            return asyncio.run_coroutine_threadsafe(profile_env(self.user_id), loop).result(10)
+        except Exception:
+            logger.debug("Could not pass the main assistant to the sandbox CLI", exc_info=True)
+            return {}
 
     def hide_keys(self, env: dict[str, str]) -> dict[str, str]:
         """Swap every hidden value for its placeholder and send the command's

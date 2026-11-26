@@ -114,13 +114,11 @@ async def _run_ai_turn(session, query: str, agent, stream: bool) -> None:
         rich_print(*args, **kwargs)
 
     try:
-        await session(
-            query,
-            agent,
-            stream=stream,
-            output=output,
-            tool_context=trusted_local_execution_context(),
-        )
+        # A chat in the person's account runs like the app's chats
+        # (cognitrix/cli/app_turn.py).
+        from .app_turn import turn
+
+        await turn(session, agent, query, stream=stream, output=output)
     finally:
         if active['v']:
             status.stop()
@@ -298,11 +296,18 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
                 target_agent = await Agent.find_one({'name': agent_identifier})
 
             if target_agent:
-                # Get/create session for new agent
-                new_session = await Session.get_by_agent_id(target_agent.id)
-                if not new_session:
-                    new_session = Session(agent_id=target_agent.id)
-                    await new_session.save()
+                owner = str(getattr(session, 'user_id', '') or '')
+                if owner:
+                    # A chat in the person's account: a new one with that agent.
+                    from .app_turn import new_chat
+
+                    new_session = await new_chat(owner, target_agent)
+                else:
+                    # Get/create session for new agent
+                    new_session = await Session.get_by_agent_id(target_agent.id)
+                    if not new_session:
+                        new_session = Session(agent_id=target_agent.id)
+                        await new_session.save()
 
                 console.print(Panel(f"[bold green]✅ Switched to agent:[/bold green] [bold cyan]{target_agent.name}[/bold cyan]",
                                    title="[green]Agent Switched[/green]", border_style="green"))

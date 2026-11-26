@@ -197,6 +197,15 @@ class CognitrixAgent:
             for a in agents:
                 if str(a.name).lower() == self.agent_name.lower():
                     return a
+        if self.user_id:
+            # The person's main assistant, the same one the app marks as main.
+            from cognitrix.assistant.setup import main_assistant
+
+            main = await main_assistant(self.user_id)
+            if main is not None:
+                for a in agents:
+                    if str(a.id) == str(main.id):
+                        return a
         for a in agents:
             if str(a.name).lower() == 'assistant':
                 return a
@@ -235,7 +244,17 @@ class CognitrixAgent:
         agent = await self._pick_agent()
         session = Session(agent_id=str(agent.id), user_id=self.user_id, title=f"Editor: {Path(cwd).name or cwd}")
         session.folders = _folders(cwd)
-        await session.save()
+        if self.user_id:
+            # A chat in the person's account, like one started in the app:
+            # the editor's folder first, then the agent's own folders.
+            from cognitrix.cli.app_turn import terminal_folders
+            from cognitrix.session_ownership import claim_new
+
+            session.folders = terminal_folders(agent, cwd)
+            await session.save()
+            await claim_new(str(session.id), self.user_id, str(agent.id))
+        else:
+            await session.save()
         chat = _Chat(session, agent, cwd)
         self.chats[str(session.id)] = chat
         return NewSessionResponse(session_id=str(session.id), modes=await self._modes(agent))
@@ -319,6 +338,10 @@ class CognitrixAgent:
         async def approve(tool_call: Any, risk: Any, person_only: bool) -> Any:
             return await self._ask(chat, session_id, tool_call, risk, person_only)
 
+        if self.user_id:
+            # Signed in: the turn runs like a chat in the app.
+            await self._run_app_turn(chat, session_id, text)
+            return
         token = acp_approver.set(approve)
         try:
             from cognitrix.tools.utils import HostProcessMode
@@ -334,6 +357,80 @@ class CognitrixAgent:
             )
         finally:
             acp_approver.reset(token)
+
+    async def _run_app_turn(self, chat: _Chat, session_id: str, text: str) -> None:
+        """A turn for a person's account: the same path as a chat in the app
+        (``interface='web'``, the person as owner), so the agent has the same
+        prompt, tools, connected apps and permission rules. Approval cards are
+        asked in the editor; questions are shown and skipped."""
+        from cognitrix.questions.broker import QuestionTurnContext, question_turn_ctx, resolve_question
+        from cognitrix.safety.approval_gate import resolve_web_approval, web_turn_ctx
+        from cognitrix.tools.utils import HostProcessMode, ToolExecutionContext
+
+        owner = str(self.user_id)
+
+        async def emit(event: Any = None, *args: Any, **kwargs: Any) -> None:
+            if isinstance(event, dict) and event.get('type') == 'approval_request':
+                await self._ask_card(chat, session_id, event, owner, resolve_web_approval)
+            elif isinstance(event, dict) and event.get('type') == 'question_request':
+                await self._say(session_id, f"\n\n{event.get('prompt') or ''}\n")
+                await resolve_question(str(event.get('request_id') or ''), owner, 'cancel')
+            else:
+                await self._forward(chat, session_id, event)
+
+        sid = str(chat.session.id)
+        approval_token = web_turn_ctx.set({
+            'emit': emit, 'session_id': sid, 'bypass': False, 'user_key': owner,
+            'agent_name': getattr(chat.agent, 'name', '') or '', 'origin': 'editor',
+        })
+        question_token = question_turn_ctx.set(QuestionTurnContext(
+            emit=emit, session_id=sid, stream_id=f'acp-{sid}', user_key=owner))
+        try:
+            await chat.session(
+                text, chat.agent, interface='web', stream=True, output=emit,
+                wsquery={'type': 'generate', 'action': 'chat_message'},
+                tool_context=ToolExecutionContext(
+                    session_id=sid, user_id=owner, agent_id=str(chat.agent.id),
+                    host_process_mode=HostProcessMode.TRUSTED_LOCAL),
+            )
+        finally:
+            question_turn_ctx.reset(question_token)
+            web_turn_ctx.reset(approval_token)
+
+    async def _ask_card(self, chat: _Chat, session_id: str, event: dict[str, Any], owner: str,
+                        resolve: Any) -> None:
+        """An app approval card, asked in the editor."""
+        request_id = str(event.get('request_id') or '')
+        options = [
+            PermissionOption(option_id='allow_once', name='Allow', kind='allow_once'),
+            PermissionOption(option_id='allow_always', name='Allow for this session', kind='allow_always'),
+            PermissionOption(option_id='reject_once', name='Deny', kind='reject_once'),
+        ]
+        name = str(event.get('tool_name') or 'tool')
+        params = _params(event.get('params'))
+        level = str(event.get('risk_level') or '')
+        details = str(event.get('details') or '')
+        update = ToolCallUpdate(
+            tool_call_id=f"approval-{uuid.uuid4().hex[:10]}",
+            title=tool_title(name, params) + (f" ({level} risk)" if level else ''),
+            kind=tool_kind(name), status='pending', raw_input=params,
+            content=[ContentToolCallContent(content=TextContentBlock(text=details))] if details else None,
+            locations=_locations(params, chat.cwd),
+        )
+        try:
+            response = await self.conn.request_permission(session_id=session_id, tool_call=update, options=options)
+        except Exception:
+            logger.warning('Editor approval failed', exc_info=True)
+            resolve(request_id, False, owner)
+            return
+        outcome = getattr(response, 'outcome', None)
+        grant = 'chat' if event.get('access') else None
+        if isinstance(outcome, AllowedOutcome) and outcome.option_id == 'allow_once':
+            resolve(request_id, True, owner, grant=grant)
+        elif isinstance(outcome, AllowedOutcome) and outcome.option_id == 'allow_always':
+            resolve(request_id, True, owner, remember=True, remember_shell=bool(event.get('full_shell')), grant=grant)
+        else:
+            resolve(request_id, False, owner)
 
     async def _forward(self, chat: _Chat, session_id: str, event: Any) -> None:
         """Turn one chat event into the editor's session update."""
@@ -521,17 +618,18 @@ async def _protocol_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWrite
 async def serve(agent_name: str = '', user_email: str = '') -> None:
     """Run the ACP server on stdin/stdout until the editor closes it."""
     reader, writer = await _protocol_streams()
-    user_id = None
-    if user_email:
-        from cognitrix.cli.core import run_configuration
-        from cognitrix.models.user import User
+    # Whose agents: --user, else the install's owner (the person who set up
+    # the app on this computer), so the default agent is their main assistant.
+    from cognitrix.cli import main_assistant as cli_agent
+    from cognitrix.cli.core import run_configuration
 
-        await run_configuration()
-        user = await User.find_one({'email': user_email.strip().lower()})
-        if user is None:
-            print(f"No account with the email {user_email}", file=sys.stderr)
-            return
-        user_id = str(user.id)
+    await run_configuration()
+    try:
+        user = await cli_agent.cli_owner(user_email)
+    except cli_agent.NoSuchUser:
+        print(f"No account with the email {user_email}", file=sys.stderr)
+        return
+    user_id = cli_agent._key(user)
     agent = CognitrixAgent(agent_name=agent_name, user_id=user_id)
     with contextlib.suppress(asyncio.CancelledError):
         await run_agent(agent, writer, reader)
