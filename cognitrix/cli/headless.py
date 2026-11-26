@@ -44,7 +44,7 @@ TASK_FAILED = 'Multi-step task failed:'  # tasks/handler.py
 
 # Per-run agent changes a task run can't carry: its steps reload the saved
 # agent by id (Task.team()).
-AGENT_RUN_OPTIONS = ('system_prompt', 'append_system_prompt', 'allowed_tools', 'disallowed_tools')
+AGENT_RUN_OPTIONS = ('system_prompt', 'append_system_prompt', 'allowed_tools', 'disallowed_tools', 'mcp_config')
 
 
 def task_conflicts(args: Namespace) -> list[str]:
@@ -254,10 +254,6 @@ async def _local_turn(session: Any, agent: Any, text: str, *, stream: bool, chan
 
 # --- per-run agent options ---------------------------------------------------------
 
-def _tool_key(name: str) -> str:
-    return ''.join(ch for ch in str(name).lower() if ch.isalnum())
-
-
 def _names(value: str | None) -> list[str]:
     return [n.strip() for n in (value or '').replace(' ', ',').split(',') if n.strip()] if value else []
 
@@ -271,26 +267,27 @@ def apply_run_options(agent: Any, args: Namespace) -> None:
     if extra:
         agent.system_prompt = f"{agent.system_prompt or ''}\n\n{extra}".strip()
 
-    allowed = {_tool_key(n) for n in _names(getattr(args, 'allowed_tools', ''))}
-    denied = {_tool_key(n) for n in _names(getattr(args, 'disallowed_tools', ''))}
-    if allowed or denied:
+    allowed_names = _names(getattr(args, 'allowed_tools', ''))
+    denied_names = _names(getattr(args, 'disallowed_tools', ''))
+    if allowed_names or denied_names:
+        from cognitrix.safety.permissions import run_tool_limits, tool_key
+
+        allowed = {tool_key(n) for n in allowed_names}
+        if allowed and getattr(args, 'mcp_config', None):
+            allowed |= {'list_mcp_tools', 'run_mcp_tool'}  # how the agent reaches --mcp-config servers
         tools = list(agent.tools or [])
         if allowed:
             from cognitrix.tools.base import ToolManager
 
-            have = {_tool_key(t.name) for t in tools}
             # A tool named in --allowed-tools that the agent doesn't have yet is added.
-            for name in _names(args.allowed_tools):
-                if _tool_key(name) not in have:
-                    tool = ToolManager.get_by_name(name.lower())
-                    if tool is None:
-                        tool = next((t for t in ToolManager.list_all_tools() if _tool_key(t.name) == _tool_key(name)), None)
-                    if tool is not None:
-                        tools.append(tool)
-                        have.add(_tool_key(tool.name))
-            tools = [t for t in tools if _tool_key(t.name) in allowed]
-        tools = [t for t in tools if _tool_key(t.name) not in denied]
+            have = {tool_key(t.name) for t in tools}
+            for tool in ToolManager.list_all_tools():
+                if tool_key(tool.name) in allowed and tool_key(tool.name) not in have:
+                    tools.append(tool)
+                    have.add(tool_key(tool.name))
         agent.tools = tools
+        # Applies to every tool a turn offers, the per-chat ones included.
+        run_tool_limits.set((frozenset(allowed) if allowed else None, frozenset(tool_key(n) for n in denied_names)))
 
     max_turns = int(getattr(args, 'max_turns', 0) or 0)
     if max_turns > 0:
@@ -356,6 +353,20 @@ def read_prompt(args: Namespace) -> str:
 
 # --- the run ---------------------------------------------------------------------
 
+async def close_mcp() -> None:
+    """Close MCP servers the run started (stdio servers are child processes)
+    on this loop: left open, they keep the CLI from exiting."""
+    from cognitrix.mcp import client as mcp_client
+
+    client = getattr(mcp_client, '_dynamic_client', None)
+    if client is None or not getattr(client, 'exit_stacks', None):
+        return
+    try:
+        async with asyncio.timeout(5):
+            await client.disconnect_all()
+    except BaseException:
+        pass
+
 def _usage(session: Any) -> dict[str, Any]:
     data = session.token_usage if isinstance(getattr(session, 'token_usage', None), dict) else {}
     models = (data.get('last_turn') or {}).get('models') or {}
@@ -415,6 +426,14 @@ async def run_prompt(session: Any, agent: Any, prompt: str, args: Namespace) -> 
 
         subtype = 'success'
         error: str | None = None
+        work_done = work
+
+        async def work() -> str | None:  # noqa: F811
+            try:
+                return await work_done()
+            finally:
+                await close_mcp()
+
         code = EXIT_OK
         try:
             if timeout > 0:

@@ -123,9 +123,22 @@ def stored_tool_permissions(agent: Any) -> dict[str, str]:
     }
 
 
+# A command-line run's --allowed-tools / --disallowed-tools (cognitrix/cli/
+# headless.py): (allowed keys or None for no limit, denied keys). Covers the
+# tools every chat gets (Run Code, Find Tools, Load Skill ...) as well as the
+# agent's own, and is never saved on the agent.
+run_tool_limits: ContextVar[tuple[frozenset[str] | None, frozenset[str]] | None] = ContextVar(
+    'permissions_run_tool_limits', default=None)
+
+
 def tool_level(agent: Any, tool_name: str) -> str:
     """The level set for this tool on the agent, else ``auto``."""
     key = tool_key(tool_name)
+    limits = run_tool_limits.get()
+    if limits is not None:
+        allowed, denied = limits
+        if key in denied or (allowed is not None and key not in allowed):
+            return 'deny'
     for name, level in stored_tool_permissions(agent).items():
         if tool_key(name) == key:
             return level

@@ -357,6 +357,7 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 [yellow]• /tasks[/yellow] - List all tasks
 [yellow]• /teams[/yellow] - List all teams
 [yellow]• /new[/yellow] - Start a fresh chat
+[yellow]• /voice[/yellow] - Speak a message (with --audio, an empty Enter does the same)
 [yellow]• /session[/yellow] - Show this chat's id (for cognitrix --resume)
 [yellow]• /history[/yellow] - Show this chat's messages
 
@@ -692,7 +693,7 @@ async def handle_entity_command(cmd: str, args: list[Any]):
 
 
 
-async def initialize_shell(session, agent, stream: bool = True):
+async def initialize_shell(session, agent, stream: bool = True, audio: bool = False):
     """Initialize and run the interactive shell."""
 
     # Welcome banner
@@ -708,7 +709,7 @@ async def initialize_shell(session, agent, stream: bool = True):
     builtins = ['cd', 'exit', 'quit', 'q']
     custom_commands = [
         '/help', '/clear', '/history', '/tools', '/add-dir', '/dirs', '/skills', '/agents', '/tasks', '/teams',
-        '/new', '/session', '/exit', '/quit',
+        '/new', '/session', '/voice', '/exit', '/quit',
         '/add', '/delete', '/show', '/switch', '/mcp', '/mcp-tools', '/mcp-tool-info',
         '/mcp-call', '/mcp-connect', '/mcp-disconnect'
     ]
@@ -767,6 +768,20 @@ async def initialize_shell(session, agent, stream: bool = True):
             plain_prompt = f'{username}@{hostname}:{display_cwd}$ '
             query = await _read_query(prompt_session, prompt_str, plain_prompt)
             query = query.strip()
+
+            # Voice: /voice, or an empty line with --audio, records a message.
+            if query.lower() == '/voice' or (audio and not query):
+                from .voice import VoiceUnavailable, listen
+
+                try:
+                    query = await listen()
+                except VoiceUnavailable as exc:
+                    console.print(f"[yellow]{exc}[/yellow]")
+                    continue
+                if not query:
+                    console.print("[dim]Didn't catch anything.[/dim]")
+                    continue
+                console.print(f"[dim]You said:[/dim] {query}")
 
             if not query:
                 continue

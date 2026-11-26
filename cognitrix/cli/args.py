@@ -81,6 +81,10 @@ def get_arguments():
     add_keys_parser(subparsers)
     add_sessions_parser(subparsers)
 
+    from .handlers_mcp import add_parser as add_mcp_parser
+
+    add_mcp_parser(subparsers)
+
     # Editors that speak the Agent Client Protocol (Zed, JetBrains, ...) start
     # this and talk to it over stdin/stdout (cognitrix/acp/server.py).
     from cognitrix.acp import command as acp_command
@@ -119,7 +123,9 @@ def get_arguments():
     evals_parser.set_defaults(func=swarm_evals)
 
     # Main arguments
-    parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
+    # Old spellings kept working: --name is --agent, --prompt-template adds to
+    # the agent's instructions like --append-system-prompt.
+    parser.add_argument('--name', dest='legacy_agent_name', type=str, default='', help=argparse.SUPPRESS)
     parser.add_argument('--provider', default='',
                         help="LLM provider for this run (default: the agent's own). Keys and addresses are set in "
                              'Settings > Models and keys')
@@ -146,8 +152,7 @@ def get_arguments():
     parser.add_argument('--max-tokens', type=int, default=0, help='Override max tokens (default 4096, 0=use default)')
     parser.add_argument('--system-prompt', type=str_or_file, default='',
                        help="Replace the agent's instructions for this run (text or a file path)")
-    parser.add_argument('--prompt-template', type=str_or_file, default='',
-                       help='Set prompt template of model. Can be a string or a text file path')
+    parser.add_argument('--prompt-template', type=str_or_file, default='', help=argparse.SUPPRESS)
     parser.add_argument('--prompt', '-p', type=str, default='',
                        help='Run one prompt, print the reply and exit (- reads the prompt from stdin)')
     parser.add_argument('--task', action='store_true',
@@ -158,7 +163,9 @@ def get_arguments():
                        help='Read the prompt from a file instead of the command line. Use this for long, '
                             'multi-line, or special-character prompts that the shell would mangle. Takes '
                             'precedence over --prompt/-p. - reads stdin.')
-    parser.add_argument('--audio', action='store_true', help='Get input from microphone')
+    parser.add_argument('--audio', action='store_true',
+                        help='Speak your messages in the interactive shell (needs a microphone and a speech '
+                             'to text key: Deepgram, OpenAI or Google)')
     parser.add_argument('--stream', action=argparse.BooleanOptionalAction, default=True,
                        help='Stream responses token-by-token (default: on; use --no-stream to disable)')
     parser.add_argument('--resume', '-r', '--session', dest='resume', type=str, default='', metavar='SESSION_ID',
@@ -194,6 +201,8 @@ def get_arguments():
                         help='Only these tools for this run, comma separated (e.g. "Read,Edit,Bash")')
     parser.add_argument('--disallowed-tools', type=str, default='',
                         help='Take these tools away for this run, comma separated')
+    parser.add_argument('--mcp-config', action='append', default=[], metavar='FILE',
+                        help='MCP servers for this run only: a .mcp.json-style file or a JSON string (repeat)')
     parser.add_argument('-v','--version', action='version', version=f'%(prog)s {VERSION}')
 
     # Import start function for default action

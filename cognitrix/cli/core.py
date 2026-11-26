@@ -106,6 +106,11 @@ async def start(args: Namespace):
         from . import app_turn, headless
         from . import main_assistant as cli_agent
 
+        # Old spellings: --name was --agent; --prompt-template added instructions.
+        if getattr(args, 'legacy_agent_name', '') and not args.agent:
+            args.agent = args.legacy_agent_name
+        if getattr(args, 'prompt_template', '') and not getattr(args, 'append_system_prompt', ''):
+            args.append_system_prompt = args.prompt_template
         try:
             resolved = await cli_agent.resolve(args.agent or '', getattr(args, 'user', '') or '')
         except cli_agent.NoSuchUser as e:
@@ -246,6 +251,15 @@ async def start(args: Namespace):
         # This run's own instructions, tools, tool-round cap and effort
         # (after the save above: none of it is kept on the agent).
         headless.apply_run_options(assistant, args)
+        for mcp_file in getattr(args, 'mcp_config', None) or []:
+            # --mcp-config: MCP servers for this run only (cognitrix/cli/handlers_mcp.py).
+            from .handlers_mcp import use_for_run
+            try:
+                names = await use_for_run(assistant, mcp_file)
+            except ValueError as e:
+                print(f"--mcp-config: {e}", file=sys.stderr)
+                sys.exit(headless.EXIT_USAGE)
+            logger.info("MCP servers for this run: %s", ', '.join(names))
         headless.set_effort(args)
 
         # Resolve the effective prompt: --prompt-file (safe for long/multi-line/
@@ -287,7 +301,10 @@ async def start(args: Namespace):
             await app.run_async()
         else:
             # Fallback legacy interactive CLI mode
-            await initialize_shell(session, assistant, stream=args.stream)
+            await initialize_shell(session, assistant, stream=args.stream, audio=bool(getattr(args, 'audio', False)) and sys.stdin.isatty())
+        # MCP servers started for this run are child processes: close them so
+        # the CLI exits.
+        await headless.close_mcp()
 
     except KeyboardInterrupt:
         print("\nExiting...", file=sys.stderr)

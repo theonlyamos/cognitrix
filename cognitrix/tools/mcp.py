@@ -150,7 +150,8 @@ async def list_mcp_tools(query: str = '', server: str = '', *, parent: "Agent") 
     return json.dumps(result, indent=2)
 
 @tool(category="mcp")
-async def run_mcp_tool(server: str, tool_name: str, arguments: dict[str, Any], *, parent: "Agent") -> Any:
+async def run_mcp_tool(server: str, tool_name: str, arguments: dict[str, Any] | str | None = None, *,
+                       parent: "Agent") -> Any:
     """
     Runs a specific tool on one of this agent's connected apps or MCP servers with the given arguments.
     Find the tool's name and parameters with List Mcp Tools first.
@@ -164,6 +165,16 @@ async def run_mcp_tool(server: str, tool_name: str, arguments: dict[str, Any], *
     Returns:
         The result of the tool execution.
     """
+    # Models sometimes send the arguments as a JSON string ("{}").
+    if arguments is None or arguments == '':
+        arguments = {}
+    elif isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except ValueError:
+            return "Error: arguments must be an object (a dictionary of the tool's parameters)."
+        if not isinstance(arguments, dict):
+            return "Error: arguments must be an object (a dictionary of the tool's parameters)."
     from cognitrix.mcp import apps
     from cognitrix.mcp.client import get_dynamic_client
     from cognitrix.mcp.registry import matches, prepare
