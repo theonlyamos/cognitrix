@@ -288,9 +288,14 @@ class ApprovalGate:
         from cognitrix.safety import auto_approve_all
 
         categories = set(risk.categories or [])
-        if not (categories & auto_approve_all.NEVER_CATEGORIES) and await auto_approve_all.answers_for(interface):
-            return ApprovalResult(approved=True, standing=True,
-                                  grant='chat' if 'access_request' in categories else None)
+        if await auto_approve_all.answers_for(interface):
+            if not (categories & auto_approve_all.NEVER_CATEGORIES):
+                return ApprovalResult(approved=True, standing=True,
+                                      grant='chat' if 'access_request' in categories else None)
+            if interface not in ('web', 'ws', 'websocket') and await auto_approve_all.unattended_here(interface):
+                # A --dangerously-skip-permissions run has nobody to take
+                # over: say so now rather than wait half an hour.
+                return ApprovalResult(approved=False, error=auto_approve_all.NOBODY_WATCHING)
 
         # Durable workers have no interactive principal at execution time.
         # Interactive caches are intentionally ignored; a future durable

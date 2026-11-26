@@ -172,6 +172,21 @@ cognitrix -p "Review this diff" --allowed-tools Read,Grep,Glob --effort high
 
 With `-p`, stdout carries only the reply: `text` (default) prints it as it streams, `json` prints one result object at the end (`result`, `session_id`, `usage`, `tool_calls`, `duration_ms`, `is_error`), and `stream-json` prints one JSON object per line (`system` init, `text`, `tool_use`, `tool_result`, `result`). Tool lines, prompts and logs go to stderr. Exit codes: `0` done, `1` the turn failed, `2` bad arguments, `124` `--timeout` hit, `130` interrupted. `--system-prompt`, `--append-system-prompt`, `--allowed-tools`, `--disallowed-tools`, `--max-turns` and `--effort` apply to that run only. Without a terminal, a tool that needs approval is refused (and listed in `permission_denials`) unless auto-approve is on or `--dangerously-skip-permissions` is given.
 
+### Fully autonomous runs
+
+For benchmarks and throwaway containers, `--dangerously-skip-permissions` (also `--yolo` or
+`--dangerously-bypass-approvals-and-sandbox`) runs with no approval prompts at all:
+
+```bash
+cognitrix --yolo -p "Fix the failing tests in this repo"
+```
+
+Every approval is answered Yes for that run only: tool calls, full-shell commands, coding agents, copy back
+from the sandbox, Request Access, sub-agents and task runs it starts (even ones a worker picks up). The bash
+tool runs any command in a real shell. A request for you to take over the agent's computer is refused at once,
+since nobody is watching. Tools you set to "never" stay blocked, and your saved settings don't change. It
+prints a warning on stderr, so a `-p` answer on stdout stays clean. It is ignored for `--ui web`.
+
 ### Code editors (Agent Client Protocol)
 
 In Zed, add this to `settings.json`:

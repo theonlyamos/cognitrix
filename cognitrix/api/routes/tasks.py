@@ -867,6 +867,16 @@ async def assign_task(task_id: str, body: TaskAssignment,
     return await _task_projection(task)
 
 
+async def _unattended_start() -> bool:
+    from cognitrix.safety import auto_approve_all
+
+    try:
+        return await auto_approve_all.unattended_here('task')
+    except Exception:
+        logger.debug('Could not tell whether this start is unattended', exc_info=True)
+        return False
+
+
 async def _enqueue_task_start(
     task: Task,
     resume: bool = False,
@@ -944,6 +954,9 @@ async def _enqueue_task_start(
             trigger_kind=trigger_kind,
             trigger_note=trigger_note,
             trigger_event_id=trigger_event_id,
+            # Started from a --dangerously-skip-permissions run (or a task
+            # run it queued): the worker answers this run's approvals too.
+            auto_approve=await _unattended_start(),
             budget=(
                 budget.model_dump(mode='json', exclude_none=True)
                 if isinstance(budget, TaskBudget)

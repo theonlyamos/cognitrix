@@ -335,7 +335,7 @@ _TASKRUN_MIGRATION_COLUMNS = (
     ('completion_notified_at', 'TEXT'),
     ('resume_from_run_id', 'TEXT'),
     ('trigger_kind', 'TEXT'), ('trigger_note', 'TEXT'),
-    ('trigger_event_id', 'TEXT'),
+    ('trigger_event_id', 'TEXT'), ('auto_approve', 'BOOLEAN'),
     ('queue_job_id', 'TEXT'), ('queued_at', 'TEXT'),
     ('lease_owner', 'TEXT'), ('lease_generation', 'INTEGER'),
     ('heartbeat_at', 'TEXT'), ('lease_expires_at', 'TEXT'),

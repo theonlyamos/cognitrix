@@ -9,6 +9,37 @@ from cognitrix.common.encoding import ensure_utf8_stdio
 
 from .args import get_arguments
 
+WARNING = """\
+!! --dangerously-skip-permissions: nothing will ask for approval in this run.
+!! Every tool call, shell command, coding agent, file change and send runs at
+!! once, in this session, its sub-agents and any task runs it starts. Your
+!! saved settings are not changed. Only use it somewhere you can throw away
+!! (a container, a VM, a benchmark sandbox).
+"""
+
+
+def _skip_permissions(args) -> None:
+    """--dangerously-skip-permissions / --yolo: no approval prompts at all.
+
+    Every card is answered Yes for this process only (the account's
+    "Auto-approve everything" machinery, safety/auto_approve_all.py), the
+    bash tool runs any command in a real shell, and task runs this run
+    queues for a worker carry the same answer. Never for the web server:
+    other people's chats would get it too.
+    """
+    if str(getattr(args, 'ui', '') or '').lower() == 'web' and not (
+            getattr(args, 'prompt', '') or getattr(args, 'prompt_file', '')):
+        print('--dangerously-skip-permissions is ignored with --ui web: it would answer '
+              "approvals for everyone's chats on the server.", file=sys.stderr)
+        return
+    from cognitrix import app_settings
+    from cognitrix.safety import auto_approve_all
+
+    auto_approve_all.enable_for_this_run()
+    app_settings.override('COGNITRIX_SANDBOX_SHELL', '1')
+    # On stderr, so the answer of a one-shot `-p` run stays clean on stdout.
+    print(WARNING, file=sys.stderr, end='', flush=True)
+
 
 def main():
     """Main entry point for the Cognitrix CLI."""
@@ -31,19 +62,8 @@ def main():
                 sys.exit(2)
             os.chdir(path)
 
-        # --dangerously-skip-permissions: fully unattended, no safety gate and
-        # no command whitelist. Wired through the same env vars the approval
-        # gate and bash tool read (for this process only), so it takes effect
-        # before any tool runs.
-        # Sandbox/container use only.
         if getattr(args, 'dangerously_skip_permissions', False):
-            from cognitrix import app_settings
-            app_settings.override('COGNITRIX_AUTO_APPROVE', '1')
-            app_settings.override('COGNITRIX_SANDBOX_SHELL', '1')
-            logging.warning(
-                "--dangerously-skip-permissions: auto-approving all tool calls and "
-                "running the bash tool without the command whitelist."
-            )
+            _skip_permissions(args)
 
         # Check if the function is async and run appropriately
         if asyncio.iscoroutinefunction(args.func):
