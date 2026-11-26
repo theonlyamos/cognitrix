@@ -153,6 +153,21 @@ cognitrix -c -p "And the next step?"   # continue the previous session
 
 Run `cognitrix --help` or `cognitrix <command> --help` for every option.
 
+### Fully autonomous runs
+
+For benchmarks and throwaway containers, `--dangerously-skip-permissions` (also `--yolo` or
+`--dangerously-bypass-approvals-and-sandbox`) runs with no approval prompts at all:
+
+```bash
+cognitrix --yolo -p "Fix the failing tests in this repo"
+```
+
+Every approval is answered Yes for that run only: tool calls, full-shell commands, coding agents, copy back
+from the sandbox, Request Access, sub-agents and task runs it starts (even ones a worker picks up). The bash
+tool runs any command in a real shell. A request for you to take over the agent's computer is refused at once,
+since nobody is watching. Tools you set to "never" stay blocked, and your saved settings don't change. It
+prints a warning on stderr, so a `-p` answer on stdout stays clean. It is ignored for `--ui web`.
+
 ### Code editors (Agent Client Protocol)
 
 In Zed, add this to `settings.json`:
