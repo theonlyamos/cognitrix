@@ -16,20 +16,31 @@ def get_arguments():
     subparsers = parser.add_subparsers()
 
     # Agents subcommand
-    agents_parser = subparsers.add_parser('agents', help="Manage agents")
-    agents_parser.add_argument("name", type=str, nargs="?", help="Name of an agent to manage (details|update|remove)")
+    agents_parser = subparsers.add_parser(
+        'agents', help="List, show, create, change or delete agents",
+        description="cognitrix agents (list) | agents NAME (details) | agents NAME --new/--update/--delete")
+    agents_parser.add_argument("name", type=str, nargs="?", help="Agent name, id or list number")
     agents_parser.add_argument('--new','--create', action='store_true', help='Create a new agent')
     agents_parser.add_argument('-l', '--list', action='store_true', help='List all saved agents')
-    agents_parser.add_argument('--update', action='store_true', help='Update an agent')
+    agents_parser.add_argument('--update', action='store_true', help='Change an agent (with the flags below)')
     agents_parser.add_argument('--delete', action='store_true', help='Delete an agent')
     agents_parser.add_argument('--id', nargs='?', help='Specify agent id to update or delete')
+    agents_parser.add_argument('--provider', default='', help='For --new/--update: model provider')
+    agents_parser.add_argument('--model', default='', help='For --new/--update: model')
+    agents_parser.add_argument('--system-prompt', type=str_or_file, default='',
+                               help='For --new/--update: instructions (text or a file path)')
+    agents_parser.add_argument('--description', default='', help='For --new/--update: short description')
+    agents_parser.add_argument('--tools', default=None,
+                               help='For --new/--update: tool categories or names, comma separated (default all)')
+    agents_parser.add_argument('--rename', default='', help='For --update: new name')
+    agents_parser.add_argument('--json', action='store_true', help='Print JSON')
     agents_parser.set_defaults(func=manage_agents)
 
     # Tools subcommand
     tools_parser = subparsers.add_parser('tools', help="Manage tools")
-    tools_parser.add_argument('-l', '--list', type=str, default='all', nargs='?',
-                            choices=['all', 'general', 'system', 'web'],
-                            help='List tools by category')
+    tools_parser.add_argument('-l', '--list', type=str, default='all', nargs='?', const='all',
+                            metavar='CATEGORY', help='List tools, optionally only one category (e.g. web, system)')
+    tools_parser.add_argument('--json', action='store_true', help='Print JSON')
     tools_parser.set_defaults(func=manage_tools)
 
     # Skills subcommand
@@ -60,6 +71,13 @@ def get_arguments():
     from .handlers_settings import add_parser as add_settings_parser
 
     add_settings_parser(subparsers)
+
+    # Provider API keys and saved chats from the command line.
+    from .handlers_keys import add_parser as add_keys_parser
+    from .handlers_sessions import add_parser as add_sessions_parser
+
+    add_keys_parser(subparsers)
+    add_sessions_parser(subparsers)
 
     # Editors that speak the Agent Client Protocol (Zed, JetBrains, ...) start
     # this and talk to it over stdin/stdout (cognitrix/acp/server.py).
