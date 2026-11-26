@@ -12,6 +12,14 @@ import pytest
 from tests.test_onboarding import db  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def _no_leaked_folder_roots(monkeypatch):
+    """Terminal chats allow their folder as a root; keep that inside each test."""
+    from cognitrix.common import folders
+
+    monkeypatch.setattr(folders, '_EXTRA_ROOTS', [])
+
+
 def _parse(argv):
     from cognitrix.cli.args import get_arguments
 
