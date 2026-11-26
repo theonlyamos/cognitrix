@@ -12,7 +12,17 @@ import base64
 import json
 import sys
 
+import pytest
+
 from tests.test_onboarding import _ctx, _user, db  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def _own_folder_roots(monkeypatch):
+    """Folders a terminal chat allows stay with that test."""
+    from cognitrix.common import folders
+
+    monkeypatch.setattr(folders, '_EXTRA_ROOTS', [])
 
 
 async def _main_and_decoy(monkeypatch):
