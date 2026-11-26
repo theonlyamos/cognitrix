@@ -329,3 +329,9 @@ async def test_more_folders(db, monkeypatch, tmp_path):  # noqa: F811
     extra.mkdir()
     assert await shell.handle_slash_command(f'/add-dir {extra} read', main, session) is True
     assert any(f['path'] == str(extra) and f['access'] == 'read' for f in session.folders)
+
+    # --continue keeps the added folders.
+    await session.save()
+    again = await app_turn.last_chat(str(_user_row.id), main)
+    paths = [f['path'] for f in again.folders]
+    assert paths[0] == str(work) and str(other) in paths and str(extra) in paths

@@ -128,8 +128,12 @@ async def last_chat(owner: str, agent: Any) -> Any | None:
     if not rows:
         return None
     session = max(rows, key=lambda s: str(getattr(s, 'created_at', '') or getattr(s, 'started_at', '') or ''))
-    # Same folder as this run, so a continued chat works where the CLI is.
-    session.folders = terminal_folders(agent)
+    # Keep the chat's folders (and any added with --add-dir), and make the
+    # folder this run started in the main one, so it works where the CLI is.
+    here = terminal_folders(agent)[0]
+    kept = [dict(f, primary=False) for f in (session.folders or []) if isinstance(f, dict)
+            and os.path.abspath(str(f.get('path') or '')) != here['path']]
+    session.folders = [here, *kept]
     return session
 
 
