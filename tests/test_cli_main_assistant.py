@@ -211,10 +211,17 @@ async def test_cli_overrides_do_not_change_the_saved_agent(db, monkeypatch, tmp_
     async def fake_turn(session, agent, text, *, stream=True, output=None):
         ran.update(agent=agent, session=session, text=text)
 
+    async def fake_run_prompt(session, agent, text, args):
+        ran.update(agent=agent, session=session, text=text)
+        return 0
+
     async def no_config():
         return None
 
     monkeypatch.setattr(app_turn, 'turn', fake_turn)
+    # One-shot prompts go through cognitrix/cli/headless.py (output formats, exit codes).
+    from cognitrix.cli import headless
+    monkeypatch.setattr(headless, 'run_prompt', fake_run_prompt)
     monkeypatch.setattr(core, 'run_configuration', no_config)
     monkeypatch.chdir(tmp_path)
     args = Namespace(agents=False, tasks=False, teams=False, sessions=False, agent='', user='',

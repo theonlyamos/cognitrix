@@ -1,7 +1,6 @@
 """
 Command handlers for managing different entity types.
 """
-import asyncio
 import logging
 import sys
 from argparse import Namespace

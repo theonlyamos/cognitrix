@@ -148,15 +148,29 @@ With no `--agent`, the command line uses your **main assistant**: the agent the 
 
 | Command | What it does |
 | --- | --- |
-| `cognitrix agents -l` / `--new` / `<name>` | List, create, show, update or delete agents |
-| `cognitrix tools -l [category]` | List tools (`general`, `system`, `web`) |
+| `cognitrix agents` / `<name>` / `<name> --new` / `--update` / `--delete` | List, show, create, change or delete agents (`--json` for scripts) |
+| `cognitrix tools -l [category]` | List tools, all or one category (`web`, `system`, `apps`, ...) |
 | `cognitrix skills -l` / `--install` / `--run` | Manage and run skills |
+| `cognitrix keys list` / `set <provider>` / `import-env` | Save model API keys without opening Settings (servers, containers) |
+| `cognitrix sessions` / `show <id>` / `delete <id>` | List, read or delete saved chats |
 | `cognitrix acp` | Run as an Agent Client Protocol server for code editors (`--agent NAME` for another agent) |
 | `cognitrix connect <server>` | Pair this PC with a Cognitrix web server |
 | `cognitrix reset-password <email>` | Set a new password for a local account |
-| `cognitrix --sessions` / `--session <id>` | List or reopen saved chats |
+| `cognitrix --resume <id>` | Continue a saved chat (`-r`; `--session` works too) |
 
 Run `cognitrix --help` or `cognitrix <command> --help` for every option.
+
+#### Scripts, CI and benchmarks
+
+```bash
+cognitrix keys import-env                                    # save OPENAI_API_KEY, ANTHROPIC_API_KEY, ... once
+cognitrix -p "Fix the failing test" -C ./repo --output-format json
+cat task.md | cognitrix -p - --output-format stream-json --max-turns 40 --timeout 1800
+cognitrix -r <session id> -p "Now add a test"                # continue that chat
+cognitrix -p "Review this diff" --allowed-tools Read,Grep,Glob --effort high
+```
+
+With `-p`, stdout carries only the reply: `text` (default) prints it as it streams, `json` prints one result object at the end (`result`, `session_id`, `usage`, `tool_calls`, `duration_ms`, `is_error`), and `stream-json` prints one JSON object per line (`system` init, `text`, `tool_use`, `tool_result`, `result`). Tool lines, prompts and logs go to stderr. Exit codes: `0` done, `1` the turn failed, `2` bad arguments, `124` `--timeout` hit, `130` interrupted. `--system-prompt`, `--append-system-prompt`, `--allowed-tools`, `--disallowed-tools`, `--max-turns` and `--effort` apply to that run only. Without a terminal, a tool that needs approval is refused (and listed in `permission_denials`) unless auto-approve is on or `--dangerously-skip-permissions` is given.
 
 ### Code editors (Agent Client Protocol)
 

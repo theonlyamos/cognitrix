@@ -19,6 +19,18 @@ def main():
     try:
         args = get_arguments()
 
+        # --cwd: work in another folder (the chat's primary folder, AGENTS.md,
+        # relative paths), like `git -C`.
+        cwd = getattr(args, 'cwd', '') or ''
+        if cwd:
+            import os
+
+            path = os.path.abspath(os.path.expanduser(cwd))
+            if not os.path.isdir(path):
+                print(f"--cwd: no folder {cwd}", file=sys.stderr)
+                sys.exit(2)
+            os.chdir(path)
+
         # --dangerously-skip-permissions: fully unattended, no safety gate and
         # no command whitelist. Wired through the same env vars the approval
         # gate and bash tool read (for this process only), so it takes effect
@@ -40,8 +52,8 @@ def main():
             args.func(args)
 
     except KeyboardInterrupt:
-        print("\nExiting...")
-        sys.exit(1)
+        print("\nExiting...", file=sys.stderr)
+        sys.exit(130)
     except Exception as e:
         logging.exception(e)
         sys.exit(1)

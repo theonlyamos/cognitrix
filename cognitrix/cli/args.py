@@ -57,6 +57,8 @@ def get_arguments():
     skills_parser.add_argument('args', nargs='*', help='Arguments for --run (positional)')
     skills_parser.add_argument('--arg', action='append', dest='skill_args', default=[],
                              help='Skill arguments as key=value (can be repeated, e.g., --arg file_path=doc.pdf --arg depth=short)')
+    skills_parser.add_argument('--provider', default='', help="For --run: model provider (default: the app's default)")
+    skills_parser.add_argument('--model', default='', help='For --run: model')
     skills_parser.set_defaults(func=manage_skills)
 
     # Forgotten password: whoever can run commands on this machine can set a new one.
@@ -143,23 +145,24 @@ def get_arguments():
                         help="Override model temperature (default: the agent's own)")
     parser.add_argument('--max-tokens', type=int, default=0, help='Override max tokens (default 4096, 0=use default)')
     parser.add_argument('--system-prompt', type=str_or_file, default='',
-                       help='Set system prompt of model. Can be a string or a text file path')
+                       help="Replace the agent's instructions for this run (text or a file path)")
     parser.add_argument('--prompt-template', type=str_or_file, default='',
                        help='Set prompt template of model. Can be a string or a text file path')
     parser.add_argument('--prompt', '-p', type=str, default='',
-                       help='Prompt the agent to generate text and then exit after printing out the response.')
+                       help='Run one prompt, print the reply and exit (- reads the prompt from stdin)')
     parser.add_argument('--task', action='store_true',
                        help='Run the prompt as a planned multi-step task instead of a chat turn.')
     parser.add_argument('--continue', '-c', dest='continue_session', action='store_true',
-                       help='With --prompt, continue the previous session instead of starting a new one.')
+                       help='Continue the most recent terminal chat instead of starting a new one.')
     parser.add_argument('--prompt-file', type=str, default='',
                        help='Read the prompt from a file instead of the command line. Use this for long, '
                             'multi-line, or special-character prompts that the shell would mangle. Takes '
-                            'precedence over --prompt/-p.')
+                            'precedence over --prompt/-p. - reads stdin.')
     parser.add_argument('--audio', action='store_true', help='Get input from microphone')
     parser.add_argument('--stream', action=argparse.BooleanOptionalAction, default=True,
                        help='Stream responses token-by-token (default: on; use --no-stream to disable)')
-    parser.add_argument('--session', type=str, default="", help='Load saved session')
+    parser.add_argument('--resume', '-r', '--session', dest='resume', type=str, default='', metavar='SESSION_ID',
+                        help='Continue a saved chat by id (or the start of it); `cognitrix sessions` lists them')
     parser.add_argument('--clear-history', action='store_true', default="", help='Clear agent history')
     parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')
     parser.add_argument('--verbose', action='store_true', help='Set verbose mode')
@@ -168,6 +171,28 @@ def get_arguments():
                             'bash tool run any command through a real shell (no whitelist). '
                             'ONLY use inside a throwaway sandbox/container — it removes the '
                             'safety gate and command restrictions entirely.')
+    # Headless runs: scripts, CI and benchmarks (cognitrix/cli/headless.py).
+    from cognitrix.providers.base import REASONING_EFFORTS
+
+    from .headless import FORMATS
+
+    parser.add_argument('--output-format', choices=FORMATS, default='text',
+                        help='With -p: text (just the reply), json (one result object) or stream-json '
+                             '(one JSON event per line). Also makes --agents/--sessions/--tasks/--teams print JSON.')
+    parser.add_argument('--cwd', '-C', type=str, default='',
+                        help='Folder to work in (default: the current folder)')
+    parser.add_argument('--max-turns', type=int, default=0,
+                        help='With -p: stop after this many tool rounds (default: no limit)')
+    parser.add_argument('--timeout', type=float, default=0,
+                        help='With -p: give up after this many seconds (exit code 124)')
+    parser.add_argument('--effort', choices=REASONING_EFFORTS, default='',
+                        help="Reasoning effort for this run (default: the agent's own)")
+    parser.add_argument('--append-system-prompt', type=str_or_file, default='',
+                        help="Add to the agent's instructions for this run (text or a file path)")
+    parser.add_argument('--allowed-tools', type=str, default='',
+                        help='Only these tools for this run, comma separated (e.g. "Read,Edit,Bash")')
+    parser.add_argument('--disallowed-tools', type=str, default='',
+                        help='Take these tools away for this run, comma separated')
     parser.add_argument('-v','--version', action='version', version=f'%(prog)s {VERSION}')
 
     # Import start function for default action

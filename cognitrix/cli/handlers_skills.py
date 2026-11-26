@@ -1,6 +1,7 @@
 """CLI handlers for the `cognitrix skills` subcommand."""
 
 import asyncio
+import sys
 from pathlib import Path
 
 from rich import print as rprint
@@ -72,7 +73,10 @@ async def _manage_skills_async(args):
         else:
             arguments = ''
 
-        await _run_skill(manager, args.run, arguments)
+        ok = await _run_skill(manager, args.run, arguments,
+                              provider=getattr(args, 'provider', '') or '', model=getattr(args, 'model', '') or '')
+        if not ok:
+            sys.exit(1)
     elif args.search:
         await _search_skills(manager, args.search)
     elif args.list or not args.name:
@@ -201,7 +205,25 @@ async def _remove_skill(manager, name: str):
             rprint(f"[red]✗ Skill '{name}' not found[/red]")
 
 
-async def _run_skill(manager, name: str, arguments: str | list | dict):
+def _skill_provider(provider: str = '') -> str:
+    """--provider, else the app's default provider if it has a key, else the
+    first provider with a saved key."""
+    if provider:
+        return provider
+    from cognitrix.config import settings
+    from cognitrix.providers.saved_keys import saved_providers
+
+    default = (settings.ai_provider or '').lower()
+    saved = saved_providers()
+    if default and (default in saved or settings.get_api_key(default)):
+        return default
+    for name in ('anthropic', 'openai', 'google', 'openrouter', 'groq'):
+        if name in saved:
+            return name
+    return default or 'openrouter'
+
+
+async def _run_skill(manager, name: str, arguments: str | list | dict, provider: str = '', model: str = '') -> bool:
     """Run a skill directly from the CLI with streaming output."""
     from cognitrix.agents.base import AgentManager
     from cognitrix.models import Agent
@@ -212,13 +234,14 @@ async def _run_skill(manager, name: str, arguments: str | list | dict):
     manifest = await manager.get_skill(name)
     if not manifest:
         rprint(f"[red]Skill '{name}' not found.[/red]")
-        return
+        return False
 
     # Initialize LLM
-    llm = LLM.load_llm('openrouter')
+    provider = _skill_provider(provider)
+    llm = LLM.load_llm({'provider': provider, **({'model': model} if model else {})})
     if not llm:
-        rprint("[red]Failed to initialise LLM. Check your provider configuration.[/red]")
-        return
+        rprint(f"[red]Couldn't load the {provider} model. Save a key with: cognitrix keys set {provider}[/red]")
+        return False
 
     # Get tools - include all for skill execution
     tools = ToolManager.list_all_tools()
@@ -229,6 +252,7 @@ async def _run_skill(manager, name: str, arguments: str | list | dict):
     rprint(f"\n[bold cyan]Executing skill: {manifest.name}[/bold cyan]")
     rprint("-" * 40)
 
+    failed = False
     async for event in _trusted_cli_skill_events(executor, manifest, arguments):
         if event.type == SkillEventType.SKILL_START:
             pass
@@ -247,6 +271,8 @@ async def _run_skill(manager, name: str, arguments: str | list | dict):
         elif event.type == SkillEventType.SKILL_ERROR:
             error_msg = str(event.data).encode('ascii', 'replace').decode('ascii')
             rprint(f"\n[red]Error: {error_msg}[/red]")
+            failed = True
+    return not failed
 
 
 async def _validate_skill(path: str):

@@ -13,7 +13,7 @@ from cognitrix.models.tool import Tool
 from cognitrix.providers import LLM
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task
-from cognitrix.tasks.handler import handle_multi_step_task, parse_task_request
+from cognitrix.tasks.handler import parse_task_request
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import ToolManager
 
@@ -87,22 +87,23 @@ async def start(args: Namespace):
 
     try:
         # Handle list commands
+        as_json = getattr(args, 'output_format', 'text') == 'json'
         if args.agents:
-            await list_agents()
+            await list_agents(as_json)
             sys.exit()
         elif args.tasks:
-            await list_tasks()
+            await list_tasks(as_json)
             sys.exit()
         elif args.teams:
-            await list_teams()
+            await list_teams(as_json)
             sys.exit()
         elif args.sessions:
-            await list_sessions()
+            await list_sessions(as_json)
             sys.exit()
 
         # The person's main assistant unless --agent names one
         # (cognitrix/cli/main_assistant.py).
-        from . import app_turn
+        from . import app_turn, headless
         from . import main_assistant as cli_agent
 
         try:
@@ -195,7 +196,15 @@ async def start(args: Namespace):
         one_shot = bool(args.prompt or getattr(args, 'prompt_file', ''))
         resume = getattr(args, 'continue_session', False)
         session = None
-        if owned:
+        if getattr(args, 'resume', ''):
+            # --resume ID: a saved chat by id (cognitrix/cli/headless.py).
+            try:
+                session, assistant = await headless.load_resumed(
+                    args.resume, assistant, resolved.owner if owned else None, explicit_agent=bool(args.agent))
+            except headless.UsageError as e:
+                print(str(e), file=sys.stderr)
+                sys.exit(headless.EXIT_USAGE)
+        elif owned:
             if resume:
                 session = await app_turn.last_chat(resolved.owner, assistant)
             if not session:
@@ -230,16 +239,22 @@ async def start(args: Namespace):
         if not owned and resolved.source in ('created', 'legacy', 'named'):
             await assistant.save()
 
+        # This run's own instructions, tools, tool-round cap and effort
+        # (after the save above: none of it is kept on the agent).
+        headless.apply_run_options(assistant, args)
+        headless.set_effort(args)
+
         # Resolve the effective prompt: --prompt-file (safe for long/multi-line/
-        # special-character prompts the shell would mangle) wins over --prompt/-p.
-        prompt = args.prompt
-        if getattr(args, 'prompt_file', ''):
-            try:
-                with open(args.prompt_file, encoding='utf-8') as f:
-                    prompt = f.read()
-            except OSError as e:
-                logger.error("Could not read --prompt-file '%s': %s", args.prompt_file, e)
-                sys.exit(1)
+        # special-character prompts the shell would mangle) wins over --prompt/-p;
+        # '-' reads stdin.
+        try:
+            prompt = headless.read_prompt(args) if one_shot else ''
+        except headless.UsageError as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(headless.EXIT_USAGE)
+        if one_shot and not prompt.strip():
+            print("The prompt is empty.", file=sys.stderr)
+            sys.exit(headless.EXIT_USAGE)
 
         # Handle different execution modes
         if prompt:
@@ -247,19 +262,12 @@ async def start(args: Namespace):
             task_prompt = parse_task_request(prompt) or (prompt if getattr(args, 'task', False) else None)
             if task_prompt:
                 logger.info("Task run requested, creating execution plan...")
-                result = await handle_multi_step_task(
-                    task_prompt,
-                    assistant,
-                    session,
-                    assistant.llm,
-                    args.stream
-                )
-                print(result)
-            else:
-                await app_turn.turn(session, assistant, prompt, stream=args.stream)
-                if session.last_turn_error:
-                    # One-shot mode is used from scripts: report failure.
-                    sys.exit(1)
+                args.task = True
+                prompt = task_prompt
+            # Output formats, timeout and exit codes: cognitrix/cli/headless.py.
+            code = await headless.run_prompt(session, assistant, prompt, args)
+            if code:
+                sys.exit(code)
         elif args.ui.lower() == 'web':
             # Web UI mode
             await start_web_ui(assistant)
@@ -272,8 +280,8 @@ async def start(args: Namespace):
             await initialize_shell(session, assistant, stream=args.stream)
 
     except KeyboardInterrupt:
-        print("\nExiting...")
-        sys.exit(1)
+        print("\nExiting...", file=sys.stderr)
+        sys.exit(130)
     except Exception as e:
         logging.exception(e)
         sys.exit(1)
