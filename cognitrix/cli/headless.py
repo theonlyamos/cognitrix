@@ -178,6 +178,18 @@ def _as_json(value: Any) -> Any:
     return value
 
 
+def here_first(session: Any, agent: Any) -> None:
+    """The folder this run works in becomes the chat's main folder; folders
+    the chat already had (an earlier run's, --add-dir) are kept."""
+    from .app_turn import terminal_folders
+
+    folders = terminal_folders(agent)
+    here = folders[0]
+    kept = [dict(f, primary=False) for f in (getattr(session, 'folders', None) or folders[1:])
+            if isinstance(f, dict) and os.path.abspath(str(f.get('path') or '')) != here['path']]
+    session.folders = [here, *kept]
+
+
 # --- approvals for the CLI's own (account-less) turn --------------------------------
 
 async def _terminal_approver(tool_call: Any, risk: Any, person_only: bool) -> Any:
@@ -210,9 +222,7 @@ async def _local_turn(session: Any, agent: Any, text: str, *, stream: bool, chan
     from cognitrix.safety.approval_gate import acp_approver
     from cognitrix.tools.utils import HostProcessMode, ToolExecutionContext
 
-    from .app_turn import terminal_folders
-
-    session.folders = terminal_folders(agent)
+    here_first(session, agent)
 
     async def approve(tool_call: Any, risk: Any, person_only: bool) -> Any:
         result = await _terminal_approver(tool_call, risk, person_only)
@@ -313,10 +323,7 @@ async def load_resumed(session_id: str, agent: Any, owner: str | None, *, explic
             agent = saved
     elif explicit_agent:
         session.agent_id = str(agent.id)
-    if owner:
-        from .app_turn import terminal_folders
-
-        session.folders = terminal_folders(agent)
+    here_first(session, agent)
     return session, agent
 
 
