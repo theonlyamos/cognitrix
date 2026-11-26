@@ -144,6 +144,13 @@ async def answers_for(interface: str) -> bool:
         ctx = web_turn_ctx.get(None) or {}
         if ctx.get('auto_approve') is False:
             return False
+        # A helper turn a --dangerously-skip-permissions run started (Call
+        # Agent with a signed-in user runs as 'web'): no browser is attached,
+        # so nobody could answer anyway. The flag is never on in a process
+        # serving the web app (cli/main.py), and a turn with a live browser
+        # channel keeps its own person's setting.
+        if _THIS_RUN and ctx.get('emit') is None:
+            return True
         return await is_on(ctx.get('user_key'))
     if interface == 'task':
         from cognitrix.tasks.approvals import task_turn_ctx

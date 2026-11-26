@@ -101,9 +101,35 @@ def test_take_over_is_refused_at_once(interface):
     assert result.error == auto_approve_all.NOBODY_WATCHING
 
 
-def test_web_chats_are_not_answered_by_the_cli_flag():
+def test_browser_chats_are_not_answered_by_the_cli_flag():
+    from cognitrix.safety.approval_gate import web_turn_ctx
+
     auto_approve_all.enable_for_this_run()
-    assert asyncio.run(auto_approve_all.answers_for('web')) is False
+
+    async def check(ctx):
+        token = web_turn_ctx.set(ctx)
+        try:
+            return await auto_approve_all.answers_for('web')
+        finally:
+            web_turn_ctx.reset(token)
+
+    async def emit(_):
+        return None
+
+    with patch('cognitrix.models.user.User.get', new_callable=AsyncMock, return_value=None):
+        # A chat with a person's browser attached keeps their own setting.
+        assert asyncio.run(check({'emit': emit, 'user_key': 'u1'})) is False
+        # Public-link visitors never get it.
+        assert asyncio.run(check({'auto_approve': False})) is False
+
+
+def test_helper_agents_a_signed_in_run_calls_are_answered():
+    # Call Agent with a signed-in user runs the helper as 'web' with no
+    # browser attached (e.g. `cognitrix --yolo acp --user ...`).
+    auto_approve_all.enable_for_this_run()
+    risk = RiskAssessment(RiskLevel.HIGH, ['file_delete'], 'delete')
+    result = _ask('Delete File', {'path': '/x'}, risk, interface='web')
+    assert result.approved is True and result.standing is True
 
 
 def test_off_the_terminal_still_asks():
