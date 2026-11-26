@@ -114,13 +114,11 @@ async def _run_ai_turn(session, query: str, agent, stream: bool) -> None:
         rich_print(*args, **kwargs)
 
     try:
-        await session(
-            query,
-            agent,
-            stream=stream,
-            output=output,
-            tool_context=trusted_local_execution_context(),
-        )
+        # A chat in the person's account runs like the app's chats
+        # (cognitrix/cli/app_turn.py).
+        from .app_turn import turn
+
+        await turn(session, agent, query, stream=stream, output=output)
     finally:
         if active['v']:
             status.stop()
@@ -298,11 +296,18 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
                 target_agent = await Agent.find_one({'name': agent_identifier})
 
             if target_agent:
-                # Get/create session for new agent
-                new_session = await Session.get_by_agent_id(target_agent.id)
-                if not new_session:
-                    new_session = Session(agent_id=target_agent.id)
-                    await new_session.save()
+                owner = str(getattr(session, 'user_id', '') or '')
+                if owner:
+                    # A chat in the person's account: a new one with that agent.
+                    from .app_turn import new_chat
+
+                    new_session = await new_chat(owner, target_agent)
+                else:
+                    # Get/create session for new agent
+                    new_session = await Session.get_by_agent_id(target_agent.id)
+                    if not new_session:
+                        new_session = Session(agent_id=target_agent.id)
+                        await new_session.save()
 
                 console.print(Panel(f"[bold green]✅ Switched to agent:[/bold green] [bold cyan]{target_agent.name}[/bold cyan]",
                                    title="[green]Agent Switched[/green]", border_style="green"))
@@ -327,6 +332,10 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 [yellow]• /tasks[/yellow] - List all tasks
 [yellow]• /teams[/yellow] - List all teams
 
+[bold cyan]Folders:[/bold cyan]
+[yellow]• /add-dir <path> [read][/yellow] - Let the agent work in another folder (add "read" for read only)
+[yellow]• /dirs[/yellow] - List the folders this chat can use
+
 [bold cyan]MCP Commands:[/bold cyan]
 [yellow]• /mcp[/yellow] - List MCP servers
 [yellow]• /mcp-tools [server_name][/yellow] - List MCP tools
@@ -343,6 +352,33 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 [dim]Anything else is sent to the AI agent.[/dim]"""
 
         console.print(Panel(help_text, title="[bold blue]📚 Cognitrix Shell Help[/bold blue]", border_style="blue"))
+        return True
+
+    # Folders the agent works in (like the folder button in the app)
+    if cmd in ('add-dir', 'dirs'):
+        from .app_turn import add_folders, terminal_folders
+
+        if cmd == 'add-dir':
+            if not args:
+                console.print("[yellow]Usage:[/yellow] /add-dir <path> [read]")
+                return True
+            access = 'read' if len(args) > 1 and str(args[-1]).lower() in ('read', 'ro', 'read-only') else 'write'
+            paths = args[:-1] if access == 'read' else args
+            if session.folders is None:
+                session.folders = terminal_folders(agent)
+            try:
+                added = add_folders(session, [str(p) for p in paths], access)
+            except ValueError as e:
+                console.print(f"[red]{e}[/red]")
+                return True
+            await session.save()
+            for path in added:
+                console.print(f"[green]Added[/green] {path} ({'read only' if access == 'read' else 'read & write'})")
+            if not added:
+                console.print("[dim]Already in this chat.[/dim]")
+        for folder in session.folders or []:
+            mark = '*' if folder.get('primary') else ' '
+            console.print(f"{mark} {folder.get('path')}  [dim]{folder.get('access', 'read')}[/dim]")
         return True
 
     # Clear screen command
@@ -643,7 +679,7 @@ async def initialize_shell(session, agent, stream: bool = True):
 
     builtins = ['cd', 'exit', 'quit', 'q']
     custom_commands = [
-        '/help', '/clear', '/history', '/tools', '/skills', '/agents', '/tasks', '/teams',
+        '/help', '/clear', '/history', '/tools', '/add-dir', '/dirs', '/skills', '/agents', '/tasks', '/teams',
         '/add', '/delete', '/show', '/switch', '/mcp', '/mcp-tools', '/mcp-tool-info',
         '/mcp-call', '/mcp-connect', '/mcp-disconnect'
     ]

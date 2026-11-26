@@ -68,9 +68,9 @@ def get_arguments():
     acp_parser = subparsers.add_parser(
         'acp', help="Run as an Agent Client Protocol server for code editors (Zed, JetBrains, ...)")
     acp_parser.add_argument('--agent', dest='acp_agent', type=str, default='',
-                            help='Agent to start with (default Assistant); the editor can switch agents')
+                            help='Agent to start with, by name (default: your main assistant); the editor can switch agents')
     acp_parser.add_argument('--user', type=str, default='',
-                            help="Email of the account whose agents and sign-ins to use (default: all local agents)")
+                            help="Email of the account whose agents and sign-ins to use (default: this install's owner)")
     acp_parser.set_defaults(func=acp_command)
 
     # Pair this PC with a web server so agents there can work on it (cognitrix/computer/paired).
@@ -89,7 +89,8 @@ def get_arguments():
     evals_parser = subparsers.add_parser(
         'swarm-evals', help="Measure swarms on a set of jobs (makes real model calls)")
     evals_parser.add_argument('email', type=str, help='Email address of the account to run as')
-    evals_parser.add_argument('--agent', type=str, default='Assistant', help='The agent that leads (default Assistant)')
+    evals_parser.add_argument('--agent', type=str, default='',
+                              help="The agent that leads, by name (default: the account's main assistant)")
     evals_parser.add_argument('--jobs', type=str, default='all',
                               help='A number, or job ids or kinds (list, parts, best_of, small), comma separated')
     evals_parser.add_argument('--baseline', action='store_true', help='Also run each job without workers')
@@ -99,19 +100,29 @@ def get_arguments():
 
     # Main arguments
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
-    parser.add_argument('--provider', default='google', help='LLM provider. Keys and addresses are set in Settings > Models and keys')
+    parser.add_argument('--provider', default='',
+                        help="LLM provider for this run (default: the agent's own). Keys and addresses are set in "
+                             'Settings > Models and keys')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--tasks', action='store_true', help='List all saved tasks')
     parser.add_argument('--teams', action='store_true', help='List all saved teams')
     parser.add_argument('--ui', default='cli', help='Determine preferred user interface')
-    parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
-    parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')],
-                       default='all', help='Add tools by categories to agent')
+    parser.add_argument('--agent', type=str, default='',
+                        help='Saved agent to use, by name (default: your main assistant)')
+    parser.add_argument('--user', type=str, default='',
+                        help="Email of the account whose main assistant to use (default: this install's owner)")
+    parser.add_argument('--add-dir', dest='add_dirs', action='append', default=[], metavar='PATH',
+                        help='Another folder the agent may read and change, besides the current one (repeatable)')
+    parser.add_argument('--add-read-dir', dest='add_read_dirs', action='append', default=[], metavar='PATH',
+                        help='Another folder the agent may only read (repeatable)')
+    parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',') if i.strip()],
+                       default=None, help="Add tools by categories or names for this run (default: the agent's own)")
     parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
     parser.add_argument('--api-base', type=str, default='',
                        help='Override provider base_url (e.g. for local Ollama).')
-    parser.add_argument('--temperature', type=float, default=0.4, help='Override model temperature (default 0.4)')
+    parser.add_argument('--temperature', type=float, default=None,
+                        help="Override model temperature (default: the agent's own)")
     parser.add_argument('--max-tokens', type=int, default=0, help='Override max tokens (default 4096, 0=use default)')
     parser.add_argument('--system-prompt', type=str_or_file, default='',
                        help='Set system prompt of model. Can be a string or a text file path')

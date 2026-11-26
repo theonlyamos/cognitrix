@@ -308,9 +308,15 @@ async def command(args: Any) -> None:
         print(f'No account with the email {args.email}.')
         sys.exit(1)
     user_key = access.owner_key(user)
-    agent = await access.find_visible_agent(user_key, name=args.agent)
+    if args.agent:
+        agent = await access.find_visible_agent(user_key, name=args.agent)
+    else:
+        from cognitrix.assistant.setup import main_assistant
+
+        agent = await main_assistant(user_key)
     if agent is None:
-        print(f'{args.email} has no agent called {args.agent}.')
+        print(f'{args.email} has no agent called {args.agent}.' if args.agent
+              else f'{args.email} has no main assistant. Pick an agent with --agent.')
         sys.exit(1)
     jobs = select(args.jobs)
     if not jobs:

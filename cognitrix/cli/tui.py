@@ -13,7 +13,6 @@ from cognitrix.agents.base import Agent
 from cognitrix.config import VERSION
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.handler import handle_multi_step_task, parse_task_request
-from cognitrix.tools.utils import trusted_local_execution_context
 
 CSS = """
 CognitrixApp {
@@ -495,8 +494,14 @@ class CognitrixApp(App):
 
     async def action_new_session(self):
         """Create a new session for the current agent."""
-        new_session = Session(agent_id=self.agent.id)
-        await new_session.save()
+        owner = str(getattr(self.app_session, 'user_id', '') or '')
+        if owner:
+            from .app_turn import new_chat
+
+            new_session = await new_chat(owner, self.agent)
+        else:
+            new_session = Session(agent_id=self.agent.id)
+            await new_session.save()
         self.app_session = new_session
         # Clear the chat area
         chat_area = self.query_one("#chat-area", Vertical)
@@ -641,11 +646,11 @@ class CognitrixApp(App):
 
         async def run_session():
             try:
-                await self.app_session(
-                    text, self.agent, interface="cli", stream=True,
-                    output=tui_stream_output,
-                    tool_context=trusted_local_execution_context(),
-                )
+                # A chat in the person's account runs like the app's chats
+                # (cognitrix/cli/app_turn.py).
+                from .app_turn import turn
+
+                await turn(self.app_session, self.agent, text, stream=True, output=tui_stream_output)
             except Exception as e:
                 self._add_error(str(e))
             finally:

@@ -131,7 +131,7 @@ Use an editable install (`pip install -e .`): the server looks for the built UI 
 ## Command line
 
 ```bash
-cognitrix                              # chat with the Assistant agent in the terminal
+cognitrix                              # chat with your main assistant in the terminal
 cognitrix --ui tui                     # full-screen terminal UI
 cognitrix --ui web                     # web app on http://localhost:8000
 cognitrix --agent "Researcher"         # chat with a saved agent
@@ -139,14 +139,19 @@ cognitrix --provider anthropic --model claude-sonnet-5-5
 cognitrix -p "Summarise README.md"     # one prompt, print the reply, exit
 cognitrix -p "Plan a launch" --task    # run the prompt as a planned multi-step task
 cognitrix -c -p "And the next step?"   # continue the previous session
+cognitrix --add-dir ../api --add-read-dir ~/docs   # more folders (read & write / read only)
 ```
+
+In the interactive shell, `/add-dir <path> [read]` adds a folder and `/dirs` lists them.
+
+With no `--agent`, the command line uses your **main assistant**: the agent the app marks as main (Settings > Assistant), whatever it is called. Its turns run the same way as a chat in the app, as your account (`--user EMAIL` picks another account on a shared install): the same instructions, AGENTS.md, memory, skills, tools, connected apps and permission rules, and the chat shows up in the app's chat list. `--provider`, `--model` and `--temperature` change only that run, never the saved agent. With no account on the install, the CLI uses its own local "Assistant" agent.
 
 | Command | What it does |
 | --- | --- |
 | `cognitrix agents -l` / `--new` / `<name>` | List, create, show, update or delete agents |
 | `cognitrix tools -l [category]` | List tools (`general`, `system`, `web`) |
 | `cognitrix skills -l` / `--install` / `--run` | Manage and run skills |
-| `cognitrix acp --agent Assistant` | Run as an Agent Client Protocol server for code editors |
+| `cognitrix acp` | Run as an Agent Client Protocol server for code editors (`--agent NAME` for another agent) |
 | `cognitrix connect <server>` | Pair this PC with a Cognitrix web server |
 | `cognitrix reset-password <email>` | Set a new password for a local account |
 | `cognitrix --sessions` / `--session <id>` | List or reopen saved chats |
@@ -177,7 +182,7 @@ In Zed, add this to `settings.json`:
   "agent_servers": {
     "Cognitrix": {
       "command": "cognitrix",
-      "args": ["acp", "--agent", "Assistant"]
+      "args": ["acp"]
     }
   }
 }
