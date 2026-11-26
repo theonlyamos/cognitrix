@@ -319,6 +319,31 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
                                    title="[red]Switch Failed[/red]", border_style="red"))
         return True
 
+    # A fresh chat with the same agent; the old one stays in `cognitrix sessions`.
+    if cmd == 'new':
+        owner = str(getattr(session, 'user_id', '') or '')
+        if owner:
+            from .app_turn import new_chat
+
+            fresh = await new_chat(owner, agent)
+        else:
+            from cognitrix.sessions.base import Session
+
+            fresh = Session(agent_id=str(agent.id))
+            await fresh.save()
+        console.print(f"[green]New chat started.[/green] [dim](previous: {session.id})[/dim]")
+        return (agent, fresh)
+
+    # The chat's id, for `cognitrix --resume ID`.
+    if cmd == 'session':
+        if getattr(session, 'id', None) is None:
+            await session.save()
+        llm = getattr(agent, 'llm', None)
+        console.print(f"Session: [bold]{session.id}[/bold]\nAgent: {agent.name} "
+                      f"({getattr(llm, 'provider', '')}/{getattr(llm, 'model', '')})\n"
+                      f"[dim]Continue it later with: cognitrix --resume {session.id}[/dim]")
+        return True
+
     # Help command
     if cmd == 'help':
         help_text = """[bold green]Available Commands:[/bold green]
@@ -331,6 +356,10 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 [yellow]• /skills[/yellow] - List installed skills
 [yellow]• /tasks[/yellow] - List all tasks
 [yellow]• /teams[/yellow] - List all teams
+[yellow]• /new[/yellow] - Start a fresh chat
+[yellow]• /voice[/yellow] - Speak a message (with --audio, an empty Enter does the same)
+[yellow]• /session[/yellow] - Show this chat's id (for cognitrix --resume)
+[yellow]• /history[/yellow] - Show this chat's messages
 
 [bold cyan]Folders:[/bold cyan]
 [yellow]• /add-dir <path> [read][/yellow] - Let the agent work in another folder (add "read" for read only)
@@ -347,7 +376,7 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 [bold cyan]System Commands:[/bold cyan]
 [yellow]• !<command>[/yellow] - Run a shell command in the terminal (e.g. !ls, !git status)
 [yellow]• cd <path>[/yellow] - Change directory
-[yellow]• q, quit, exit[/yellow] - Exit the shell
+[yellow]• q, quit, exit, /exit[/yellow] - Exit the shell
 
 [dim]Anything else is sent to the AI agent.[/dim]"""
 
@@ -664,7 +693,7 @@ async def handle_entity_command(cmd: str, args: list[Any]):
 
 
 
-async def initialize_shell(session, agent, stream: bool = True):
+async def initialize_shell(session, agent, stream: bool = True, audio: bool = False):
     """Initialize and run the interactive shell."""
 
     # Welcome banner
@@ -680,6 +709,7 @@ async def initialize_shell(session, agent, stream: bool = True):
     builtins = ['cd', 'exit', 'quit', 'q']
     custom_commands = [
         '/help', '/clear', '/history', '/tools', '/add-dir', '/dirs', '/skills', '/agents', '/tasks', '/teams',
+        '/new', '/session', '/voice', '/exit', '/quit',
         '/add', '/delete', '/show', '/switch', '/mcp', '/mcp-tools', '/mcp-tool-info',
         '/mcp-call', '/mcp-connect', '/mcp-disconnect'
     ]
@@ -739,11 +769,25 @@ async def initialize_shell(session, agent, stream: bool = True):
             query = await _read_query(prompt_session, prompt_str, plain_prompt)
             query = query.strip()
 
+            # Voice: /voice, or an empty line with --audio, records a message.
+            if query.lower() == '/voice' or (audio and not query):
+                from .voice import VoiceUnavailable, listen
+
+                try:
+                    query = await listen()
+                except VoiceUnavailable as exc:
+                    console.print(f"[yellow]{exc}[/yellow]")
+                    continue
+                if not query:
+                    console.print("[dim]Didn't catch anything.[/dim]")
+                    continue
+                console.print(f"[dim]You said:[/dim] {query}")
+
             if not query:
                 continue
 
             # Check for exit commands
-            if query.lower() in ['q', 'quit', 'exit']:
+            if query.lower() in ['q', 'quit', 'exit', '/q', '/quit', '/exit']:
                 console.print(Panel("[bold yellow]👋 Goodbye! Thanks for using Cognitrix![/bold yellow]",
                                    title="[yellow]Exiting[/yellow]", border_style="yellow"))
                 break

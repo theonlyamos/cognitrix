@@ -13,7 +13,7 @@ from cognitrix.models.tool import Tool
 from cognitrix.providers import LLM
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task
-from cognitrix.tasks.handler import handle_multi_step_task, parse_task_request
+from cognitrix.tasks.handler import parse_task_request
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import ToolManager
 
@@ -87,24 +87,30 @@ async def start(args: Namespace):
 
     try:
         # Handle list commands
+        as_json = getattr(args, 'output_format', 'text') == 'json'
         if args.agents:
-            await list_agents()
+            await list_agents(as_json)
             sys.exit()
         elif args.tasks:
-            await list_tasks()
+            await list_tasks(as_json)
             sys.exit()
         elif args.teams:
-            await list_teams()
+            await list_teams(as_json)
             sys.exit()
         elif args.sessions:
-            await list_sessions()
+            await list_sessions(as_json)
             sys.exit()
 
         # The person's main assistant unless --agent names one
         # (cognitrix/cli/main_assistant.py).
-        from . import app_turn
+        from . import app_turn, headless
         from . import main_assistant as cli_agent
 
+        # Old spellings: --name was --agent; --prompt-template added instructions.
+        if getattr(args, 'legacy_agent_name', '') and not args.agent:
+            args.agent = args.legacy_agent_name
+        if getattr(args, 'prompt_template', '') and not getattr(args, 'append_system_prompt', ''):
+            args.append_system_prompt = args.prompt_template
         try:
             resolved = await cli_agent.resolve(args.agent or '', getattr(args, 'user', '') or '')
         except cli_agent.NoSuchUser as e:
@@ -148,6 +154,17 @@ async def start(args: Namespace):
         logger.info(cli_agent.describe(resolved))
         if args.verbose:
             print(cli_agent.describe(resolved), file=sys.stderr)
+
+        # --resume ID: a saved chat by id, and its own agent unless --agent
+        # named one; picked before the overrides below so they apply to it.
+        session = None
+        if getattr(args, 'resume', ''):
+            try:
+                session, assistant = await headless.load_resumed(
+                    args.resume, assistant, resolved.owner if owned else None, explicit_agent=bool(args.agent))
+            except headless.UsageError as e:
+                print(str(e), file=sys.stderr)
+                sys.exit(headless.EXIT_USAGE)
 
         # Configure agent with provided options (CLI overrides for this run).
         if (args.provider or args.model or args.api_key or args.api_base or args.temperature is not None
@@ -194,8 +211,9 @@ async def start(args: Namespace):
         # unless --continue is given, like other agent CLIs.
         one_shot = bool(args.prompt or getattr(args, 'prompt_file', ''))
         resume = getattr(args, 'continue_session', False)
-        session = None
-        if owned:
+        if session is not None:
+            pass  # --resume picked it above
+        elif owned:
             if resume:
                 session = await app_turn.last_chat(resolved.owner, assistant)
             if not session:
@@ -230,16 +248,31 @@ async def start(args: Namespace):
         if not owned and resolved.source in ('created', 'legacy', 'named'):
             await assistant.save()
 
-        # Resolve the effective prompt: --prompt-file (safe for long/multi-line/
-        # special-character prompts the shell would mangle) wins over --prompt/-p.
-        prompt = args.prompt
-        if getattr(args, 'prompt_file', ''):
+        # This run's own instructions, tools, tool-round cap and effort
+        # (after the save above: none of it is kept on the agent).
+        headless.apply_run_options(assistant, args)
+        for mcp_file in getattr(args, 'mcp_config', None) or []:
+            # --mcp-config: MCP servers for this run only (cognitrix/cli/handlers_mcp.py).
+            from .handlers_mcp import use_for_run
             try:
-                with open(args.prompt_file, encoding='utf-8') as f:
-                    prompt = f.read()
-            except OSError as e:
-                logger.error("Could not read --prompt-file '%s': %s", args.prompt_file, e)
-                sys.exit(1)
+                names = await use_for_run(assistant, mcp_file)
+            except ValueError as e:
+                print(f"--mcp-config: {e}", file=sys.stderr)
+                sys.exit(headless.EXIT_USAGE)
+            logger.info("MCP servers for this run: %s", ', '.join(names))
+        headless.set_effort(args)
+
+        # Resolve the effective prompt: --prompt-file (safe for long/multi-line/
+        # special-character prompts the shell would mangle) wins over --prompt/-p;
+        # '-' reads stdin.
+        try:
+            prompt = headless.read_prompt(args) if one_shot else ''
+        except headless.UsageError as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(headless.EXIT_USAGE)
+        if one_shot and not prompt.strip():
+            print("The prompt is empty.", file=sys.stderr)
+            sys.exit(headless.EXIT_USAGE)
 
         # Handle different execution modes
         if prompt:
@@ -247,19 +280,18 @@ async def start(args: Namespace):
             task_prompt = parse_task_request(prompt) or (prompt if getattr(args, 'task', False) else None)
             if task_prompt:
                 logger.info("Task run requested, creating execution plan...")
-                result = await handle_multi_step_task(
-                    task_prompt,
-                    assistant,
-                    session,
-                    assistant.llm,
-                    args.stream
-                )
-                print(result)
-            else:
-                await app_turn.turn(session, assistant, prompt, stream=args.stream)
-                if session.last_turn_error:
-                    # One-shot mode is used from scripts: report failure.
-                    sys.exit(1)
+                args.task = True
+                conflicts = headless.task_conflicts(args)
+                if conflicts:
+                    print(f"{', '.join(conflicts)} can't be used with a task run: its steps use the "
+                          "saved agent. Change the agent with `cognitrix agents NAME --update` instead.",
+                          file=sys.stderr)
+                    sys.exit(headless.EXIT_USAGE)
+                prompt = task_prompt
+            # Output formats, timeout and exit codes: cognitrix/cli/headless.py.
+            code = await headless.run_prompt(session, assistant, prompt, args)
+            if code:
+                sys.exit(code)
         elif args.ui.lower() == 'web':
             # Web UI mode
             await start_web_ui(assistant)
@@ -269,11 +301,14 @@ async def start(args: Namespace):
             await app.run_async()
         else:
             # Fallback legacy interactive CLI mode
-            await initialize_shell(session, assistant, stream=args.stream)
+            await initialize_shell(session, assistant, stream=args.stream, audio=bool(getattr(args, 'audio', False)) and sys.stdin.isatty())
+        # MCP servers started for this run are child processes: close them so
+        # the CLI exits.
+        await headless.close_mcp()
 
     except KeyboardInterrupt:
-        print("\nExiting...")
-        sys.exit(1)
+        print("\nExiting...", file=sys.stderr)
+        sys.exit(130)
     except Exception as e:
         logging.exception(e)
         sys.exit(1)

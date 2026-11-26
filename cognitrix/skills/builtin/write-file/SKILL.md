@@ -12,6 +12,7 @@ args:
   - name: append
     description: If true, append to file instead of overwriting
     required: false
+    default: "false"
 tags: [file, write, create]
 category: system
 version: "1.0.0"
@@ -23,7 +24,14 @@ safety:
 
 # Write File
 
-Write content to a file at `$(arg file_path)` using the Write tool.
+Write content to a file at `$(arg file_path)` using the Write tool. Write exactly
+this content, nothing else:
+
+```
+$(arg content)
+```
+
+Append instead of overwriting: $(arg append). Call the Write tool once and stop.
 
 ## Usage
 

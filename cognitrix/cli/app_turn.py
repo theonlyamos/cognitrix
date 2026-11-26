@@ -271,13 +271,15 @@ async def skip_question(request_id: str, owner: str, note: str) -> None:
 # --- one turn -----------------------------------------------------------------
 
 async def run_turn(session: Any, agent: Any, text: str, *, owner: str, stream: bool = True,
-                   write: Callable[..., Any] | None = None, bypass: bool = False) -> None:
-    """One turn of ``session`` as the app's chat would run it."""
+                   write: Callable[..., Any] | None = None, bypass: bool = False,
+                   channel: TerminalChannel | None = None) -> None:
+    """One turn of ``session`` as the app's chat would run it. ``channel``
+    replaces the terminal output (headless.py records the turn with one)."""
     from cognitrix.questions.broker import QuestionTurnContext, question_turn_ctx
     from cognitrix.safety.approval_gate import web_turn_ctx
     from cognitrix.tools.utils import HostProcessMode, ToolExecutionContext
 
-    channel = TerminalChannel(owner, write)
+    channel = channel or TerminalChannel(owner, write)
     sid = str(session.id)
     approval_token = web_turn_ctx.set({
         'emit': channel.emit, 'session_id': sid, 'bypass': bool(bypass), 'user_key': owner,

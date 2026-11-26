@@ -40,3 +40,12 @@ def create_rich_table(headers, rows, title=None):
     for row in rows:
         table.add_row(*[str(cell) for cell in row])
     return table
+
+
+def print_json(data) -> None:
+    """Print data as JSON on stdout (for scripts: --json / --output-format json)."""
+    import json
+    import sys
+
+    sys.stdout.write(json.dumps(data, ensure_ascii=False, default=str, indent=2) + '\n')
+    sys.stdout.flush()

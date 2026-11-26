@@ -16,20 +16,31 @@ def get_arguments():
     subparsers = parser.add_subparsers()
 
     # Agents subcommand
-    agents_parser = subparsers.add_parser('agents', help="Manage agents")
-    agents_parser.add_argument("name", type=str, nargs="?", help="Name of an agent to manage (details|update|remove)")
+    agents_parser = subparsers.add_parser(
+        'agents', help="List, show, create, change or delete agents",
+        description="cognitrix agents (list) | agents NAME (details) | agents NAME --new/--update/--delete")
+    agents_parser.add_argument("name", type=str, nargs="?", help="Agent name, id or list number")
     agents_parser.add_argument('--new','--create', action='store_true', help='Create a new agent')
     agents_parser.add_argument('-l', '--list', action='store_true', help='List all saved agents')
-    agents_parser.add_argument('--update', action='store_true', help='Update an agent')
+    agents_parser.add_argument('--update', action='store_true', help='Change an agent (with the flags below)')
     agents_parser.add_argument('--delete', action='store_true', help='Delete an agent')
     agents_parser.add_argument('--id', nargs='?', help='Specify agent id to update or delete')
+    agents_parser.add_argument('--provider', default='', help='For --new/--update: model provider')
+    agents_parser.add_argument('--model', default='', help='For --new/--update: model')
+    agents_parser.add_argument('--system-prompt', type=str_or_file, default='',
+                               help='For --new/--update: instructions (text or a file path)')
+    agents_parser.add_argument('--description', default='', help='For --new/--update: short description')
+    agents_parser.add_argument('--tools', default=None,
+                               help='For --new/--update: tool categories or names, comma separated (default all)')
+    agents_parser.add_argument('--rename', default='', help='For --update: new name')
+    agents_parser.add_argument('--json', action='store_true', help='Print JSON')
     agents_parser.set_defaults(func=manage_agents)
 
     # Tools subcommand
     tools_parser = subparsers.add_parser('tools', help="Manage tools")
-    tools_parser.add_argument('-l', '--list', type=str, default='all', nargs='?',
-                            choices=['all', 'general', 'system', 'web'],
-                            help='List tools by category')
+    tools_parser.add_argument('-l', '--list', type=str, default='all', nargs='?', const='all',
+                            metavar='CATEGORY', help='List tools, optionally only one category (e.g. web, system)')
+    tools_parser.add_argument('--json', action='store_true', help='Print JSON')
     tools_parser.set_defaults(func=manage_tools)
 
     # Skills subcommand
@@ -46,6 +57,8 @@ def get_arguments():
     skills_parser.add_argument('args', nargs='*', help='Arguments for --run (positional)')
     skills_parser.add_argument('--arg', action='append', dest='skill_args', default=[],
                              help='Skill arguments as key=value (can be repeated, e.g., --arg file_path=doc.pdf --arg depth=short)')
+    skills_parser.add_argument('--provider', default='', help="For --run: model provider (default: the app's default)")
+    skills_parser.add_argument('--model', default='', help='For --run: model')
     skills_parser.set_defaults(func=manage_skills)
 
     # Forgotten password: whoever can run commands on this machine can set a new one.
@@ -60,6 +73,17 @@ def get_arguments():
     from .handlers_settings import add_parser as add_settings_parser
 
     add_settings_parser(subparsers)
+
+    # Provider API keys and saved chats from the command line.
+    from .handlers_keys import add_parser as add_keys_parser
+    from .handlers_sessions import add_parser as add_sessions_parser
+
+    add_keys_parser(subparsers)
+    add_sessions_parser(subparsers)
+
+    from .handlers_mcp import add_parser as add_mcp_parser
+
+    add_mcp_parser(subparsers)
 
     # Editors that speak the Agent Client Protocol (Zed, JetBrains, ...) start
     # this and talk to it over stdin/stdout (cognitrix/acp/server.py).
@@ -99,7 +123,9 @@ def get_arguments():
     evals_parser.set_defaults(func=swarm_evals)
 
     # Main arguments
-    parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
+    # Old spellings kept working: --name is --agent, --prompt-template adds to
+    # the agent's instructions like --append-system-prompt.
+    parser.add_argument('--name', dest='legacy_agent_name', type=str, default='', help=argparse.SUPPRESS)
     parser.add_argument('--provider', default='',
                         help="LLM provider for this run (default: the agent's own). Keys and addresses are set in "
                              'Settings > Models and keys')
@@ -125,23 +151,25 @@ def get_arguments():
                         help="Override model temperature (default: the agent's own)")
     parser.add_argument('--max-tokens', type=int, default=0, help='Override max tokens (default 4096, 0=use default)')
     parser.add_argument('--system-prompt', type=str_or_file, default='',
-                       help='Set system prompt of model. Can be a string or a text file path')
-    parser.add_argument('--prompt-template', type=str_or_file, default='',
-                       help='Set prompt template of model. Can be a string or a text file path')
+                       help="Replace the agent's instructions for this run (text or a file path)")
+    parser.add_argument('--prompt-template', type=str_or_file, default='', help=argparse.SUPPRESS)
     parser.add_argument('--prompt', '-p', type=str, default='',
-                       help='Prompt the agent to generate text and then exit after printing out the response.')
+                       help='Run one prompt, print the reply and exit (- reads the prompt from stdin)')
     parser.add_argument('--task', action='store_true',
                        help='Run the prompt as a planned multi-step task instead of a chat turn.')
     parser.add_argument('--continue', '-c', dest='continue_session', action='store_true',
-                       help='With --prompt, continue the previous session instead of starting a new one.')
+                       help='Continue the most recent terminal chat instead of starting a new one.')
     parser.add_argument('--prompt-file', type=str, default='',
                        help='Read the prompt from a file instead of the command line. Use this for long, '
                             'multi-line, or special-character prompts that the shell would mangle. Takes '
-                            'precedence over --prompt/-p.')
-    parser.add_argument('--audio', action='store_true', help='Get input from microphone')
+                            'precedence over --prompt/-p. - reads stdin.')
+    parser.add_argument('--audio', action='store_true',
+                        help='Speak your messages in the interactive shell (needs a microphone and a speech '
+                             'to text key: Deepgram, OpenAI or Google)')
     parser.add_argument('--stream', action=argparse.BooleanOptionalAction, default=True,
                        help='Stream responses token-by-token (default: on; use --no-stream to disable)')
-    parser.add_argument('--session', type=str, default="", help='Load saved session')
+    parser.add_argument('--resume', '-r', '--session', dest='resume', type=str, default='', metavar='SESSION_ID',
+                        help='Continue a saved chat by id (or the start of it); `cognitrix sessions` lists them')
     parser.add_argument('--clear-history', action='store_true', default="", help='Clear agent history')
     parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')
     parser.add_argument('--verbose', action='store_true', help='Set verbose mode')
@@ -151,6 +179,30 @@ def get_arguments():
                             'commands, coding agents, sub-agents and task runs this run starts). '
                             'Your saved settings are not changed. ONLY use inside a throwaway '
                             'sandbox/container.')
+    # Headless runs: scripts, CI and benchmarks (cognitrix/cli/headless.py).
+    from cognitrix.providers.base import REASONING_EFFORTS
+
+    from .headless import FORMATS
+
+    parser.add_argument('--output-format', choices=FORMATS, default='text',
+                        help='With -p: text (just the reply), json (one result object) or stream-json '
+                             '(one JSON event per line). Also makes --agents/--sessions/--tasks/--teams print JSON.')
+    parser.add_argument('--cwd', '-C', type=str, default='',
+                        help='Folder to work in (default: the current folder)')
+    parser.add_argument('--max-turns', type=int, default=0,
+                        help='With -p: stop after this many tool rounds (default: no limit)')
+    parser.add_argument('--timeout', type=float, default=0,
+                        help='With -p: give up after this many seconds (exit code 124)')
+    parser.add_argument('--effort', choices=REASONING_EFFORTS, default='',
+                        help="Reasoning effort for this run (default: the agent's own)")
+    parser.add_argument('--append-system-prompt', type=str_or_file, default='',
+                        help="Add to the agent's instructions for this run (text or a file path)")
+    parser.add_argument('--allowed-tools', type=str, default='',
+                        help='Only these tools for this run, comma separated (e.g. "Read,Edit,Bash")')
+    parser.add_argument('--disallowed-tools', type=str, default='',
+                        help='Take these tools away for this run, comma separated')
+    parser.add_argument('--mcp-config', action='append', default=[], metavar='FILE',
+                        help='MCP servers for this run only: a .mcp.json-style file or a JSON string (repeat)')
     parser.add_argument('-v','--version', action='version', version=f'%(prog)s {VERSION}')
 
     # Import start function for default action

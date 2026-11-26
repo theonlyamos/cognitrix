@@ -50,6 +50,18 @@ def main():
     try:
         args = get_arguments()
 
+        # --cwd: work in another folder (the chat's primary folder, AGENTS.md,
+        # relative paths), like `git -C`.
+        cwd = getattr(args, 'cwd', '') or ''
+        if cwd:
+            import os
+
+            path = os.path.abspath(os.path.expanduser(cwd))
+            if not os.path.isdir(path):
+                print(f"--cwd: no folder {cwd}", file=sys.stderr)
+                sys.exit(2)
+            os.chdir(path)
+
         if getattr(args, 'dangerously_skip_permissions', False):
             _skip_permissions(args)
 
@@ -60,8 +72,8 @@ def main():
             args.func(args)
 
     except KeyboardInterrupt:
-        print("\nExiting...")
-        sys.exit(1)
+        print("\nExiting...", file=sys.stderr)
+        sys.exit(130)
     except Exception as e:
         logging.exception(e)
         sys.exit(1)

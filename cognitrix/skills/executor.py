@@ -205,6 +205,12 @@ class SkillExecutor:
             # Resolve $(arg name) syntax whenever we have skill_args + definitions
             if skill_args and manifest.args:
                 rendered = self._resolve_arg_syntax(manifest.body, skill_args, manifest.args)
+                # Arguments the body never mentions would otherwise never reach
+                # the model (it then guesses, e.g. write-file's content).
+                unused = self._unreferenced_args(manifest.body, skill_args)
+                if unused:
+                    rendered += '\n\n## Arguments\n' + '\n'.join(
+                        f'- {name}: {value}' for name, value in unused.items())
             else:
                 rendered = manifest.body
 
@@ -291,6 +297,14 @@ class SkillExecutor:
             )
 
     # ── Substitution ──
+
+    @staticmethod
+    def _unreferenced_args(body: str, skill_args: dict[str, Any]) -> dict[str, Any]:
+        """The given arguments the body doesn't place with $(arg name) or $ARGUMENTS."""
+        if '$ARGUMENTS' in body:
+            return {}
+        used = set(_ARG_PATTERN.findall(body))
+        return {k: v for k, v in skill_args.items() if k not in used and v not in (None, '')}
 
     def _resolve_arg_syntax(
         self, body: str, skill_args: dict[str, Any], args_def: list
