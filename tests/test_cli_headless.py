@@ -222,3 +222,25 @@ def test_keys_set_from_env_and_list(monkeypatch, tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         handlers_keys.manage_keys(Namespace(keys_action='set', provider='nope', from_env='', stdin=False))
     assert exc.value.code == 2
+
+
+async def test_failed_task_run_is_an_error(monkeypatch, capsys):
+    from cognitrix.cli import headless
+    from cognitrix.tasks import handler
+
+    async def failing(prompt, agent, session, llm, stream):
+        return 'Multi-step task failed: planner crashed\n\n[View task run](/tasks/t1)'
+
+    monkeypatch.setattr(handler, 'handle_multi_step_task', failing)
+    args = _args('json')
+    args.task = True
+    code = await headless.run_prompt(_Session(), _AGENT, 'plan it', args)
+    result = json.loads(capsys.readouterr().out)
+    assert code == 1 and result['is_error'] and result['error'] == 'Multi-step task failed: planner crashed'
+
+
+def test_task_run_rejects_per_run_agent_options():
+    from cognitrix.cli import headless
+
+    assert headless.task_conflicts(Namespace(system_prompt='', allowed_tools='Read')) == ['--allowed-tools']
+    assert headless.task_conflicts(Namespace()) == []

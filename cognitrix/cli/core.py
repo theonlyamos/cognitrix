@@ -150,6 +150,17 @@ async def start(args: Namespace):
         if args.verbose:
             print(cli_agent.describe(resolved), file=sys.stderr)
 
+        # --resume ID: a saved chat by id, and its own agent unless --agent
+        # named one; picked before the overrides below so they apply to it.
+        session = None
+        if getattr(args, 'resume', ''):
+            try:
+                session, assistant = await headless.load_resumed(
+                    args.resume, assistant, resolved.owner if owned else None, explicit_agent=bool(args.agent))
+            except headless.UsageError as e:
+                print(str(e), file=sys.stderr)
+                sys.exit(headless.EXIT_USAGE)
+
         # Configure agent with provided options (CLI overrides for this run).
         if (args.provider or args.model or args.api_key or args.api_base or args.temperature is not None
                 or getattr(args, 'max_tokens', 0) > 0):
@@ -195,15 +206,8 @@ async def start(args: Namespace):
         # unless --continue is given, like other agent CLIs.
         one_shot = bool(args.prompt or getattr(args, 'prompt_file', ''))
         resume = getattr(args, 'continue_session', False)
-        session = None
-        if getattr(args, 'resume', ''):
-            # --resume ID: a saved chat by id (cognitrix/cli/headless.py).
-            try:
-                session, assistant = await headless.load_resumed(
-                    args.resume, assistant, resolved.owner if owned else None, explicit_agent=bool(args.agent))
-            except headless.UsageError as e:
-                print(str(e), file=sys.stderr)
-                sys.exit(headless.EXIT_USAGE)
+        if session is not None:
+            pass  # --resume picked it above
         elif owned:
             if resume:
                 session = await app_turn.last_chat(resolved.owner, assistant)
@@ -263,6 +267,12 @@ async def start(args: Namespace):
             if task_prompt:
                 logger.info("Task run requested, creating execution plan...")
                 args.task = True
+                conflicts = headless.task_conflicts(args)
+                if conflicts:
+                    print(f"{', '.join(conflicts)} can't be used with a task run: its steps use the "
+                          "saved agent. Change the agent with `cognitrix agents NAME --update` instead.",
+                          file=sys.stderr)
+                    sys.exit(headless.EXIT_USAGE)
                 prompt = task_prompt
             # Output formats, timeout and exit codes: cognitrix/cli/headless.py.
             code = await headless.run_prompt(session, assistant, prompt, args)

@@ -40,6 +40,16 @@ EXIT_TIMEOUT = 124
 EXIT_INTERRUPTED = 130
 
 FORMATS = ('text', 'json', 'stream-json')
+TASK_FAILED = 'Multi-step task failed:'  # tasks/handler.py
+
+# Per-run agent changes a task run can't carry: its steps reload the saved
+# agent by id (Task.team()).
+AGENT_RUN_OPTIONS = ('system_prompt', 'append_system_prompt', 'allowed_tools', 'disallowed_tools')
+
+
+def task_conflicts(args: Namespace) -> list[str]:
+    """The per-run agent options given with --task (not supported there)."""
+    return ['--' + name.replace('_', '-') for name in AGENT_RUN_OPTIONS if getattr(args, name, '')]
 
 
 class UsageError(Exception):
@@ -389,8 +399,11 @@ async def run_prompt(session: Any, agent: Any, prompt: str, args: Namespace) -> 
             if task_run:
                 from cognitrix.tasks.handler import handle_multi_step_task
 
-                result = await handle_multi_step_task(prompt, agent, session, agent.llm, args.stream)
-                channel._write_text(str(result or ''), '\n')
+                result = str(await handle_multi_step_task(prompt, agent, session, agent.llm, args.stream) or '')
+                channel._write_text(result, '\n')
+                # The handler reports a failed run as text, not an exception.
+                if result.startswith(TASK_FAILED):
+                    return result.split('\n', 1)[0]
                 return None
             if owner:
                 from .app_turn import run_turn
