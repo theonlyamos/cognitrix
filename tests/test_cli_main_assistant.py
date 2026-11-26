@@ -296,3 +296,36 @@ async def test_editor_starts_with_the_main_assistant(db, monkeypatch):  # noqa: 
     # --agent still wins.
     picked = await server.CognitrixAgent(agent_name='assistant', user_id=str(user.id))._pick_agent()
     assert picked.name == 'Assistant'
+
+
+async def test_more_folders(db, monkeypatch, tmp_path):  # noqa: F811
+    import pytest
+
+    from cognitrix.cli import app_turn, shell
+    from cognitrix.common import folders as folders_mod
+    from tests.test_cli_args import _parse
+
+    monkeypatch.setattr(folders_mod, '_EXTRA_ROOTS', [])
+    args = _parse(['--add-dir', 'a', '--add-dir', 'b', '--add-read-dir', 'c', '-p', 'x'])
+    assert args.add_dirs == ['a', 'b'] and args.add_read_dirs == ['c']
+
+    _user_row, main, _decoy = await _main_and_decoy(monkeypatch)
+    work, other, docs = tmp_path / 'work', tmp_path / 'other', tmp_path / 'docs'
+    for d in (work, other, docs):
+        d.mkdir()
+    monkeypatch.chdir(work)
+    session = await app_turn.new_chat(str(_user_row.id), main)
+    assert app_turn.add_folders(session, [str(other)]) == [str(other)]
+    assert app_turn.add_folders(session, [str(docs)], 'read') == [str(docs)]
+    assert app_turn.add_folders(session, [str(other)]) == []  # already there
+    with pytest.raises(ValueError):
+        app_turn.add_folders(session, [str(tmp_path / 'missing')])
+    by_path = {f['path']: f for f in session.folders}
+    assert by_path[str(work)]['primary'] and by_path[str(other)]['access'] == 'write'
+    assert by_path[str(docs)]['access'] == 'read' and not by_path[str(docs)]['primary']
+
+    # The shell's /add-dir does the same and saves the chat.
+    extra = tmp_path / 'extra'
+    extra.mkdir()
+    assert await shell.handle_slash_command(f'/add-dir {extra} read', main, session) is True
+    assert any(f['path'] == str(extra) and f['access'] == 'read' for f in session.folders)

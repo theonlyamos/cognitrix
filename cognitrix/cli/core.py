@@ -206,6 +206,19 @@ async def start(args: Namespace):
             if not session:
                 session = Session(agent_id=assistant.id)
 
+        # More folders (--add-dir / --add-read-dir), like adding folders to
+        # a chat in the app.
+        if getattr(args, 'add_dirs', None) or getattr(args, 'add_read_dirs', None):
+            if session.folders is None:
+                session.folders = app_turn.terminal_folders(assistant)
+            try:
+                app_turn.add_folders(session, list(getattr(args, 'add_dirs', None) or []), 'write')
+                app_turn.add_folders(session, list(getattr(args, 'add_read_dirs', None) or []), 'read')
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                sys.exit(1)
+            await session.save()
+
         # Clear history if requested
         if args.clear_history:
             await _clear_session_history(session)

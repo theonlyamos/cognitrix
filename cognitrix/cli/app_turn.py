@@ -73,6 +73,32 @@ def terminal_folders(agent: Any, cwd: str | None = None) -> list[dict[str, Any]]
     return folders
 
 
+def add_folders(session: Any, paths: list[str], access: str = 'write') -> list[str]:
+    """Add folders to a terminal chat (``--add-dir``, ``/add-dir``): the
+    agent can work in them like folders added to a chat in the app. Returns
+    the paths added; raises ValueError for one that isn't a folder."""
+    from cognitrix.common.folders import allow_root
+
+    access = 'read' if access == 'read' else 'write'
+    folders = [dict(f) for f in (getattr(session, 'folders', None) or []) if isinstance(f, dict)]
+    added = []
+    for raw in paths:
+        path = os.path.abspath(os.path.expanduser(str(raw)))
+        if not os.path.isdir(path):
+            raise ValueError(f'Not a folder: {raw}')
+        allow_root(path)
+        same = next((f for f in folders if os.path.abspath(str(f.get('path') or '')) == path), None)
+        if same is not None:
+            if access == 'write':
+                same['access'] = 'write'  # widening an existing folder is fine
+            continue
+        folders.append({'path': path, 'access': access, 'name': Path(path).name or path,
+                        'primary': not folders})
+        added.append(path)
+    session.folders = folders
+    return added
+
+
 async def new_chat(owner: str, agent: Any, *, cwd: str | None = None) -> Any:
     """A new chat owned by ``owner``, made the way the app makes one."""
     from cognitrix.session_ownership import claim_new

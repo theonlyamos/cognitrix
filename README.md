@@ -139,7 +139,10 @@ cognitrix --provider anthropic --model claude-sonnet-5-5
 cognitrix -p "Summarise README.md"     # one prompt, print the reply, exit
 cognitrix -p "Plan a launch" --task    # run the prompt as a planned multi-step task
 cognitrix -c -p "And the next step?"   # continue the previous session
+cognitrix --add-dir ../api --add-read-dir ~/docs   # more folders (read & write / read only)
 ```
+
+In the interactive shell, `/add-dir <path> [read]` adds a folder and `/dirs` lists them.
 
 With no `--agent`, the command line uses your **main assistant**: the agent the app marks as main (Settings > Assistant), whatever it is called. Its turns run the same way as a chat in the app, as your account (`--user EMAIL` picks another account on a shared install): the same instructions, AGENTS.md, memory, skills, tools, connected apps and permission rules, and the chat shows up in the app's chat list. `--provider`, `--model` and `--temperature` change only that run, never the saved agent. With no account on the install, the CLI uses its own local "Assistant" agent.
 

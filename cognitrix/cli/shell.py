@@ -332,6 +332,10 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 [yellow]• /tasks[/yellow] - List all tasks
 [yellow]• /teams[/yellow] - List all teams
 
+[bold cyan]Folders:[/bold cyan]
+[yellow]• /add-dir <path> [read][/yellow] - Let the agent work in another folder (add "read" for read only)
+[yellow]• /dirs[/yellow] - List the folders this chat can use
+
 [bold cyan]MCP Commands:[/bold cyan]
 [yellow]• /mcp[/yellow] - List MCP servers
 [yellow]• /mcp-tools [server_name][/yellow] - List MCP tools
@@ -348,6 +352,33 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 [dim]Anything else is sent to the AI agent.[/dim]"""
 
         console.print(Panel(help_text, title="[bold blue]📚 Cognitrix Shell Help[/bold blue]", border_style="blue"))
+        return True
+
+    # Folders the agent works in (like the folder button in the app)
+    if cmd in ('add-dir', 'dirs'):
+        from .app_turn import add_folders, terminal_folders
+
+        if cmd == 'add-dir':
+            if not args:
+                console.print("[yellow]Usage:[/yellow] /add-dir <path> [read]")
+                return True
+            access = 'read' if len(args) > 1 and str(args[-1]).lower() in ('read', 'ro', 'read-only') else 'write'
+            paths = args[:-1] if access == 'read' else args
+            if session.folders is None:
+                session.folders = terminal_folders(agent)
+            try:
+                added = add_folders(session, [str(p) for p in paths], access)
+            except ValueError as e:
+                console.print(f"[red]{e}[/red]")
+                return True
+            await session.save()
+            for path in added:
+                console.print(f"[green]Added[/green] {path} ({'read only' if access == 'read' else 'read & write'})")
+            if not added:
+                console.print("[dim]Already in this chat.[/dim]")
+        for folder in session.folders or []:
+            mark = '*' if folder.get('primary') else ' '
+            console.print(f"{mark} {folder.get('path')}  [dim]{folder.get('access', 'read')}[/dim]")
         return True
 
     # Clear screen command
@@ -648,7 +679,7 @@ async def initialize_shell(session, agent, stream: bool = True):
 
     builtins = ['cd', 'exit', 'quit', 'q']
     custom_commands = [
-        '/help', '/clear', '/history', '/tools', '/skills', '/agents', '/tasks', '/teams',
+        '/help', '/clear', '/history', '/tools', '/add-dir', '/dirs', '/skills', '/agents', '/tasks', '/teams',
         '/add', '/delete', '/show', '/switch', '/mcp', '/mcp-tools', '/mcp-tool-info',
         '/mcp-call', '/mcp-connect', '/mcp-disconnect'
     ]

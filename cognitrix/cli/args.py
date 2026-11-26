@@ -111,6 +111,10 @@ def get_arguments():
                         help='Saved agent to use, by name (default: your main assistant)')
     parser.add_argument('--user', type=str, default='',
                         help="Email of the account whose main assistant to use (default: this install's owner)")
+    parser.add_argument('--add-dir', dest='add_dirs', action='append', default=[], metavar='PATH',
+                        help='Another folder the agent may read and change, besides the current one (repeatable)')
+    parser.add_argument('--add-read-dir', dest='add_read_dirs', action='append', default=[], metavar='PATH',
+                        help='Another folder the agent may only read (repeatable)')
     parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',') if i.strip()],
                        default=None, help="Add tools by categories or names for this run (default: the agent's own)")
     parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
