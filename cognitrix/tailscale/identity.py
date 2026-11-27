@@ -80,9 +80,34 @@ def _text(value: str, limit: int) -> str:
     return ''.join(c for c in value if c.isprintable()).strip()[:limit]
 
 
-def visitor(request: Any) -> Visitor | None:
-    """The person Tailscale says is asking, or None."""
+def from_another_site(request: Any) -> bool:
+    """True when a browser says another site's page made this request.
+
+    Who a tailnet visitor is travels with every request their browser makes
+    to the private address, whichever page asked. So anything that acts on it
+    for Cognitrix's own pages (signing in, linking, handing out a way in to an
+    App) refuses requests another site's page made. Programs that are not
+    browsers (a PC's connector) send neither header and pass."""
+    try:
+        headers = request.headers
+        site = str(headers.get('sec-fetch-site') or '').strip().lower()
+        if site and site not in ('same-origin', 'none'):
+            return True
+        origin = str(headers.get('origin') or '').strip().lower().rstrip('/')
+        if not origin:
+            return False
+        host = str(headers.get('host') or '').strip().lower()
+        return not host or origin not in (f'https://{host}', f'http://{host}')
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def visitor(request: Any, *, own_page: bool = False) -> Visitor | None:
+    """The person Tailscale says is asking, or None. ``own_page``: also None
+    when another site's page made the request (see ``from_another_site``)."""
     if request is None or doors.door_of(request) != doors.TAILNET:
+        return None
+    if own_page and from_another_site(request):
         return None
     try:
         headers = request.headers
@@ -106,11 +131,18 @@ def signin_on() -> bool:
     return tailscale.serve_wanted() and get_bool('COGNITRIX_TAILSCALE_SIGNIN', False)
 
 
-async def link_of_login(login: str):
+async def _links(login: str) -> list[Any]:
     from cognitrix.models.sign_in import TailscaleLink
 
     login = clean_login(login)
-    return await TailscaleLink.find_one({'login': login}) if login else None
+    return list(await TailscaleLink.find({'login': login}) or []) if login else []
+
+
+async def link_of_login(login: str):
+    """The one account a Tailscale login is linked to. Never a guess: if two
+    rows ever name the same login, it is linked to nobody."""
+    rows = await _links(login)
+    return rows[0] if len(rows) == 1 else None
 
 
 async def link_of_user(user: Any):
@@ -121,7 +153,7 @@ async def link_of_user(user: Any):
 
 async def view(request: Any, user: Any = None) -> dict[str, Any]:
     """For the Login page and Settings > Sign-ins."""
-    seen = visitor(request)
+    seen = visitor(request, own_page=True)
     on = signin_on()
     out: dict[str, Any] = {
         'enabled': on,
@@ -147,12 +179,11 @@ async def link(request: Any, user: Any) -> dict[str, Any]:
 
     if not signin_on():
         raise IdentityError('off', 'Signing in from the tailnet is turned off on this server.', 403)
-    seen = visitor(request)
+    seen = visitor(request, own_page=True)
     if seen is None:
         raise IdentityError('not_on_tailnet', 'Open Cognitrix at its Tailscale address on this device first, '
                                               'so it can see which Tailscale login you are.')
-    other = await link_of_login(seen.login)
-    if other is not None and str(other.user_id) != str(user.id):
+    if any(str(row.user_id) != str(user.id) for row in await _links(seen.login)):
         raise IdentityError('taken', 'That Tailscale login is linked to another account here.', 409)
     await TailscaleLink.delete_many({'user_id': str(user.id)})
     await TailscaleLink(user_id=str(user.id), login=seen.login, name=seen.name,
@@ -191,7 +222,7 @@ async def sign_in(request: Any, *, name: str = '', kind: str = '') -> tuple[Any,
 
     if not signin_on():
         raise IdentityError('off', 'Signing in from the tailnet is turned off on this server.', 403)
-    seen = visitor(request)
+    seen = visitor(request, own_page=True)
     row = await link_of_login(seen.login) if seen else None
     user = await User.get(row.user_id) if row is not None else None
     if seen is None or row is None or user is None or getattr(user, 'disabled', None):

@@ -5,9 +5,9 @@ Two things, both from ``tailscale status --json`` on this PC:
 - **Is this address a machine on my tailnet?** A server reached over the
   tailnet may be given as plain ``http://``: Tailscale already encrypts that
   path, end to end. So a plain http address is accepted when, and only when,
-  it leads to an address Tailscale on this PC lists for a machine in its
-  tailnet (``confirms``). A name is resolved first: every address it resolves
-  to has to be one of those.
+  it is a machine Tailscale on this PC lists in its tailnet (``confirms``):
+  one of its tailnet addresses, or one of its tailnet names, and then every
+  address the name resolves to has to be one of those.
 - **Find my server.** Ask each machine on the tailnet "are you Cognitrix?"
   (``find_servers``). The question is one small GET; the answer is the app's
   name and version.
@@ -77,8 +77,10 @@ def _tailnet_ips() -> set[str]:
 
 
 def confirms(host: str) -> bool:
-    """True when ``host`` leads only to machines Tailscale on this PC lists in its tailnet."""
-    host = str(host or '').strip().strip('[]').lower()
+    """True when ``host`` is a machine Tailscale on this PC lists in its tailnet:
+    one of its tailnet addresses, or one of its tailnet names that leads only
+    to such addresses. Any other name is refused, wherever it leads."""
+    host = str(host or '').strip().strip('[]').lower().rstrip('.')
     if not host:
         return False
     known = _tailnet_ips()
@@ -88,6 +90,12 @@ def confirms(host: str) -> bool:
         return str(ipaddress.ip_address(host)) in known
     except ValueError:
         pass
+    names = set()
+    for machine in machines():
+        if machine['dns']:
+            names.update((machine['dns'], machine['dns'].split('.')[0]))
+    if host not in names:
+        return False
     try:
         found = {str(ipaddress.ip_address(info[4][0])) for info in socket.getaddrinfo(host, None)}
     except (OSError, ValueError):

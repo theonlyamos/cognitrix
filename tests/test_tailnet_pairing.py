@@ -67,6 +67,10 @@ def test_plain_http_is_for_machines_on_my_tailnet_only(my_tailnet, monkeypatch):
             normalize_server(address)
         assert refused.value.code == 'insecure'
 
+    # Some other name pointed at a tailnet address is not one of the tailnet's names.
+    my_tailnet.resolves['cognitrix.example.com'] = ['100.64.0.7']
+    with pytest.raises(LinkError):
+        normalize_server('http://cognitrix.example.com:8000')
     # A name that also leads somewhere outside the tailnet is not a tailnet address.
     my_tailnet.resolves['studio'] = ['100.64.0.7', '192.168.1.20']
     with pytest.raises(LinkError):

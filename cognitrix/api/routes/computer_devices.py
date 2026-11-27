@@ -508,7 +508,7 @@ async def _asking_login(request: Request) -> str:
     """The Tailscale login of the PC asking. Only the Tailscale private address knows it."""
     from cognitrix.tailscale import identity
 
-    seen = identity.visitor(request)
+    seen = identity.visitor(request, own_page=True)
     if seen is None or not identity.signin_on():
         raise HTTPException(status_code=404, detail={
             'code': 'no_tailnet', 'message': 'Pairing without a code only works at the server\'s Tailscale '

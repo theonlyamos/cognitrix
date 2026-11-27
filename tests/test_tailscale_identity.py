@@ -149,6 +149,14 @@ async def test_one_login_one_account_and_disabled_accounts_stay_out(db):  # noqa
     assert [row.login for row in await TailscaleLink.find({'user_id': str(ada.id)})] == ['ada@github']
     await identity.link(_request(ADA), bea)          # the old login is free again
 
+    # If two rows ever named one login, it would sign nobody in rather than pick one.
+    await TailscaleLink(user_id=str(ada.id), login='ada@example.com').save()
+    assert await identity.link_of_login('ada@example.com') is None
+    with pytest.raises(identity.IdentityError):
+        await identity.sign_in(_request(ADA))
+    await TailscaleLink.delete_many({'user_id': str(ada.id)})
+    assert (await identity.sign_in(_request(ADA)))[0].email == 'bea@example.com'
+
     await User.update_one({'id': str(bea.id)}, {'disabled': True})
     with pytest.raises(identity.IdentityError) as out:
         await identity.sign_in(_request(ADA))
@@ -171,6 +179,13 @@ async def test_sign_in_routes_through_the_doors(db):  # noqa: F811
         assert me['login'] == 'ada@example.com' and me['can_sign_in'] is True
         done = await tailnet.post('/api/v1/tailscale/sign-in', json={}, headers=ADA)
         assert done.status_code == 200 and done.json()['access_token']
+        # Another site's page, open in a browser on the tailnet, can't use who that browser is.
+        for forged in ({'Origin': 'https://evil.example'}, {'Sec-Fetch-Site': 'cross-site'},
+                       {'Origin': 'null', 'Sec-Fetch-Site': 'cross-site'}, {'Sec-Fetch-Site': 'same-site'}):
+            assert (await tailnet.get('/api/v1/tailscale/me', headers={**ADA, **forged})).json()['login'] == ''
+            assert (await tailnet.post('/api/v1/tailscale/sign-in', json={}, headers={**ADA, **forged})).status_code == 401
+        own = {**ADA, 'X-Forwarded-Host': NAME, 'Origin': f'https://{NAME}', 'Sec-Fetch-Site': 'same-origin'}
+        assert (await tailnet.post('/api/v1/tailscale/sign-in', json={}, headers=own)).status_code == 200
         # Someone on the local network sending Tailscale's headers themselves.
         assert (await direct.get('/api/v1/tailscale/me', headers=ADA)).json()['login'] == ''
         assert (await direct.post('/api/v1/tailscale/sign-in', json={}, headers=ADA)).status_code == 401
@@ -243,6 +258,8 @@ async def test_a_tailnet_visitor_opens_an_app_with_no_account(db, tmp_path):  # 
         assert (await direct.get('/api/v1/tailscale/apps/board', headers=ADA)).status_code == 404
         assert (await public.get('/api/v1/tailscale/apps/board', headers=ADA)).status_code == 404
 
+        other_site = {**ADA, 'Origin': 'https://evil.example', 'Sec-Fetch-Site': 'cross-site'}
+        assert (await tailnet.get('/api/v1/tailscale/apps/board', headers=other_site)).status_code == 404
         way_in = (await tailnet.get('/api/v1/tailscale/apps/board', headers=ADA)).json()
         assert way_in['title'] == 'Board' and way_in['login'] == 'ada@example.com'
         url = way_in['url']

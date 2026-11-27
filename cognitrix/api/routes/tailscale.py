@@ -232,7 +232,7 @@ async def open_app_as_guest(slug: str, request: Request) -> dict[str, Any]:
     from cognitrix.hosted_apps import store
     from cognitrix.tailscale import identity
 
-    seen = identity.visitor(request)
+    seen = identity.visitor(request, own_page=True)
     app = await store.by_slug(slug.lower()) if seen and store.guests_allowed() else None
     if seen is None or app is None or store.role_of(app, seen.key) is None:
         raise HTTPException(status_code=404, detail='Not found')
