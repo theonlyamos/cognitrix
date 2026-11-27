@@ -16,6 +16,10 @@ remembers their answer (``store.set_permission``), and does the work:
 - ``cognitrix.permissions.query(power) / request(power)``, and
   ``cognitrix.host()``: where the app is shown (desktop or web, installed).
 
+A visitor from the owner's tailnet with no account (see ``store.role_of``) has
+nobody to ask: ``cognitrix.guest`` is true, ``host()`` answers with
+``guest: true`` and every other call rejects.
+
 Calls reject when nothing answers within a few seconds. An app's link opened on
 its own (a new tab, a pasted address) is moved into Cognitrix's page by the proxy
 (``/apps/open/<slug>?bare=1``, the app with nothing around it), so there is
@@ -33,10 +37,13 @@ RUNTIME = r"""
   if (window.cognitrix && window.cognitrix.__app) return;
   var pending = {}, seq = 0, host = null, waiting = [], trayFns = [];
   var inFrame = window.parent && window.parent !== window;
+  // A visitor from the owner's tailnet with no Cognitrix account: nobody to ask.
+  var guest = !!window.__cognitrixGuest;
   function hello(){ if (inFrame) window.parent.postMessage({cognitrix: 1, type: 'hello'}, '*'); }
   function whenHost(){
     if (host) return Promise.resolve(host);
     return new Promise(function(resolve, reject){
+      if (guest) { reject(new Error('This needs a Cognitrix account. You are a guest here.')); return; }
       if (!inFrame) { reject(new Error('Open this app from Cognitrix to use this.')); return; }
       var t = setTimeout(function(){ reject(new Error('Cognitrix is not answering here.')); }, 5000);
       waiting.push(function(h){ clearTimeout(t); resolve(h); });
@@ -69,7 +76,8 @@ RUNTIME = r"""
   hello();
   window.cognitrix = {
     __app: true,
-    host: function(){ return whenHost(); },
+    guest: guest,
+    host: function(){ return guest ? Promise.resolve({platform: 'web', installed: false, window: false, guest: true}) : whenHost(); },
     notify: function(title, body){ return call('notify', {title: String(title || ''), body: String(body == null ? '' : body)}); },
     permissions: {
       query: function(power){ return call('permission.query', {power: String(power || '')}); },
@@ -96,6 +104,7 @@ RUNTIME = r"""
 """
 
 SCRIPT = ('<script data-cognitrix-runtime>' + RUNTIME.strip() + '</script>').encode()
+GUEST_SCRIPT = b'<script data-cognitrix-runtime>window.__cognitrixGuest=1;</script>' + SCRIPT
 MAX_HTML = 5 * 1024 * 1024
 
 _HEAD = re.compile(rb'<head(\s[^>]*)?>', re.I)
@@ -104,18 +113,23 @@ _DOCTYPE = re.compile(rb'^\s*<!doctype[^>]*>', re.I)
 _CHARSET = re.compile(rb'<meta\s[^>]*charset[^>]*>', re.I)
 
 
-def inject(body: bytes) -> bytes:
-    """The page with the runtime first in its <head> (or as early as is safe)."""
+def inject(body: bytes, guest: bool = False) -> bytes:
+    """The page with the runtime first in its <head> (or as early as is safe).
+    ``guest``: the visitor has no account (``cognitrix.guest`` is true and calls reject)."""
     if len(body) > MAX_HTML or b'data-cognitrix-runtime' in body[:4096]:
         return body
+    return _inject(body, GUEST_SCRIPT if guest else SCRIPT)
+
+
+def _inject(body: bytes, script: bytes) -> bytes:
     window = body[:65536]
     # Browsers only look for the page's encoding in its first 1024 bytes: keep a
     # <meta charset> there by putting the runtime after it.
     charset = _CHARSET.search(body[:1024])
     if charset:
-        return body[:charset.end()] + SCRIPT + body[charset.end():]
+        return body[:charset.end()] + script + body[charset.end():]
     for pattern in (_HEAD, _HTML, _DOCTYPE):
         match = pattern.search(window)
         if match:
-            return body[:match.end()] + SCRIPT + body[match.end():]
-    return SCRIPT + body
+            return body[:match.end()] + script + body[match.end():]
+    return script + body

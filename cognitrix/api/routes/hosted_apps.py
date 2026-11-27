@@ -216,6 +216,9 @@ class Sharing(BaseModel):
     people: dict[str, str] | None = None
     everyone: str | None = None
     """'' (nobody else), 'view' or 'edit'."""
+    tailnet: list[str] | None = Field(default=None, max_length=60)
+    """Tailscale logins that may open it with no account (view only); '*' for
+    everyone on the tailnet."""
 
 
 @hosted_apps_api.put('/{ref}/sharing')
@@ -223,7 +226,7 @@ async def share_app(ref: str, body: Sharing, ctx: AuthContext = Depends(jwt_only
     app, role = await _app(ref, ctx)
     _owner_only(role)
     try:
-        await store.set_sharing(app, people=body.people, everyone=body.everyone)
+        await store.set_sharing(app, people=body.people, everyone=body.everyone, tailnet=body.tailnet)
     except store.AppError as exc:
         raise _bad(exc) from None
     return await get_app(ref, ctx)
@@ -596,7 +599,18 @@ async def app_request(slug: str, rest: str, request: Request):
         return RedirectResponse('/a/' + slug + '/~' + token + '/', status_code=302)
     if request.method == 'OPTIONS':
         return Response(status_code=204, headers=_cors({}))
-    if request.method == 'GET' and request.headers.get('sec-fetch-dest', '').lower() == 'document':
+    read = store.read_open_token(token, slug)
+    viewer, thumb = read if read else ('', False)
+    # A visitor from the tailnet with no account: Tailscale has to vouch for them
+    # on every request, so their link is no use anywhere but the private address.
+    guest = None
+    if store.is_guest(viewer):
+        from cognitrix.tailscale import identity
+
+        guest = identity.visitor(request)
+        if guest is None or guest.key != viewer:
+            return _to_open_page(slug)
+    if guest is None and request.method == 'GET' and request.headers.get('sec-fetch-dest', '').lower() == 'document':
         # The link was opened on its own (a new tab, a pasted address, a popup the app opened)
         # instead of inside Cognitrix's frame. Alone, the page has nobody to ask for
         # notifications or connected apps (window.cognitrix), so show it inside Cognitrix's
@@ -604,8 +618,6 @@ async def app_request(slug: str, rest: str, request: Request):
         at = path + (f'?{request.url.query}' if request.url.query else '')
         where = f'/apps/open/{slug}?bare=1' + (f'&at={urllib.parse.quote(at, safe="")}' if at else '')
         return RedirectResponse(where, status_code=302, headers={'Cache-Control': 'no-store'})
-    read = store.read_open_token(token, slug)
-    viewer, thumb = read if read else ('', False)
     app = await store.by_slug(slug) if viewer else None
     role = store.role_of(app, viewer) if app is not None else None
     if not viewer or app is None or role is None:
@@ -643,14 +655,22 @@ async def app_request(slug: str, rest: str, request: Request):
         except Exception:
             logger.debug('visit not counted', exc_info=True)
 
-    user = await _viewer_user(viewer)
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP}
+    # Only we say who the visitor is: nothing the browser sent under these names gets through.
+    headers = {k: v for k, v in request.headers.items()
+               if k.lower() not in _HOP and not k.lower().startswith(('x-cognitrix-user-', 'tailscale-'))}
     headers.update(extra)
     prefix = f'/a/{slug}/~{token}'
+    if guest is not None:
+        # No account: the Tailscale login stands in for the id and the email.
+        who = {'X-Cognitrix-User-Id': _header_safe(guest.login), 'X-Cognitrix-User-Name': _header_safe(guest.name),
+               'X-Cognitrix-User-Email': _header_safe(guest.login), 'X-Cognitrix-User-Source': 'tailscale'}
+    else:
+        user = await _viewer_user(viewer)
+        who = {'X-Cognitrix-User-Id': _header_safe(viewer), 'X-Cognitrix-User-Name': _header_safe(user.get('name', '')),
+               'X-Cognitrix-User-Email': _header_safe(user.get('email', ''))}
     headers.update({
         'X-Forwarded-Prefix': prefix, 'X-Forwarded-Proto': request.url.scheme,
-        'X-Cognitrix-User-Id': _header_safe(viewer), 'X-Cognitrix-User-Name': _header_safe(user.get('name', '')),
-        'X-Cognitrix-User-Email': _header_safe(user.get('email', '')), 'X-Cognitrix-User-Role': role,
+        **who, 'X-Cognitrix-User-Role': role,
         'Accept-Encoding': 'identity',
     })
     query = request.url.query
@@ -684,7 +704,7 @@ async def app_request(slug: str, rest: str, request: Request):
             body = await upstream.aread()
         finally:
             await upstream.aclose()
-        return Response(bridge.inject(body), status_code=upstream.status_code, headers=out_headers,
+        return Response(bridge.inject(body, guest=guest is not None), status_code=upstream.status_code, headers=out_headers,
                         media_type=content_type)
 
     async def stream():

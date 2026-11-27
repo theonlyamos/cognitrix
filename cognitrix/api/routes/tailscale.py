@@ -3,6 +3,15 @@
 Anyone signed in may see how Tailscale stands; only an admin may change it.
 ``/tailscale/door`` is open to all: it only says which way the request came
 in, which is how an address is checked from outside.
+
+Who a visitor from the tailnet is (cognitrix/tailscale/identity.py):
+
+    GET    /tailscale/me                 the Tailscale login this request is seen as (no session needed)
+    POST   /tailscale/sign-in            sign in as the account linked to it -> {user, access_token}
+    GET    /tailscale/link               my linked login
+    PUT    /tailscale/link               link the login I am seen as to my account
+    DELETE /tailscale/link
+    GET    /tailscale/apps/{slug}        open an App shared with the tailnet, with no account -> {url}
 """
 from __future__ import annotations
 
@@ -32,7 +41,8 @@ async def _admin(ctx: AuthContext) -> None:
 
 def _answer(snapshot: dict[str, Any], can_edit: bool, request: Request) -> dict[str, Any]:
     answer = {**snapshot, 'can_edit': can_edit, 'door': doors.door_of(request),
-              'listen_local': app_settings.get_bool('COGNITRIX_LISTEN_LOCAL', False)}
+              'listen_local': app_settings.get_bool('COGNITRIX_LISTEN_LOCAL', False),
+              'signin': app_settings.get_bool('COGNITRIX_TAILSCALE_SIGNIN', False)}
     if not can_edit:
         # The sign-in page would add this machine to the tailnet of whoever opens it: admins only.
         answer['login_url'] = ''
@@ -56,6 +66,7 @@ class TailscaleBody(BaseModel):
     public_port: int | None = None
     allow: list[str] | None = None
     listen_local: bool | None = None
+    signin: bool | None = None
 
 
 @tailscale_api.put('')
@@ -83,6 +94,8 @@ async def save_tailscale(body: TailscaleBody, request: Request,
         values['COGNITRIX_TAILSCALE_FUNNEL_ALLOW'] = '\n'.join(picked or [tailscale.ALLOW_WEBHOOKS])
     if body.listen_local is not None:
         values['COGNITRIX_LISTEN_LOCAL'] = body.listen_local
+    if body.signin is not None:
+        values['COGNITRIX_TAILSCALE_SIGNIN'] = body.signin
     try:
         await asyncio.to_thread(app_settings.set_many, values)
     except ValueError as exc:
@@ -99,6 +112,8 @@ async def save_tailscale(body: TailscaleBody, request: Request,
         changed.append(f"public address {'on' if body.public else 'off'}")
     if body.allow is not None:
         changed.append('public address lets through: ' + ', '.join(sorted(tailscale.funnel_allow())))
+    if body.signin is not None:
+        changed.append(f"sign in from the tailnet {'on' if body.signin else 'off'}")
     if body.listen_local is not None:
         changed.append(f"only reachable through Tailscale {'on' if body.listen_local else 'off'}")
     audit.record('settings', 'Changed Tailscale settings', user_id=owner_key(ctx.user),
@@ -150,3 +165,76 @@ async def disconnect_tailscale(request: Request, ctx: AuthContext = Depends(jwt_
 async def check_tailscale(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     await _admin(ctx)
     return await asyncio.to_thread(service.check)
+
+
+# ---------------------------------------------------------------------------
+# Who a visitor from the tailnet is
+# ---------------------------------------------------------------------------
+
+def _identity_error(exc) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=exc.message)
+
+
+@tailscale_api.get('/me')
+async def tailscale_me(request: Request) -> dict[str, Any]:
+    """Who Tailscale says is asking. Empty unless the request came through the
+    private address. No session needed: the Login page asks."""
+    from cognitrix.tailscale import identity
+
+    return await identity.view(request)
+
+
+class TailnetSignIn(BaseModel):
+    device_name: str = Field(default='', max_length=80)
+    device_kind: str = Field(default='', max_length=20)
+
+
+@tailscale_api.post('/sign-in')
+async def tailscale_sign_in(body: TailnetSignIn, request: Request) -> dict[str, Any]:
+    from cognitrix.api.routes.auth import _signed_in_body
+    from cognitrix.tailscale import identity
+
+    try:
+        user, token = await identity.sign_in(request, name=body.device_name, kind=body.device_kind)
+    except identity.IdentityError as exc:
+        raise _identity_error(exc) from None
+    return await _signed_in_body(user, token)
+
+
+@tailscale_api.get('/link')
+async def read_link(request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.tailscale import identity
+
+    return await identity.view(request, ctx.user)
+
+
+@tailscale_api.put('/link')
+async def make_link(request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.tailscale import identity
+
+    try:
+        return await identity.link(request, ctx.user)
+    except identity.IdentityError as exc:
+        raise _identity_error(exc) from None
+
+
+@tailscale_api.delete('/link')
+async def remove_link(request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.tailscale import identity
+
+    return await identity.unlink(request, ctx.user)
+
+
+@tailscale_api.get('/apps/{slug}')
+async def open_app_as_guest(slug: str, request: Request) -> dict[str, Any]:
+    """A way in to an App for a visitor from the tailnet who has no account,
+    when its owner shared it with their login or with the whole tailnet."""
+    from cognitrix.hosted_apps import store
+    from cognitrix.tailscale import identity
+
+    seen = identity.visitor(request)
+    app = await store.by_slug(slug.lower()) if seen and store.guests_allowed() else None
+    if seen is None or app is None or store.role_of(app, seen.key) is None:
+        raise HTTPException(status_code=404, detail='Not found')
+    return {'url': store.app_path(app.slug, store.open_token(app.slug, seen.key)), 'title': app.title,
+            'login': seen.login}

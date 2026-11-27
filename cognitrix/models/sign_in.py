@@ -21,9 +21,10 @@ class SignIn(Model):
     user_agent: str = ''
     address: str = ''
     method: str = 'password'
-    """'password' | 'google' | 'github' | 'code' | 'passkey' | 'signup' | 'earlier'."""
+    """'password' | 'google' | 'github' | 'code' | 'passkey' | 'tailscale' | 'signup' | 'earlier'."""
     approved_by: str = ''
-    """For method 'code': the name of the device that made the code. For 'passkey': the passkey's name."""
+    """For method 'code': the name of the device that made the code. For 'passkey': the passkey's name.
+    For 'tailscale': the Tailscale login."""
     approved_by_sid: str = ''
     created_at: str = ''
     last_seen_at: str = ''
@@ -103,4 +104,16 @@ class PasskeyHandoff(Model):
     expires_at: int = 0
 
 
-MODELS = (SignIn, SignInCode, Passkey, PasskeyCeremony, PasskeyHandoff)
+class TailscaleLink(Model):
+    """A Tailscale login someone linked to their account, so opening Cognitrix
+    from their tailnet signs them in (cognitrix/tailscale/identity.py). One
+    account per login."""
+    user_id: str
+    login: str
+    """Lower case, as Tailscale reports it (``ada@example.com``)."""
+    name: str = ''
+    created_at: str = ''
+    last_used_at: str = ''
+
+
+MODELS = (SignIn, SignInCode, Passkey, PasskeyCeremony, PasskeyHandoff, TailscaleLink)
