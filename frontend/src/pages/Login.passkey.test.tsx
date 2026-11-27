@@ -99,4 +99,24 @@ describe('Sign in with a passkey', () => {
     await waitFor(() => expect(login).toHaveBeenCalledWith({ email: 'ada@example.com' }, 'tok'), { timeout: 4000 });
     expect(post).toHaveBeenCalledWith('/auth/passkeys/handoff/collect', { secret: 's1' });
   });
+
+  it('renews the autofill challenge before it expires', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      Object.assign(window.PublicKeyCredential, { isConditionalMediationAvailable: async () => true });
+      credentialsGet.mockImplementation(({ signal }: { signal: AbortSignal }) => new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      }));
+      post.mockResolvedValue({ data: { ceremony: 'c', options: { challenge: 'AQID', rpId: 'localhost' } } });
+      show();
+      await waitFor(() => expect(credentialsGet).toHaveBeenCalledTimes(1));
+      expect(credentialsGet.mock.calls[0][0].mediation).toBe('conditional');
+      await vi.advanceTimersByTimeAsync(4 * 60 * 1000 + 10);
+      await waitFor(() => expect(credentialsGet).toHaveBeenCalledTimes(2));
+      expect(post.mock.calls.filter(([url]) => url === '/auth/passkey-sign-in/options')).toHaveLength(2);
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -546,29 +546,47 @@ async def _open_handoff(handoff_id: str, kind: str | None = None):
     return row
 
 
+async def _register_handoff_user(row):
+    """The account a register handoff adds a passkey to, while the device that started it
+    is still signed in and the account wasn't signed out everywhere since. Signing that
+    device out (or a password change) must also stop a leaked link from adding a passkey."""
+    from cognitrix.models import User
+    from cognitrix.models.sign_in import SignIn
+
+    expired = PasskeyError('expired', 'This link has expired. Start again in the Cognitrix app.', 410)
+    user = await User.get(row.user_id)
+    if user is None or getattr(user, 'disabled', None):
+        raise expired
+    made_at = int(row.expires_at or 0) - HANDOFF_TTL_S
+    cutoff = int(getattr(user, 'tokens_valid_after', 0) or 0)
+    if cutoff and made_at < cutoff:
+        raise expired
+    if row.made_by_sid:
+        started_by = await SignIn.find_one({'sid': row.made_by_sid})
+        if started_by is None or started_by.ended_at or str(started_by.user_id) != str(user.id):
+            raise expired
+    return user
+
+
 async def handoff_info(request, handoff_id: str) -> dict[str, Any]:
     """What the browser page shows: which step, and for adding a passkey, whose account."""
-    from cognitrix.models import User
 
     _require_handoffs(request)
     row = await _open_handoff(handoff_id)
     out: dict[str, Any] = {'kind': row.kind, 'expires_in': int(row.expires_at) - _now()}
     if row.kind == 'register':
-        user = await User.get(row.user_id)
-        out['account'] = str(getattr(user, 'email', '') or '') if user is not None else ''
+        user = await _register_handoff_user(row)
+        out['account'] = str(getattr(user, 'email', '') or '')
     return out
 
 
 async def handoff_options(request, handoff_id: str) -> dict[str, Any]:
-    from cognitrix.models import User
     from cognitrix.models.sign_in import PasskeyHandoff
 
     _require_handoffs(request)
     row = await _open_handoff(handoff_id)
     if row.kind == 'register':
-        user = await User.get(row.user_id)
-        if user is None or getattr(user, 'disabled', None):
-            raise PasskeyError('expired', 'This link has expired. Start again in the Cognitrix app.', 410)
+        user = await _register_handoff_user(row)
         out = await registration_options(user, request, handoff_id=row.handoff_id)
     else:
         out = await sign_in_options(request, handoff_id=row.handoff_id)
@@ -580,7 +598,6 @@ async def handoff_finish(request, handoff_id: str, ceremony_id: str, credential:
                          name: str = '') -> dict[str, Any]:
     """The browser finished the passkey step for the app. The app collects the result."""
     from cognitrix import audit, signins
-    from cognitrix.models import User
     from cognitrix.models.sign_in import PasskeyCeremony, PasskeyHandoff
 
     _require_handoffs(request)
@@ -589,9 +606,7 @@ async def handoff_finish(request, handoff_id: str, ceremony_id: str, credential:
     if ceremony is None or ceremony.handoff_id != row.handoff_id:
         raise PasskeyError('expired', 'That passkey request expired. Try again.')
     if row.kind == 'register':
-        user = await User.get(row.user_id)
-        if user is None:
-            raise PasskeyError('expired', 'This link has expired. Start again in the Cognitrix app.', 410)
+        user = await _register_handoff_user(row)
         passkey = await register(user, request, ceremony_id, credential, name)
         await PasskeyHandoff.update_one({'handoff_id': row.handoff_id},
                                         {'status': 'done', 'passkey_id': passkey['id']})

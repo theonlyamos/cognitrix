@@ -24,6 +24,9 @@ function formatCode(value: string): string {
   return raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
 }
 
+/** Fresh autofill challenge before the server's 5 minutes run out. */
+const AUTOFILL_RENEW_MS = 4 * 60 * 1000;
+
 const GRID = {
   backgroundImage:
     'linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px)',
@@ -84,20 +87,33 @@ export default function Login() {
     navigate(takeAfterSignIn());
   };
 
-  // The browser offers saved passkeys in the email field's autofill.
+  // The browser offers saved passkeys in the email field's autofill. The
+  // server's challenge lasts 5 minutes, so a page left open gets a fresh one
+  // every 4 minutes (and after an expired answer) instead of going dead.
   useEffect(() => {
     if (!options.passkeys || !passkeyHere || mode !== 'password') return;
-    const ctrl = new AbortController();
-    autofill.current = ctrl;
-    autofillAvailable().then((ok) => {
-      if (!ok || ctrl.signal.aborted) return;
+    const page = new AbortController();
+    autofill.current = page;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const round = () => {
+      if (page.signal.aborted) return;
+      const ctrl = new AbortController();
+      page.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+      clearTimeout(timer);
+      timer = setTimeout(() => { ctrl.abort(); round(); }, AUTOFILL_RENEW_MS);
       signInWithPasskey({ conditional: true, signal: ctrl.signal }).then(signedIn).catch((err) => {
+        if (page.signal.aborted || ctrl.signal.aborted) return;
         // Only the server's answer is worth showing here: the browser's own autofill
         // errors (no passkey, prompt dismissed) are not something the person asked for.
-        if (!ctrl.signal.aborted && axios.isAxiosError(err)) setError(errorMessage(err, tr('ui.login.thatPasskeyDidNotWork')));
+        if (axios.isAxiosError(err)) {
+          const detail = String((err.response?.data as { detail?: string })?.detail ?? '');
+          if (/expired/i.test(detail)) { round(); return; }
+          setError(errorMessage(err, tr('ui.login.thatPasskeyDidNotWork')));
+        }
       });
-    });
-    return () => ctrl.abort();
+    };
+    autofillAvailable().then((ok) => { if (ok) round(); });
+    return () => { clearTimeout(timer); page.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options.passkeys, passkeyHere, mode]);
 

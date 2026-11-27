@@ -316,3 +316,27 @@ async def test_options_say_what_the_sign_in_page_offers(world, monkeypatch):
     assert opts['passkeys'] is True and opts['passkey_handoff'] is False
     monkeypatch.setenv('COGNITRIX_DESKTOP', '1')
     assert (await auth.auth_options())['passkey_handoff'] is True
+
+
+async def test_register_link_stops_when_its_device_is_signed_out(world, monkeypatch):
+    from cognitrix import signins
+    from cognitrix.api.routes import passkeys as routes
+
+    monkeypatch.setenv('COGNITRIX_DESKTOP', '1')
+    app = _request(origin='http://127.0.0.1:48210', host='127.0.0.1:48210', ip='127.0.0.1')
+    browser = _request(origin='http://localhost:48210', host='localhost:48210', ip='127.0.0.1')
+    laptop = await _login()
+    handoff = await routes.start_register_handoff(routes.StartHandoff(), app, laptop)
+    await signins.end(str(world.ada.id), laptop.sid)
+    for call in (routes.handoff_info, routes.handoff_options):
+        with pytest.raises(HTTPException) as gone:
+            await call(handoff['handoff'], browser)
+        assert gone.value.status_code == 410
+
+    # Signed out everywhere (password change) after the link was made: also dead.
+    other = await _login()
+    handoff = await routes.start_register_handoff(routes.StartHandoff(), app, other)
+    from cognitrix.models import User
+    await User.update_one({'id': world.ada.id}, {'tokens_valid_after': int(__import__('time').time()) + 5})
+    with pytest.raises(HTTPException):
+        await routes.handoff_options(handoff['handoff'], browser)
