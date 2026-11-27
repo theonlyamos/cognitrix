@@ -36,6 +36,7 @@ const CreateApp = lazy(() => import('@/pages/CreateApp'));
 const OpenApp = lazy(() => import('@/pages/OpenApp'));
 const ArtifactPage = lazy(() => import('@/pages/ArtifactPage'));
 const PublicArtifact = lazy(() => import('@/pages/PublicArtifact'));
+const PasskeyHandoff = lazy(() => import('@/pages/PasskeyHandoff'));
 const Projects = lazy(() => import('@/pages/Projects'));
 const ProjectDetail = lazy(() => import('@/pages/ProjectDetail'));
 const Meetings = lazy(() => import('@/pages/Meetings'));
@@ -95,6 +96,8 @@ function AppRoutes() {
         <Route path="/setup" element={<PublicRoute><ServerSetup /></PublicRoute>} />
         <Route path="/oauth/complete" element={<OAuthComplete />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        {/* The desktop app's passkey step, opened in the default browser. */}
+        <Route path="/passkey" element={<PasskeyHandoff />} />
         {/* A public artifact link: readable signed out. */}
         <Route path="/s/:token" element={<PublicArtifact />} />
         {/* The desktop app's Alt+Space window: no app shell around it. */}

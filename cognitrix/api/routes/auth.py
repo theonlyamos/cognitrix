@@ -200,6 +200,9 @@ async def auth_options(invite: str | None = None):
         'signup_open': await _signup_open() or valid_invite,
         'password_reset_by_email': _reset_by_email_ready(),
         'code_sign_in': signins_on(),
+        'passkeys': _passkeys_on(),
+        # The desktop app's window can't use passkeys; it does the step in the browser.
+        'passkey_handoff': _passkeys_on() and _desktop_engine(),
         'server_setup': await _server_setup_pending(),
     }
 
@@ -208,6 +211,16 @@ async def _server_setup_pending() -> bool:
     from cognitrix.api.routes.server_setup import setup_pending
 
     return await setup_pending()
+
+
+def _passkeys_on() -> bool:
+    from cognitrix.passkeys import passkeys_on
+    return passkeys_on()
+
+
+def _desktop_engine() -> bool:
+    from cognitrix.passkeys import on_desktop_engine
+    return on_desktop_engine()
 
 
 def signins_on() -> bool:

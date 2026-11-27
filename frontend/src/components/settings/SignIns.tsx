@@ -10,6 +10,7 @@ import {
 import { timeAgo } from '@/lib/agentDraft';
 import { Group, SettingRow, StatusPill, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { tr } from '@/lib/i18n';
+import { PasskeysSettings } from '@/components/settings/Passkeys';
 import { cn } from '@/lib/utils';
 
 function DeviceIcon({ device }: { device: SignInDevice }) {
@@ -31,6 +32,7 @@ function methodText(d: SignInDevice): string {
     case 'code': return d.linked_pc
       ? tr('ui.signIns.linkedWithACodeFrom', { name: d.approved_by || tr('ui.signIns.anotherDevice') })
       : tr('ui.signIns.signedInWithACodeFrom', { name: d.approved_by || tr('ui.signIns.anotherDevice') });
+    case 'passkey': return d.approved_by ? tr('ui.settings.signIns.signedInWithAPasskey', { approved_by: d.approved_by }) : tr('ui.settings.signIns.signedInWithAPasskey_4d2a');
     case 'pairing': return tr('ui.signIns.linkedWithAPairingCode');
     case 'earlier': return tr('ui.signIns.signedInBeforeThisList');
     default: return '';
@@ -267,6 +269,8 @@ export function SignInsSettings() {
           </button>
         </SettingRow>
       </Group>
+
+      <PasskeysSettings />
 
       <div className="mb-2 mt-7 flex items-center justify-between gap-3">
         <SubHeading className="mb-0 mt-0">{tr('ui.signIns.signedIn')}{data ? ` · ${data.sign_ins.length}` : ''}</SubHeading>

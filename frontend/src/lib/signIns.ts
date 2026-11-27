@@ -5,9 +5,9 @@ export interface SignInDevice {
   id: string;
   name: string;
   kind: 'browser' | 'desktop' | 'cli';
-  /** How it signed in: 'password' | 'google' | 'github' | 'code' | 'earlier'. */
+  /** How it signed in: 'password' | 'google' | 'github' | 'code' | 'passkey' | 'earlier'. */
   method: string;
-  /** For a code: the device that made it. */
+  /** For a code: the device that made it. For a passkey: the passkey's name. */
   approved_by: string;
   address: string;
   created_at: string;
