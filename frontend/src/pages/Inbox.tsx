@@ -403,16 +403,48 @@ type InboxTab = 'needs' | 'recent';
 
 /** One place for what agents send you: what is waiting on an answer, and what happened lately. */
 export default function Inbox() {
-  const { inbox, inboxLoaded, refreshInbox, unread } = useNotifications();
+  const { inbox, inboxLoaded, refreshInbox, openInboxItem, unread } = useNotifications();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // An alert you opened is marked read right away, so it leaves "Needs you".
+  // It stays on screen (and in its place in the list) until you move on.
+  const [opened, setOpened] = useState<{ item: InboxItem; index: number } | null>(null);
   const [params, setParams] = useSearchParams();
   const tab: InboxTab = params.get('tab') === 'recent' ? 'recent' : 'needs';
   const setTab = (next: InboxTab) => setParams(next === 'recent' ? { tab: 'recent' } : {}, { replace: true });
 
-  const selected = useMemo(() => inbox.find((i) => i.id === selectedId) ?? inbox[0] ?? null, [inbox, selectedId]);
+  const items = useMemo(() => {
+    if (!opened || inbox.some((i) => i.id === opened.item.id)) return inbox;
+    const list = [...inbox];
+    list.splice(Math.min(opened.index, list.length), 0, opened.item);
+    return list;
+  }, [inbox, opened]);
+  const selected = useMemo(() => items.find((i) => i.id === selectedId) ?? inbox[0] ?? null, [items, inbox, selectedId]);
+
+  const open = (item: InboxItem) => {
+    setSelectedId(item.id);
+    if (item.kind === 'notification') {
+      setOpened({ item, index: Math.max(0, inbox.findIndex((i) => i.id === item.id)) });
+      openInboxItem(item);
+    } else {
+      setOpened(null);
+    }
+  };
+
+  // /inbox?item=<id> opens that item (the Dashboard links alerts here).
+  const wanted = params.get('item');
+  useEffect(() => {
+    if (!wanted || !inboxLoaded) return;
+    const item = inbox.find((i) => i.id === wanted);
+    if (item) open(item);
+    const next = new URLSearchParams(params);
+    next.delete('item');
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted, inboxLoaded]);
 
   const done = () => {
     setSelectedId(null);
+    setOpened(null);
     void refreshInbox();
   };
 
@@ -432,7 +464,7 @@ export default function Inbox() {
       </ListToolbar>
       {tab === 'recent' ? (
         <div className="min-h-0 flex-1 overflow-y-auto"><RecentNotifications /></div>
-      ) : inboxLoaded && inbox.length === 0 ? (
+      ) : inboxLoaded && items.length === 0 ? (
         <div className="grid min-h-0 flex-1 place-items-center px-6 text-center">
           <div>
             <div className="text-[15px] font-medium">{tr('ui.inbox.youReAllCaughtUp')}</div>
@@ -447,11 +479,11 @@ export default function Inbox() {
           >
             <ul className="flex-1 overflow-y-auto p-2">
               {!inboxLoaded && <LoadingState label={tr('ui.inbox.loadingInbox')} />}
-              {inbox.map((item) => (
+              {items.map((item) => (
                 <li key={item.id}>
                   <button
                     type="button"
-                    onClick={() => setSelectedId(item.id)}
+                    onClick={() => open(item)}
                     aria-current={selected?.id === item.id ? 'true' : undefined}
                     className={cn(
                       'mb-1 w-full rounded-[10px] border px-3 py-3 text-left transition-colors',

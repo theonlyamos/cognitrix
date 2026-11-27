@@ -164,6 +164,10 @@ interface NotificationsContextValue {
   inbox: InboxItem[];
   inboxLoaded: boolean;
   refreshInbox: () => Promise<void>;
+  /** The person opened an inbox item. A plain alert is then done: it is marked
+   * read so it leaves "Needs you". Items that still wait on an answer
+   * (approvals, questions, offers, skills to review) stay until answered. */
+  openInboxItem: (item: InboxItem) => void;
   markAllRead: () => void;
   markRead: (id: string) => void;
   dismiss: (id: string) => void;
@@ -217,6 +221,9 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   prefsRef.current = prefs;
   const seenInbox = useRef<Set<string> | null>(null);
   const inboxRef = useRef<InboxItem[]>([]);
+  // Alerts opened in this app: kept out of the list while their "read" call
+  // is on its way, so a poll that started earlier doesn't bring them back.
+  const openedAlerts = useRef<Set<string>>(new Set());
   const taskStatus = useRef<Map<string, string> | null>(null);
 
   // Switch to the new account's history when the sign-in changes.
@@ -273,7 +280,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const refreshInbox = useCallback(async () => {
     try {
       const { data } = await api.get<{ items: InboxItem[] }>('/inbox');
-      const items = data.items ?? [];
+      const opened = openedAlerts.current;
+      const items = (data.items ?? []).filter((i) => !(i.kind === 'notification' && opened.has(i.id)));
       setInbox(items);
       setInboxLoaded(true);
       // First load only records what's there; later loads notify on new items.
@@ -412,6 +420,17 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     return () => stop?.();
   }, [push, refreshInbox]);
 
+  const openInboxItem = useCallback((item: InboxItem) => {
+    if (item.kind !== 'notification') return;
+    const drop = (list: InboxItem[]) => list.filter((i) => !(i.kind === 'notification' && i.id === item.id));
+    openedAlerts.current.add(item.id);
+    inboxRef.current = drop(inboxRef.current);
+    setInbox(drop);
+    void api.post(`/notifications/${encodeURIComponent(item.id)}/read`)
+      .catch(() => { /* already read or gone: it's out of the list either way */ })
+      .finally(() => void refreshInbox().finally(() => openedAlerts.current.delete(item.id)));
+  }, [refreshInbox]);
+
   const markAllRead = useCallback(() => setNotifications((list) => list.map((n) => ({ ...n, read: true }))), []);
   const markRead = useCallback((id: string) => setNotifications((list) => list.map((n) => (n.id === id ? { ...n, read: true } : n))), []);
   const dismiss = useCallback((id: string) => setNotifications((list) => list.filter((n) => n.id !== id)), []);
@@ -427,6 +446,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       inbox,
       inboxLoaded,
       refreshInbox,
+      openInboxItem,
       markAllRead,
       markRead,
       dismiss,
@@ -437,7 +457,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       dismissToast,
       engine,
     }),
-    [notifications, inbox, inboxLoaded, refreshInbox, markAllRead, markRead, dismiss, prefs, setPref, push, toasts, dismissToast, engine],
+    [notifications, inbox, inboxLoaded, refreshInbox, openInboxItem, markAllRead, markRead, dismiss, prefs, setPref, push, toasts, dismissToast, engine],
   );
 
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;

@@ -83,3 +83,27 @@ describe('system notifications', () => {
     expect(systemNotify).not.toHaveBeenCalled();
   });
 });
+
+describe('opening inbox items', () => {
+  it('marks an alert read and drops it from the inbox, but leaves approvals', async () => {
+    const { api } = await import('@/lib/api');
+    const alert = { kind: 'notification', id: 'n1', title: 'Backup finished' };
+    const approval = { kind: 'approval', source: 'chat', id: 'ap1', tool_name: 'Shell' };
+    let items: unknown[] = [approval, alert];
+    vi.mocked(api.get).mockImplementation(async (path: string) => ({ data: path === '/inbox' ? { items } : [] }));
+    vi.mocked(api.post).mockImplementation(async () => {
+      items = [approval];
+      return { data: { read: true } };
+    });
+    render(<NotificationsProvider><Probe /></NotificationsProvider>);
+    await waitFor(() => expect(ctx.inbox).toHaveLength(2));
+    act(() => ctx.openInboxItem(ctx.inbox[0]));
+    expect(api.post).not.toHaveBeenCalled();
+    expect(ctx.inbox).toHaveLength(2);
+    act(() => ctx.openInboxItem(ctx.inbox[1]));
+    expect(ctx.inbox.map((i) => i.id)).toEqual(['ap1']);
+    expect(api.post).toHaveBeenCalledWith('/notifications/n1/read');
+    await waitFor(() => expect(vi.mocked(api.get).mock.calls.filter(([p]) => p === '/inbox').length).toBeGreaterThan(1));
+    expect(ctx.inbox.map((i) => i.id)).toEqual(['ap1']);
+  });
+});
