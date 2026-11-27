@@ -28,6 +28,8 @@ class PairedDevice(Model):
     """Naive UTC 'YYYY-MM-DD HH:MM:SS'."""
     sign_in_sid: str = ''
     """The Sign-ins row (cognitrix/signins.py) this PC's link shows as; signing it out unpairs the PC."""
+    tailnet_node: str = ''
+    """The machine's name on the tailnet, when it paired through the Tailscale private address."""
     sent_tasks: str = ''
     """Comma separated ids of tasks this PC handed to the web account (newest last, at most 50)."""
 

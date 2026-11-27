@@ -99,6 +99,38 @@ async def pair_code_status(code: str, ctx: AuthContext = Depends(jwt_only)) -> d
     return out
 
 
+@devices_api.get('/pair-requests')
+async def pair_requests(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """PCs on my tailnet waiting for my yes."""
+    from cognitrix.computer.paired.store import requests_of
+
+    return {'requests': requests_of(_user_id(ctx))}
+
+
+async def _decide(request_id: str, approve: bool, ctx: AuthContext) -> dict[str, Any]:
+    from cognitrix import audit
+    from cognitrix.computer.paired.store import PairingError, decide_request, requests_of
+
+    try:
+        item = await decide_request(_user_id(ctx), request_id, approve, ctx.sid)
+    except PairingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from None
+    audit.record('settings', f"{'Approved' if approve else 'Declined'} the PC {item['name']} asking to pair "
+                             f"(Tailscale login {item['login']})",
+                 user_id=_user_id(ctx), actor=str(getattr(ctx.user, 'email', '') or ''), outcome='ok')
+    return {'requests': requests_of(_user_id(ctx))}
+
+
+@devices_api.post('/pair-requests/{request_id}/approve')
+async def approve_pair_request(request_id: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    return await _decide(request_id, True, ctx)
+
+
+@devices_api.post('/pair-requests/{request_id}/deny')
+async def deny_pair_request(request_id: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    return await _decide(request_id, False, ctx)
+
+
 class RenameBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
 
@@ -395,7 +427,7 @@ async def claim_code(body: ClaimBody, request: Request) -> dict[str, Any]:
 async def pair_device(body: PairBody, request: Request) -> dict[str, Any]:
     from cognitrix.computer.paired.store import PairingError, pair, pair_with_sign_in_code
     args = dict(name=body.name, platform=body.platform, folders=body.folders, powers=body.powers,
-                version=body.version, client=body.client)
+                version=body.version, client=body.client, tailnet_node=await _tailnet_node(request))
     try:
         try:
             device, token = await pair(body.code, _address(request), **args)
@@ -410,7 +442,141 @@ async def pair_device(body: PairBody, request: Request) -> dict[str, Any]:
         raise _pairing_error(exc) from None
     from cognitrix import audit
     audit.record('settings', f'Paired the PC {device.name}', user_id=str(device.user_id), outcome='ok')
-    return {'device_id': str(device.id), 'token': token, 'name': device.name}
+    return {'device_id': str(device.id), 'token': token, 'name': device.name, 'addresses': _own_addresses()}
+
+
+def _own_addresses() -> list[str]:
+    """Where this server answers, best first: the PC keeps them all, so the link
+    survives one going away. The Tailscale private address, then the public one."""
+    from cognitrix.common import addresses
+
+    out = []
+    for url in (addresses.private_url(), addresses.configured()):
+        if url and url not in out:
+            out.append(url)
+    return out
+
+
+async def _tailnet_node(request: Request) -> str:
+    """The calling machine's name on the tailnet, when it came through the Tailscale private address."""
+    from cognitrix.tailscale import cli, doors
+
+    if doors.door_of(request) != doors.TAILNET:
+        return ''
+    try:
+        who = await asyncio.to_thread(cli.whois, _address(request))
+        node = (who or {}).get('Node') or {}
+        return str(node.get('ComputedName') or str(node.get('Name') or '').split('.')[0])[:80]
+    except Exception:  # noqa: BLE001 - a name to show, nothing more
+        return ''
+
+
+# ---- Pairing without a code (a PC on the tailnet asks; its owner approves on the web) ----
+
+@devices_api.get('/hello')
+async def hello(request: Request) -> dict[str, Any]:
+    """Asked by a PC looking for its server on the tailnet: is this Cognitrix?
+    Open to all, and says nothing but the app's name and version, and whether
+    the PC asking could pair without a code."""
+    from cognitrix.config import VERSION
+    from cognitrix.tailscale import identity
+
+    seen = await identity.view(request)
+    return {'app': 'cognitrix', 'version': VERSION, 'ask_to_pair': bool(seen['can_sign_in'])}
+
+
+class AskBody(BaseModel):
+    name: str = Field(default='', max_length=80)
+    platform: str = Field(default='', max_length=80)
+    client: str = Field(default='', max_length=20)
+
+
+class AskSecret(BaseModel):
+    secret: str = Field(max_length=100)
+
+
+class AskPairBody(AskSecret):
+    name: str = Field(default='', max_length=80)
+    platform: str = Field(default='', max_length=80)
+    folders: list[Any] = Field(default_factory=list, max_length=50)
+    powers: list[str] = Field(default_factory=list, max_length=5)
+    version: str = Field(default='', max_length=40)
+    client: str = Field(default='', max_length=20)
+
+
+async def _asking_login(request: Request) -> str:
+    """The Tailscale login of the PC asking. Only the Tailscale private address knows it."""
+    from cognitrix.tailscale import identity
+
+    seen = identity.visitor(request)
+    if seen is None or not identity.signin_on():
+        raise HTTPException(status_code=404, detail={
+            'code': 'no_tailnet', 'message': 'Pairing without a code only works at the server\'s Tailscale '
+                                             'address, with "Sign in from the tailnet" turned on. Use a code.'})
+    return seen.login
+
+
+@devices_api.post('/pair-requests')
+async def ask_to_pair(body: AskBody, request: Request) -> dict[str, Any]:
+    from cognitrix.computer.paired.store import PairingError, make_request
+    from cognitrix.models import User
+    from cognitrix.tailscale import identity
+
+    login = await _asking_login(request)
+    row = await identity.link_of_login(login)
+    user = await User.get(row.user_id) if row is not None else None
+    if user is None or getattr(user, 'disabled', None):
+        raise HTTPException(status_code=404, detail={
+            'code': 'no_link', 'message': f'No account here is linked to the Tailscale login {login}. Link it on '
+                                          'the web (Settings, Sign-ins), or pair with a code.'})
+    account = ' · '.join(p for p in (str(user.name or '').strip(), str(user.email or '').strip()) if p)[:160]
+    try:
+        item, secret = make_request(str(user.id), account or 'your account', login=login,
+                                    node=await _tailnet_node(request), address=_address(request),
+                                    name=body.name, platform=body.platform, client=body.client)
+    except PairingError as exc:
+        raise _pairing_error(exc) from None
+    try:
+        from cognitrix.tasks.automation import create_notification
+
+        await create_notification(
+            str(user.id), f'{item.name} wants to pair',
+            f'A PC on your tailnet ({item.node or item.address}, signed in to Tailscale as {login}) asked to be '
+            'paired with your account. Approve it only if you just asked for this.',
+            link='/settings/computers', urgent=True)
+    except Exception:  # noqa: BLE001 - the request still shows under Settings, Computers
+        logger.debug('could not notify about a pairing request', exc_info=True)
+    return {'request_id': item.id, 'secret': secret, 'account': item.account,
+            'expires_in': int(item.expires - time.time())}
+
+
+@devices_api.post('/pair-requests/{request_id}/status')
+async def ask_status(request_id: str, body: AskSecret, request: Request) -> dict[str, Any]:
+    from cognitrix.computer.paired.store import PairingError, request_status
+
+    login = await _asking_login(request)
+    try:
+        return request_status(request_id, body.secret, login, _address(request))
+    except PairingError as exc:
+        raise _pairing_error(exc) from None
+
+
+@devices_api.post('/pair-requests/{request_id}/pair')
+async def pair_approved_device(request_id: str, body: AskPairBody, request: Request) -> dict[str, Any]:
+    from cognitrix.computer.paired.store import PairingError, pair_approved
+
+    login = await _asking_login(request)
+    try:
+        device, token = await pair_approved(
+            request_id, body.secret, login, _address(request), name=body.name, platform=body.platform,
+            folders=body.folders, powers=body.powers, version=body.version, client=body.client)
+    except PairingError as exc:
+        raise _pairing_error(exc) from None
+    from cognitrix import audit
+
+    audit.record('settings', f'Paired the PC {device.name} (asked from the tailnet as {login})',
+                 user_id=str(device.user_id), outcome='ok')
+    return {'device_id': str(device.id), 'token': token, 'name': device.name, 'addresses': _own_addresses()}
 
 
 @devices_api.websocket('/connect')
@@ -557,6 +723,101 @@ async def make_link(body: LinkBody, ctx: AuthContext = Depends(jwt_only)) -> dic
                    client='desktop')
     except LinkError as exc:
         raise _link_error(exc) from None
+    connector = get_connector()
+    await connector.stop()
+    connector.start()
+    await asyncio.sleep(0.5)
+    return _link_view()
+
+
+# ---- This PC and a server on the same tailnet: find it, and pair without a code ----
+
+@link_api.get('/find')
+async def find_servers(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Cognitrix servers on this PC's tailnet (asks each machine a small question)."""
+    _desktop_only()
+    from cognitrix.computer.paired import tailnet
+    try:
+        return {'servers': await tailnet.find_servers()}
+    except LookupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+# The request this PC is waiting on. Its secret stays in the engine.
+_asked: dict[str, Any] = {}
+
+
+class AskServerBody(BaseModel):
+    server: str = Field(max_length=300)
+    name: str = Field(default='', max_length=80)
+
+
+def _asked_view(status: str = '') -> dict[str, Any]:
+    if not _asked:
+        return {'status': 'none', 'server': '', 'account': ''}
+    return {'status': status or _asked.get('status') or 'pending', 'server': _asked['server'],
+            'account': _asked.get('account') or ''}
+
+
+@link_api.post('/ask')
+async def ask_server(body: AskServerBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Ask a server on the tailnet to pair this PC; its owner approves on the web."""
+    _desktop_only()
+    from cognitrix.computer.paired.connector import LinkError, ask
+    try:
+        asked = await ask(body.server, name=body.name, client='desktop')
+    except LinkError as exc:
+        raise _link_error(exc) from None
+    _asked.clear()
+    _asked.update(asked, status='pending')
+    return _asked_view()
+
+
+@link_api.get('/ask')
+async def asked_status(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    _desktop_only()
+    from cognitrix.computer.paired.connector import LinkError, ask_status
+    if not _asked:
+        return _asked_view()
+    try:
+        now = await ask_status(_asked)
+    except LinkError as exc:
+        if exc.code == 'gone':
+            _asked.clear()
+            return {'status': 'expired', 'server': '', 'account': ''}
+        raise _link_error(exc) from None
+    _asked.update(status=now['status'], account=now['account'])
+    view = _asked_view()
+    if now['status'] in ('denied', 'expired', 'used'):
+        _asked.clear()
+    return view
+
+
+@link_api.delete('/ask')
+async def forget_asked(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    _desktop_only()
+    _asked.clear()
+    return _asked_view()
+
+
+class AskFinishBody(BaseModel):
+    name: str = Field(default='', max_length=80)
+    folders: list[Any] = Field(default_factory=list, max_length=50)
+    powers: list[str] = Field(default_factory=list, max_length=5)
+
+
+@link_api.post('/ask/finish')
+async def finish_asked(body: AskFinishBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """The request was approved: share the chosen folders and save the link."""
+    _desktop_only()
+    from cognitrix.computer.paired.connector import LinkError, get_connector, link_approved
+    if not _asked:
+        raise HTTPException(status_code=400, detail='There is no pairing request to finish. Ask again.')
+    try:
+        await link_approved(_asked, name=body.name, folders=body.folders, powers=body.powers, client='desktop')
+    except LinkError as exc:
+        raise _link_error(exc) from None
+    _asked.clear()
     connector = get_connector()
     await connector.stop()
     connector.start()

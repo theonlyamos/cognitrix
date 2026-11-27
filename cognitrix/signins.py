@@ -386,6 +386,22 @@ def normalize(code: Any) -> str:
     return normalize_code(code)
 
 
+def _new_from_a_code(row) -> bool:
+    created = _parse(row.created_at)
+    return row.method == 'code' and created is not None and \
+        (datetime.now(UTC) - created).total_seconds() < NEW_DEVICE_WAIT_S
+
+
+async def new_from_a_code(sid: str) -> bool:
+    """True for a device that itself signed in with a code less than a day ago.
+    Such a device can't let further devices in (a code, a PC's pairing request):
+    one stolen code must not turn into a chain of them."""
+    from cognitrix.models.sign_in import SignIn
+
+    row = await SignIn.find_one({'sid': sid}) if sid else None
+    return row is not None and _new_from_a_code(row)
+
+
 async def make_code(user, sid: str = '', server: str = '') -> dict[str, Any]:
     """A one-time code another device can sign in with."""
     from cognitrix.models.sign_in import SignIn, SignInCode
@@ -397,9 +413,7 @@ async def make_code(user, sid: str = '', server: str = '') -> dict[str, Any]:
         row = await SignIn.find_one({'sid': sid})
         if row is not None:
             made_by = row.name
-            created = _parse(row.created_at)
-            if row.method == 'code' and created is not None and \
-                    (datetime.now(UTC) - created).total_seconds() < NEW_DEVICE_WAIT_S:
+            if _new_from_a_code(row):
                 raise SignInError(
                     'too_new',
                     'This device signed in with a code less than a day ago, so it can\'t make one yet. '
