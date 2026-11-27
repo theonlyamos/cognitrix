@@ -221,9 +221,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   prefsRef.current = prefs;
   const seenInbox = useRef<Set<string> | null>(null);
   const inboxRef = useRef<InboxItem[]>([]);
-  // Alerts opened in this app: kept out of the list while their "read" call
-  // is on its way, so a poll that started earlier doesn't bring them back.
-  const openedAlerts = useRef<Set<string>>(new Set());
+  // Bumped when an alert is opened and again when its "read" call ends. An
+  // /inbox answer from a request that started before the latest bump may still
+  // list that alert, so it is thrown away (polls can overlap).
+  const inboxEpoch = useRef(0);
   const taskStatus = useRef<Map<string, string> | null>(null);
 
   // Switch to the new account's history when the sign-in changes.
@@ -279,9 +280,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
   const refreshInbox = useCallback(async () => {
     try {
+      const epoch = inboxEpoch.current;
       const { data } = await api.get<{ items: InboxItem[] }>('/inbox');
-      const opened = openedAlerts.current;
-      const items = (data.items ?? []).filter((i) => !(i.kind === 'notification' && opened.has(i.id)));
+      if (epoch !== inboxEpoch.current) return;
+      const items = data.items ?? [];
       setInbox(items);
       setInboxLoaded(true);
       // First load only records what's there; later loads notify on new items.
@@ -423,12 +425,15 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const openInboxItem = useCallback((item: InboxItem) => {
     if (item.kind !== 'notification') return;
     const drop = (list: InboxItem[]) => list.filter((i) => !(i.kind === 'notification' && i.id === item.id));
-    openedAlerts.current.add(item.id);
+    inboxEpoch.current += 1;
     inboxRef.current = drop(inboxRef.current);
     setInbox(drop);
     void api.post(`/notifications/${encodeURIComponent(item.id)}/read`)
-      .catch(() => { /* already read or gone: it's out of the list either way */ })
-      .finally(() => void refreshInbox().finally(() => openedAlerts.current.delete(item.id)));
+      .catch(() => { /* already read or gone: the next refresh shows the truth */ })
+      .finally(() => {
+        inboxEpoch.current += 1;
+        void refreshInbox();
+      });
   }, [refreshInbox]);
 
   const markAllRead = useCallback(() => setNotifications((list) => list.map((n) => ({ ...n, read: true }))), []);

@@ -107,3 +107,41 @@ describe('opening inbox items', () => {
     expect(ctx.inbox.map((i) => i.id)).toEqual(['ap1']);
   });
 });
+
+describe('a slow poll after an alert is opened', () => {
+  it('does not bring the alert back', async () => {
+    const { api } = await import('@/lib/api');
+    const alert = { kind: 'notification', id: 'n2', title: 'Report ready' };
+    let unread = true;
+    let hold = false;
+    let release: (() => void) | undefined;
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path !== '/inbox') return { data: [] };
+      const items = unread ? [alert] : [];
+      if (hold) {
+        // A poll that read the inbox before the alert was opened, and answers late.
+        hold = false;
+        await new Promise<void>((resolve) => { release = resolve; });
+      }
+      return { data: { items } };
+    });
+    vi.mocked(api.post).mockReset();
+    vi.mocked(api.post).mockImplementation(async () => {
+      unread = false;
+      return { data: { read: true } };
+    });
+    render(<NotificationsProvider><Probe /></NotificationsProvider>);
+    await waitFor(() => expect(ctx.inbox).toHaveLength(1));
+    hold = true;
+    let slow: Promise<void> | undefined;
+    act(() => { slow = ctx.refreshInbox(); });
+    expect(release).toBeDefined();
+    act(() => ctx.openInboxItem(ctx.inbox[0]));
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    await act(async () => {
+      release?.();
+      await slow;
+    });
+    expect(ctx.inbox).toHaveLength(0);
+  });
+});
