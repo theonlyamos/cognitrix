@@ -241,11 +241,15 @@ def _validate_secret_free_tool_schema(value: Any) -> None:
 # values are filled in when the request is sent and never reach the model or
 # the run record. Bash and Run Tests take saved sign-in *names* in
 # ``credentials``; the values are added to the sandbox command's environment
-# when it runs. Each parameter's own schema is still checked.
+# when it runs. Publish App takes the *names* of saved sign-ins and of secrets
+# the app would like in ``credentials`` and ``secrets``; they only ask, and the
+# owner allows them and types any value on the app's Access tab. Each
+# parameter's own schema is still checked.
 _VETTED_SECRET_LIKE_PARAMETERS: dict[str, frozenset[str]] = {
     "Http Request": frozenset({"headers", "credential"}),
     "Bash": frozenset({"credentials"}),
     "Run Tests": frozenset({"credentials"}),
+    "Publish App": frozenset({"credentials", "secrets"}),
 }
 
 
