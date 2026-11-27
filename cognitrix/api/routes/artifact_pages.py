@@ -574,9 +574,14 @@ async def _my_apps(me: str) -> list:
     return [config_from_row(r) for r in rows if getattr(r, 'enabled', True)]
 
 
-async def _apps_list(me: str, include_changes: bool = False) -> list[dict[str, Any]]:
+async def _apps_list(me: str, include_changes: bool = False, *, configs: list | None = None,
+                     changes_for: set[str] | None = None) -> list[dict[str, Any]]:
     """The viewer's connected apps and their tools: only tools that change nothing,
-    unless ``include_changes`` (installed Apps, which ask before each change)."""
+    unless ``include_changes`` (installed Apps, which ask before each change).
+
+    ``configs`` narrows it to those connected apps (an app's server code, which only
+    gets the ones its owner allowed), and ``changes_for`` to the ids whose changing
+    tools are listed."""
     from cognitrix.mcp import apps
     from cognitrix.mcp.client import get_dynamic_client
     from cognitrix.mcp.registry import prepare
@@ -584,17 +589,18 @@ async def _apps_list(me: str, include_changes: bool = False) -> list[dict[str, A
 
     client = await get_dynamic_client()
     out = []
-    for config in await _my_apps(me):
+    for config in (await _my_apps(me) if configs is None else configs):
         if await prepare(client, config):
             out.append({'app': config.name, 'connected': False, 'tools': []})
             continue
+        with_changes = include_changes if changes_for is None else str(config.id) in changes_for
         tools = []
         for info in await apps.list_tools(client, config):
             name = str(info.get('name') or '')
             reads = mcp_only_reads(name, info.get('annotations'))
-            if reads or include_changes:
+            if reads or with_changes:
                 tool = {'name': name, 'description': str(info.get('description') or '')[:300]}
-                if include_changes:
+                if with_changes:
                     tool['changes'] = not reads
                 tools.append(tool)
         out.append({'app': config.name, 'connected': True, 'tools': tools})
@@ -602,7 +608,7 @@ async def _apps_list(me: str, include_changes: bool = False) -> list[dict[str, A
 
 
 async def _apps_call(me: str, app: str, tool_name: str, arguments: Any, *, confirmed: bool | None = None,
-                     caller: str = 'Artifact page') -> Any:
+                     caller: str = 'Artifact page', configs: list | None = None) -> Any:
     """Run one of the viewer's connected app tools.
 
     Pages (``confirmed`` None) may only read. Apps may also change things, one call at a
@@ -614,7 +620,7 @@ async def _apps_call(me: str, app: str, tool_name: str, arguments: Any, *, confi
     from cognitrix.safety.destructive_ops import mcp_only_reads
     from cognitrix.tools.mcp import _content_to_text
 
-    config = next((c for c in await _my_apps(me) if matches(c, app)), None)
+    config = next((c for c in (await _my_apps(me) if configs is None else configs) if matches(c, app)), None)
     if config is None:
         raise store.PageError('no_app', f'You have no connected app called "{app}"', 404)
     client = await get_dynamic_client()

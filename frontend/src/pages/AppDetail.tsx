@@ -6,6 +6,7 @@ import { AppShareDialog } from '@/components/hosted-apps/AppShareDialog';
 import { AppBridgeDialogs, useAppBridge } from '@/components/hosted-apps/AppBridge';
 import { AppIcon, AppPermissionsPanel, InstallAppButton } from '@/components/hosted-apps/InstallApp';
 import { DeleteAppDialog } from '@/components/hosted-apps/DeleteAppDialog';
+import { AppAccessPanel } from '@/components/hosted-apps/AppAccessPanel';
 import { ErrorState, LoadingState } from '@/components/list-ui';
 import { api, errorMessage } from '@/lib/api';
 import { ago } from '@/lib/artifactPages';
@@ -57,9 +58,12 @@ function IconPicker({ app, canEdit, busy, act }: {
   );
 }
 
-type SideTab = 'overview' | 'versions' | 'logs';
+type SideTab = 'overview' | 'access' | 'versions' | 'logs';
 type PhoneTab = 'app' | SideTab;
-const TAB_LABEL: Record<PhoneTab, string> = { app: 'App', overview: 'Overview', versions: 'Versions', logs: 'Logs' };
+const TAB_LABEL: Record<PhoneTab, string> = { app: 'App', overview: 'Overview', access: 'Access', versions: 'Versions', logs: 'Logs' };
+/** Access is the owner's alone; versions and logs are for people who can change the app. */
+const mayOpen = (tab: PhoneTab, role: Detail['role']) =>
+  tab === 'app' || tab === 'overview' || (tab === 'access' ? role === 'owner' : role !== 'view');
 
 const button = 'inline-flex h-9 flex-none items-center gap-1.5 rounded-md border border-line bg-panel px-3 text-[13px] font-medium hover:bg-panel-2 disabled:opacity-50 md:h-8';
 const SLEEP_CHOICES = [[0, 'Never'], [15, '15 min'], [60, '1 hour'], [240, '4 hours']] as const;
@@ -312,7 +316,10 @@ export default function AppDetail() {
   );
   const sideBody = side === 'overview' ? <Overview app={app} onChanged={setApp} onDeleted={() => navigate('/apps', { replace: true })}
     installed={installed} onInstalledChanged={() => void reloadInstalled()} />
+    : side === 'access' ? <AppAccessPanel app={app} onChanged={setApp} />
     : side === 'versions' ? <Versions app={app} onChanged={setApp} /> : <Logs app={app} />;
+  const waiting = app.role === 'owner' && app.access_waiting
+    ? <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" aria-label={tr('ui.appDetail.somethingHereNeedsYou')} /> : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -341,11 +348,11 @@ export default function AppDetail() {
       </header>
 
       {/* Phone: one thing at a time. */}
-      <nav role="tablist" aria-label={tr('ui.appDetail.appSections')} className="flex flex-none gap-1 border-b border-line px-2 md:hidden">
-        {(['app', 'versions', 'logs', 'overview'] as PhoneTab[]).filter((t) => app.role !== 'view' || t === 'app' || t === 'overview').map((t) => (
+      <nav role="tablist" aria-label={tr('ui.appDetail.appSections')} className="flex flex-none gap-1 overflow-x-auto border-b border-line px-2 md:hidden">
+        {(['app', 'access', 'versions', 'logs', 'overview'] as PhoneTab[]).filter((t) => mayOpen(t, app.role)).map((t) => (
           <button key={t} type="button" role="tab" aria-selected={phoneTab === t} onClick={() => { setPhoneTab(t); if (t !== 'app') setSide(t); }}
             className={cn('-mb-px border-b-2 px-3 py-2.5 text-[13px]', phoneTab === t ? 'border-accent font-medium' : 'border-transparent text-fg-dim')}>
-            {t === 'overview' ? tr('ui.appDetail.details') : TAB_LABEL[t]}
+            {t === 'overview' ? tr('ui.appDetail.details') : TAB_LABEL[t]}{t === 'access' && waiting}
           </button>
         ))}
       </nav>
@@ -358,10 +365,10 @@ export default function AppDetail() {
         <div className="min-w-0 flex-1 p-4"><div className="h-full overflow-hidden rounded-[10px] border border-line bg-panel">{appFrame}</div></div>
         <aside className="flex w-[360px] flex-none flex-col border-l border-line bg-panel">
           <nav role="tablist" aria-label={tr('ui.appDetail.appDetails')} className="flex flex-none gap-1 border-b border-line px-3">
-            {(['overview', 'versions', 'logs'] as SideTab[]).filter((t) => app.role !== 'view' || t === 'overview').map((t) => (
+            {(['overview', 'access', 'versions', 'logs'] as SideTab[]).filter((t) => mayOpen(t, app.role)).map((t) => (
               <button key={t} type="button" role="tab" aria-selected={side === t} onClick={() => setSide(t)}
                 className={cn('-mb-px border-b-2 px-3 py-2.5 text-[13px]', side === t ? 'border-accent font-medium' : 'border-transparent text-fg-dim hover:text-fg')}>
-                {TAB_LABEL[t]}{t === 'versions' && app.versions?.length ? <span className="ml-1 font-mono text-[10.5px] text-fg-dim" aria-label={`, ${app.versions.length}`}>{app.versions.length}</span> : null}
+                {TAB_LABEL[t]}{t === 'access' && waiting}{t === 'versions' && app.versions?.length ? <span className="ml-1 font-mono text-[10.5px] text-fg-dim" aria-label={`, ${app.versions.length}`}>{app.versions.length}</span> : null}
               </button>
             ))}
           </nav>

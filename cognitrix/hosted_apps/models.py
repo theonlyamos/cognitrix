@@ -153,4 +153,56 @@ class HostedAppGrant(Model):
         return _text(value)
 
 
-MODELS = (HostedApp, HostedAppVersion, HostedAppGrant)
+ACCESS_LEVELS = ('read', 'all')
+"""What an app's server code may do in one connected app: only look things up, or change things too."""
+
+
+class HostedAppAccess(Model):
+    """What the owner lets an app's own server code use (see ``hosted_apps/access.py``).
+
+    Kept in its own table, one row per app. The app's pages asking a viewer for
+    their connected apps is ``HostedAppGrant`` above; this is the owner's side,
+    for work that runs with nobody looking (a nightly sync, a webhook).
+    """
+    app_id: str
+    apps: dict = Field(default_factory=dict)
+    """Connected app (MCP server row) id -> 'read' or 'all'."""
+    credentials: list = Field(default_factory=list)
+    """Names of the owner's saved sign-ins the app may send requests with."""
+    secrets: str = ''
+    """The app's own secrets, sealed JSON ``{NAME: value}``; they reach it as environment variables."""
+    wants: dict = Field(default_factory=dict)
+    """What the agent that built it asked for: ``{'apps': [...], 'credentials': [...], 'secrets': [...]}``."""
+    full_api: bool = False
+    """Its key may also run agents and read tasks (Publish App ``use_cognitrix_api``)."""
+    paused: bool = False
+    """Someone other than the owner published the live code: nothing here is used until the owner says so."""
+    pending_restart: bool = False
+    """Secrets changed since the running version started."""
+    pending_key_id: str = ''
+    """The key of a version that is starting right now."""
+    created: str = ''
+    updated: str = ''
+
+    @field_validator('apps', 'wants', mode='before')
+    @classmethod
+    def _dict_default(cls, value):
+        return value if isinstance(value, dict) else {}
+
+    @field_validator('credentials', mode='before')
+    @classmethod
+    def _list_default(cls, value):
+        return [str(v) for v in value] if isinstance(value, list) else []
+
+    @field_validator('full_api', 'paused', 'pending_restart', mode='before')
+    @classmethod
+    def _bool_default(cls, value):
+        return bool(value) if value is not None else False
+
+    @field_validator('secrets', 'pending_key_id', 'created', 'updated', mode='before')
+    @classmethod
+    def _text_default(cls, value):
+        return _text(value)
+
+
+MODELS = (HostedApp, HostedAppVersion, HostedAppGrant, HostedAppAccess)
