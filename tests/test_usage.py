@@ -113,17 +113,19 @@ async def test_days_split_by_model_and_agent_with_list_prices(tmp_path, monkeypa
     await usage.add('user-3', 'agent-a', 'chatgpt', 'gpt-5.5', {'prompt_tokens': 1_000_000, 'completion_tokens': 0})
     await usage.add('user-3', 'agent-b', 'anthropic', 'claude-opus-5-5', {'prompt_tokens': 1_000_000, 'completion_tokens': 0})
     await usage.add('user-3', 'agent-b', 'claude-code', 'mystery', {'prompt_tokens': 10, 'completion_tokens': 5})
+    # Plan use of a model with no list price: $0 paid, but no API price either.
+    await usage.add('user-3', 'agent-b', 'chatgpt', 'gpt-unlisted', {'prompt_tokens': 100, 'completion_tokens': 0})
 
     result = await usage.summary('user-3', 7)
     total = result['total']
     assert total['cost'] == pytest.approx(4.0) and total['api_cost'] == pytest.approx(9.0)
-    assert total['unpriced_tokens'] == 15 and total['api_unpriced_tokens'] == 15
+    assert total['unpriced_tokens'] == 15 and total['api_unpriced_tokens'] == 115
     assert total['cache_saved'] == 0.0
     today = result['by_day'][-1]
-    assert set(today['models']) == {'chatgpt/gpt-5.5', 'anthropic/claude-opus-5-5', 'claude-code/mystery'}
+    assert set(today['models']) == {'chatgpt/gpt-5.5', 'anthropic/claude-opus-5-5', 'claude-code/mystery', 'chatgpt/gpt-unlisted'}
     assert today['models']['chatgpt/gpt-5.5']['api_cost'] == pytest.approx(5.0)
     assert today['models']['chatgpt/gpt-5.5']['cost'] == 0.0
-    assert today['agents']['agent-b']['prompt_tokens'] == 1_000_010
+    assert today['agents']['agent-b']['prompt_tokens'] == 1_000_110
     assert result['by_day'][0]['models'] == {}
     # Sorted by what the use is worth, so plan use is not buried at the bottom.
     assert [m['model'] for m in result['by_model']][:2] == ['gpt-5.5', 'claude-opus-5-5']

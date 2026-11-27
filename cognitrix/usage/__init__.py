@@ -154,7 +154,9 @@ async def summary(user_id: str, days: int = 30) -> dict[str, Any]:
         tokens = counts['prompt_tokens'] + counts['completion_tokens']
         cost = pricing.cost(prices, row.provider, row.model, counts)
         api_cost = pricing.list_cost(prices, row.provider, row.model, counts)
-        if api_cost is None or (cost or 0) > 0:
+        if (cost or 0) > 0:
+            # Billed models: what was paid is the list price. A plan's $0 is
+            # not a list price, so plan use with no known price stays unpriced.
             api_cost = cost
         # What reading from cache saved, at list prices.
         uncached = pricing.list_cost(prices, row.provider, row.model, {**counts, 'cached_tokens': 0, 'cache_write_tokens': 0})

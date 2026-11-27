@@ -364,6 +364,25 @@ function CacheRing({ share }: { share: number }) {
   );
 }
 
+/**
+ * One colour per model or agent: by the server's order (what the use is
+ * worth), so a model keeps its colour when the view switches, while every
+ * series the chart shows still gets its own colour. The last colour is kept
+ * for "Other" when there is one.
+ */
+function colourMap<T>(items: T[], key: (t: T) => string, shown: T[], hasOther: boolean): Map<string, string> {
+  const map = new Map<string, string>();
+  const limit = hasOther ? MAX_SERIES - 1 : MAX_SERIES;
+  const used = new Set<number>();
+  for (const t of shown) {
+    const i = items.indexOf(t);
+    if (i < limit) { map.set(key(t), COLORS[i]); used.add(i); }
+  }
+  const free = COLORS.map((_, i) => i).filter((i) => i < limit && !used.has(i));
+  for (const t of shown) if (!map.has(key(t))) map.set(key(t), COLORS[free.shift() ?? MAX_SERIES - 1]);
+  return map;
+}
+
 /** Group a list into the biggest few plus "Other", so the chart keeps 5 colours. */
 function topWithOther<T>(items: T[], size: (t: T) => number): { shown: T[]; rest: T[] } {
   const sorted = [...items].sort((a, b) => size(b) - size(a));
@@ -396,15 +415,16 @@ export function UsageSettings() {
 
   // Model and agent series for the day chart, in the order of the panels below.
   const names = useMemo(() => {
-    if (!data) return { models: [] as Series[], agents: [] as Series[] };
+    if (!data) return { models: [] as Series[], agents: [] as Series[], modelColours: new Map<string, string>(), agentColours: new Map<string, string>() };
     const size = (t: Totals) => (tokens ? tokensOf(t) : apiCost(t));
-    const build = <T,>(items: T[], key: (t: T) => string, name: (t: T) => string, totals: (t: T) => Totals, pick: (d: Day) => Record<string, Part> | undefined): Series[] => {
+    const build = <T,>(items: T[], key: (t: T) => string, name: (t: T) => string, totals: (t: T) => Totals, pick: (d: Day) => Record<string, Part> | undefined) => {
       const { shown: top, rest } = topWithOther(items, (t) => size(totals(t)));
+      const colours = colourMap(items, key, top, rest.length > 0);
       const value = (p: Part | undefined) => (p ? (tokens ? p.prompt_tokens : apiCost(p)) : 0);
       const series: Series[] = top.map((t) => ({
         key: key(t),
         name: name(t),
-        color: COLORS[Math.min(items.indexOf(t), MAX_SERIES - 1)],
+        color: colours.get(key(t)) ?? COLORS[MAX_SERIES - 1],
         values: data.by_day.map((d) => value(pick(d)?.[key(t)])),
         out: data.by_day.map((d) => pick(d)?.[key(t)]?.completion_tokens ?? 0),
       }));
@@ -418,26 +438,27 @@ export function UsageSettings() {
           out: data.by_day.map((d) => sum(keys.map((k) => pick(d)?.[k]?.completion_tokens ?? 0))),
         });
       }
-      return series;
+      // Rows folded into "Other" take its colour in the panels too.
+      for (const k of rest.map(key)) colours.set(k, COLORS[MAX_SERIES - 1]);
+      return { series, colours };
     };
-    return {
-      models: build(data.by_model, (m) => `${m.provider}/${m.model}`, (m) => m.model || 'Unknown model', (m) => m, (d) => d.models),
-      agents: build(data.by_agent, (a) => a.agent_id, (a) => a.agent_name, (a) => a, (d) => d.agents),
-    };
+    const models = build(data.by_model, (m) => `${m.provider}/${m.model}`, (m) => m.model || 'Unknown model', (m) => m, (d) => d.models);
+    const agents = build(data.by_agent, (a) => a.agent_id, (a) => a.agent_name, (a) => a, (d) => d.agents);
+    return { models: models.series, agents: agents.series, modelColours: models.colours, agentColours: agents.colours };
   }, [data, tokens]);
 
   const total = data?.total;
   const days = data?.by_day ?? [];
 
-  const panelRows = <T extends Totals>(items: T[], key: (t: T) => string, name: (t: T) => string, sub?: (t: T) => string | undefined) => {
+  const panelRows = <T extends Totals>(items: T[], colours: Map<string, string>, key: (t: T) => string, name: (t: T) => string, sub?: (t: T) => string | undefined) => {
     const size = (t: T) => (tokens ? tokensOf(t) : apiCost(t));
     const sorted = [...items].sort((a, b) => size(b) - size(a));
     return sorted.map((t) => ({
       key: key(t),
       name: name(t),
       sub: sub?.(t),
-      // Same colour as in the day chart, whichever view is showing.
-      color: COLORS[Math.min(items.indexOf(t), MAX_SERIES - 1)],
+      // Same colour as in the day chart.
+      color: colours.get(key(t)) ?? COLORS[MAX_SERIES - 1],
       value: size(t),
       unpriced: !tokens && apiCost(t) === 0 && (t.api_unpriced_tokens ?? t.unpriced_tokens) > 0,
     }));
@@ -523,12 +544,12 @@ export function UsageSettings() {
                   <div className="mb-1 font-mono text-[10.5px] tracking-[0.12em] text-fg-dim">{tr('ui.settings.usage.byModel')}</div>
                   <ShareBars
                     metric={shown}
-                    rows={panelRows(data.by_model, (m) => `${m.provider}/${m.model}`, (m) => m.model || 'Unknown model', (m) => m.provider)}
+                    rows={panelRows(data.by_model, names.modelColours, (m) => `${m.provider}/${m.model}`, (m) => m.model || 'Unknown model', (m) => m.provider)}
                   />
                 </section>
                 <section className="min-w-0 rounded-[12px] border border-line bg-panel p-3.5" aria-label={tr('ui.settings.usage.byAgent')}>
                   <div className="mb-1 font-mono text-[10.5px] tracking-[0.12em] text-fg-dim">{tr('ui.settings.usage.byAgent')}</div>
-                  <ShareBars metric={shown} rows={panelRows(data.by_agent, (a) => a.agent_id || 'other', (a) => a.agent_name)} />
+                  <ShareBars metric={shown} rows={panelRows(data.by_agent, names.agentColours, (a) => a.agent_id, (a) => a.agent_name)} />
                 </section>
                 <section className="flex min-w-0 flex-col rounded-[12px] border border-line bg-panel p-3.5" aria-label={tr('ui.settings.usage.cache')}>
                   <div className="font-mono text-[10.5px] tracking-[0.12em] text-fg-dim">{tr('ui.settings.usage.cache_upper')}</div>

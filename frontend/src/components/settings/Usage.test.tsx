@@ -79,6 +79,21 @@ describe('UsageSettings', () => {
     expect(screen.getAllByText(/^Assistant/).length).toBe(2);
   });
 
+  it('gives every model the chart shows its own colour, even past five', async () => {
+    // Ranked by API cost m0..m5, but by tokens m4 and m5 lead.
+    const models = [0, 1, 2, 3, 4, 5].map((i) => ({
+      ...totals, provider: 'p', model: `m${i}`, api_cost: 60 - i * 10,
+      prompt_tokens: i >= 4 ? 5_000_000 : 1_000 * (6 - i), completion_tokens: 0,
+    }));
+    const day = { ...totals, day: '2026-11-09', models: Object.fromEntries(models.map((m) => [`p/${m.model}`, { prompt_tokens: m.prompt_tokens, completion_tokens: 0, cached_tokens: 0, cost: 0, api_cost: m.api_cost }])), agents: {} };
+    get.mockResolvedValue({ data: summary({ by_model: models, by_day: [day] }) });
+    render(<UsageSettings />);
+    await screen.findByText('Tokens per day');
+    const legend = (name: string) => screen.getByText((_, el) => el?.tagName === 'SPAN' && !!el.textContent?.startsWith(`${name} `) && !!el.querySelector('i'));
+    const colours = ['m4', 'm5', 'm0', 'm1', 'Other'].map((n) => legend(n).querySelector('i')!.getAttribute('style'));
+    expect(new Set(colours).size).toBe(5);
+  });
+
   it('shows tokens only when prices could not be loaded', async () => {
     get.mockResolvedValue({ data: summary({ prices_available: false }) });
     render(<UsageSettings />);
