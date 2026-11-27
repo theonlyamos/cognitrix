@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from email.header import decode_header, make_header
 from typing import Any
+from urllib.parse import urlsplit
 
 from cognitrix.app_settings import get_bool
 from cognitrix.tailscale import doors
@@ -90,14 +91,19 @@ def from_another_site(request: Any) -> bool:
     browsers (a PC's connector) send neither header and pass."""
     try:
         headers = request.headers
+        # Browsers set this one themselves; a page can't change it.
         site = str(headers.get('sec-fetch-site') or '').strip().lower()
-        if site and site not in ('same-origin', 'none'):
-            return True
-        origin = str(headers.get('origin') or '').strip().lower().rstrip('/')
+        if site:
+            return site not in ('same-origin', 'none')
+        origin = str(headers.get('origin') or '').strip().lower()
         if not origin:
             return False
-        host = str(headers.get('host') or '').strip().lower()
-        return not host or origin not in (f'https://{host}', f'http://{host}')
+        # An older browser: the page's address has to be the one the request was sent to.
+        page = urlsplit(origin)
+        asked = urlsplit('//' + str(headers.get('host') or '').strip().lower())
+        if not page.hostname or page.hostname != asked.hostname:
+            return True
+        return asked.port is not None and (page.port or (80 if page.scheme == 'http' else 443)) != asked.port
     except Exception:  # noqa: BLE001
         return True
 

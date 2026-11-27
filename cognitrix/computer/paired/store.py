@@ -334,6 +334,8 @@ async def pair_approved(request_id: str, secret: str, login: str, address: str, 
     if item.expires < time.time():
         raise PairingError('expired', 'That request ran out of time. Ask again.', 410)
     with _lock:
+        if item.status == 'used':
+            raise PairingError('gone', 'That request was already used to pair a PC. Ask again.', 404)
         if item.status != 'approved':
             raise PairingError('not_approved', "That request hasn't been approved on the web.", 409)
         item.status = 'used'

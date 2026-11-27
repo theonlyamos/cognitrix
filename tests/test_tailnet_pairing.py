@@ -230,7 +230,7 @@ async def test_a_pc_asks_and_its_owner_approves_on_the_web(world, tmp_path):
     assert [d['tailnet_node'] for d in listed['devices']] == ['work-laptop']
     # Used once.
     again = await world.http.post(path + '/pair', json={**mine, 'folders': [str(tmp_path)], 'powers': ['files']})
-    assert again.status_code == 409
+    assert again.status_code == 404 and 'already used' in again.json()['detail']['message']
 
 
 async def test_declined_expired_and_repeated_requests(world):

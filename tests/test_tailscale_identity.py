@@ -74,6 +74,26 @@ def test_pictures_are_https_only_and_names_are_trimmed():
     assert seen.login == 'bob@github' and seen.picture == '' and len(seen.name) == 120
 
 
+@pytest.mark.parametrize('headers, another', [
+    ({}, False),                                                            # not a browser (a PC's connector)
+    ({'sec-fetch-site': 'same-origin', 'origin': 'https://elsewhere.example'}, False),   # the browser's word wins
+    ({'sec-fetch-site': 'none'}, False),                                    # typed into the address bar
+    ({'sec-fetch-site': 'cross-site'}, True),
+    ({'sec-fetch-site': 'same-site'}, True),                                # another program on the same machine name
+    ({'origin': f'https://{NAME}'}, False),                                 # an older browser, our own page
+    ({'origin': f'https://{NAME}:8443', 'host': f'{NAME}:8443'}, False),
+    ({'origin': f'https://{NAME}:10000', 'host': f'{NAME}:8443'}, True),
+    ({'origin': 'https://evil.example'}, True),
+    ({'origin': 'null'}, True),
+])
+def test_another_sites_page_is_told_apart(headers, another):
+    headers = {'host': NAME, **headers}
+    assert identity.from_another_site(SimpleNamespace(headers=headers)) is another
+    request = _request({**ADA, **headers})
+    assert (identity.visitor(request, own_page=True) is None) is another
+    assert identity.visitor(request) is not None       # an App's own page still has its visitor
+
+
 # ---------------------------------------------------------------------------
 # Signing in from the tailnet
 # ---------------------------------------------------------------------------
