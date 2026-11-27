@@ -25,6 +25,15 @@ installed). Without one it goes in `~/.cognitrix/paired.json` (mode 600; set
 skip the keychain). The server only stores its hash. A PC not seen for 30 days
 must pair again.
 
+## Over Tailscale
+
+When the server has a Tailscale private address ([Tailscale](tailscale.md)) and the PC is on the same tailnet:
+
+- **Find my server.** In the desktop app, **Settings › Computers › This PC › Find it on my tailnet**, or `cognitrix connect --find`. The PC asks each machine on its tailnet one small question (`GET /api/v1/computer/devices/hello`, which answers with the app's name and version) and lists the ones that are Cognitrix.
+- **Pair without a code.** If your Tailscale login is linked to your account (Settings › Sign-ins on the server, with "Sign in from the tailnet" turned on), the PC can ask instead: **Pair without a code** in the desktop app, or `cognitrix connect <server> --ask --folder ~/code`. The request shows on the web under **Settings › Computers** with the PC's name, its machine name on the tailnet and the Tailscale login. Press **Approve**, and the PC picks its folders and gets its token as usual. A request lasts 10 minutes, a new one from the same machine replaces the old one, and a device that itself signed in with a code in the last day cannot approve one. Without a linked login, pair with a code.
+- **Plain http inside the tailnet.** `http://` addresses are refused, except for a machine that Tailscale on the PC lists in its own tailnet (by its tailnet IP, or a name that resolves only to one). Tailscale already encrypts that path. This is checked every time the PC connects.
+- **Two addresses, one link.** At pairing the server tells the PC where else it answers (its Tailscale address and its public address). The PC keeps them all and tries the Tailscale one first, so the link survives one of them going away.
+
 ## How it works
 
 The PC dials out over a WebSocket to `/api/v1/computer/devices/connect`; no

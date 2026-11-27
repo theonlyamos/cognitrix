@@ -49,6 +49,31 @@ Turning the public address off closes it at once: Cognitrix stops letting anythi
 
 On a server, **Only reachable through Tailscale** makes the server stop listening on the local network (it listens on this machine only), so the Tailscale addresses are the only way in. It applies after a restart. Leave it off where your host checks the server's own port, as Fly does.
 
+## Sign in from the tailnet
+
+Off until an admin turns on **Sign in from the tailnet** (Settings › Tailscale). It never signs anyone in by itself after that: each person links their own Tailscale login.
+
+1. Open Cognitrix at the private address on a device that is on the tailnet, and sign in the usual way.
+2. In **Settings › Sign-ins**, under Tailscale, press **Link**. The page shows the Tailscale login it sees for that device, and says what linking means before you confirm.
+3. From then on, the sign-in page at the private address shows **Continue as you@example.com**. One click signs you in. It shows in Sign-ins as "Signed in from the tailnet" and can be signed out like any device.
+
+Nothing is linked by matching email addresses: a Tailscale login is tied only to the account that was signed in when its owner linked it. One Tailscale login belongs to one account. A link stops working when you unlink it, when the admin turns the setting off, when the private address is off, or when the account is disabled. Link a login only if it is yours alone: anyone who can use a device signed in to Tailscale as that login can open your account.
+
+Tagged devices have no Tailscale login, so they are never signed in this way. The public address never signs anyone in this way either.
+
+## Apps for people on your tailnet
+
+In an App's **Share** dialog there is a **Your tailnet** section while the private address is on. You can share the App with **everyone on your tailnet**, or with Tailscale logins you type. Those people open `https://<private address>/apps/open/<app>` and the App opens with no Cognitrix account.
+
+- They can use the App, not change it, and they see nothing else in Cognitrix.
+- The App is told who they are the same way as for accounts, with their Tailscale login as the id and email, plus `X-Cognitrix-User-Source: tailscale`. `window.cognitrix.guest` is true in the page, and the things that need an account (notifications, connected apps) reject.
+- The link only works at the private address, and only while Tailscale says it is them: on every request, not once.
+- "Everyone on your tailnet" includes people you shared this machine with in Tailscale. "Everyone on this server" still means accounts only.
+
+## Pair a PC over the tailnet
+
+See [Pair your own PC](pair-your-pc.md#over-tailscale): a PC on the tailnet can find the server by itself and pair without a code.
+
 ## Passkeys
 
 The private address is https and a real name, so passkeys work there. A passkey belongs to the address it was made at: one made at the Tailscale address does not work at `localhost` or another domain, and the other way round. See [passkeys](passkeys.md#with-tailscale).
@@ -66,7 +91,7 @@ The private address is https and a real name, so passkeys work there. A passkey 
 
 Two rules keep this safe:
 
-1. **Tailscale's "who is this" headers count only at the tailnet door.** Tailscale adds headers naming the visitor, and says to trust them only on a listener nothing else can reach. The main listener can be reached from the local network, so those headers are stripped from every request that did not come through the tailnet door (`DoorGuard`). The public door strips them too. (Nothing reads them yet; the next step, sharing Apps with people on your tailnet, will.)
+1. **Tailscale's "who is this" headers count only at the tailnet door.** Tailscale adds headers naming the visitor, and says to trust them only on a listener nothing else can reach. The main listener can be reached from the local network, so those headers are stripped from every request that did not come through the tailnet door (`DoorGuard`). The public door strips them too. `identity.py` is the one place that reads them: it is what Apps for your tailnet, signing in from the tailnet and pairing without a code are built on.
 2. **A request through a door never counts as this computer.** Its caller address is the one Tailscale forwarded and is never a loopback address, so nothing that trusts "the same machine" (the desktop app's passkey step) can be reached from outside.
 
 Tailscale's own limits apply: public addresses need MagicDNS and HTTPS turned on for the tailnet and the `funnel` permission in its access rules, and traffic through them is rate limited by Tailscale.
