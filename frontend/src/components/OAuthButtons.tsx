@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, API_BASE } from '@/lib/api';
 import { useUser } from '@/context/AppContext';
@@ -36,8 +36,11 @@ function pollKey(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** "Continue with Google / GitHub". Shows only the providers the server has set up. */
-export default function OAuthButtons({ mode }: { mode: 'signin' | 'signup' }) {
+/**
+ * "Continue with Google / GitHub". Shows only the providers the server has set up.
+ * `first` goes above them (the sign-in page's passkey button), under the same divider.
+ */
+export default function OAuthButtons({ mode, first }: { mode: 'signin' | 'signup'; first?: ReactNode }) {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [waiting, setWaiting] = useState<Provider | null>(null);
   const [params] = useSearchParams();
@@ -99,13 +102,14 @@ export default function OAuthButtons({ mode }: { mode: 'signin' | 'signup' }) {
     }
   };
 
-  if (!providers.length && !error) return null;
+  if (!providers.length && !error && !first) return null;
   const verb = mode === 'signup' ? 'Sign up' : 'Continue';
 
   return (
     <div className="mt-8">
-      {providers.length > 0 && (
+      {(providers.length > 0 || first) && (
         <div className="grid gap-2.5">
+          {first}
           {providers.map((p) => (
             <button
               key={p}
@@ -131,7 +135,7 @@ export default function OAuthButtons({ mode }: { mode: 'signin' | 'signup' }) {
       {error && (
         <p role="alert" className="mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
       )}
-      {providers.length > 0 && (
+      {(providers.length > 0 || first) && (
         <div className="mt-6 flex items-center gap-3 font-mono text-[10.5px] tracking-[0.14em] text-fg-dim">
           <span className="h-px flex-1 bg-line" />{' '}{tr('ui.oAuthButtons.orWithEmail')}{' '}<span className="h-px flex-1 bg-line" />
         </div>

@@ -121,6 +121,9 @@ def _registry() -> list[Setting]:
                 kind='list'))
     add(Setting('COGNITRIX_CODE_SIGNIN', 'people', g, 'Sign in with a code from another device',
                 kind=ON_OFF, default='1'))
+    add(Setting('COGNITRIX_PASSKEYS', 'people', g, 'Sign in with a passkey',
+                'Windows Hello, Touch ID, a phone or a security key. People add theirs in Settings, Sign-ins.',
+                kind=ON_OFF, default='1'))
     add(Setting('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', 'people', g, 'Stay signed in for (minutes)',
                 'On a server. The desktop app always keeps you signed in for at least 30 days.',
                 kind='number', default='30', restart=True))

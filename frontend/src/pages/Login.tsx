@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import axios from 'axios';
+import { KeyRound } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { api, errorMessage } from '@/lib/api';
@@ -9,7 +11,11 @@ import OAuthButtons from '@/components/OAuthButtons';
 import { useT, tr } from '@/lib/i18n';
 import { takeAfterSignIn } from '@/lib/afterSignIn';
 import { codeFromAddress } from '@/lib/signIns';
-import { isDesktop } from '@/lib/desktop';
+import { desktop, isDesktop } from '@/lib/desktop';
+import {
+  autofillAvailable, browserStepStatus, browserStepUrl, canUsePasskeysHere, cancelBrowserStep, localhostAddress,
+  signInWithPasskey, startBrowserStep, wasCanceled, type BrowserStep, type SignedIn,
+} from '@/lib/passkeys';
 import { cn } from '@/lib/utils';
 
 /** 'KXRT4M9P' -> 'KXRT-4M9P' while typing; drops what can't be in a code. */
@@ -17,6 +23,9 @@ function formatCode(value: string): string {
   const raw = value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
   return raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
 }
+
+/** Fresh autofill challenge before the server's 5 minutes run out. */
+const AUTOFILL_RENEW_MS = 4 * 60 * 1000;
 
 const GRID = {
   backgroundImage:
@@ -32,7 +41,9 @@ export default function Login() {
   const { login } = useUser();
   const navigate = useNavigate();
   const t = useT();
-  const [options, setOptions] = useState({ signup_open: true, password_reset_by_email: false, code_sign_in: true });
+  const [options, setOptions] = useState({
+    signup_open: true, password_reset_by_email: false, code_sign_in: true, passkeys: false, passkey_handoff: false,
+  });
   const [initialCode] = useState(codeFromAddress);
   const [mode, setMode] = useState<'password' | 'code'>(initialCode ? 'code' : 'password');
   const [code, setCode] = useState(initialCode);
@@ -63,6 +74,112 @@ export default function Login() {
       setForgotState('failed');
     }
   };
+
+  // ---- Passkeys -------------------------------------------------------------
+  const passkeyHere = canUsePasskeysHere();
+  const showPasskey = options.passkeys && (passkeyHere || options.passkey_handoff);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [browserStep, setBrowserStep] = useState<BrowserStep | null>(null);
+  const autofill = useRef<AbortController | null>(null);
+
+  const signedIn = (data: SignedIn) => {
+    login(data.user as unknown as Parameters<typeof login>[0], data.access_token);
+    navigate(takeAfterSignIn());
+  };
+
+  // The browser offers saved passkeys in the email field's autofill. The
+  // server's challenge lasts 5 minutes, so a page left open gets a fresh one
+  // every 4 minutes (and after an expired answer) instead of going dead.
+  useEffect(() => {
+    if (!options.passkeys || !passkeyHere || mode !== 'password') return;
+    const page = new AbortController();
+    autofill.current = page;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const round = () => {
+      if (page.signal.aborted) return;
+      const ctrl = new AbortController();
+      page.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+      clearTimeout(timer);
+      timer = setTimeout(() => { ctrl.abort(); round(); }, AUTOFILL_RENEW_MS);
+      signInWithPasskey({ conditional: true, signal: ctrl.signal }).then(signedIn).catch((err) => {
+        if (page.signal.aborted || ctrl.signal.aborted) return;
+        // Only the server's answer is worth showing here: the browser's own autofill
+        // errors (no passkey, prompt dismissed) are not something the person asked for.
+        if (axios.isAxiosError(err)) {
+          const detail = String((err.response?.data as { detail?: string })?.detail ?? '');
+          if (/expired/i.test(detail)) { round(); return; }
+          setError(errorMessage(err, tr('ui.login.thatPasskeyDidNotWork')));
+        }
+      });
+    };
+    autofillAvailable().then((ok) => { if (ok) round(); });
+    return () => { clearTimeout(timer); page.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options.passkeys, passkeyHere, mode]);
+
+  const handlePasskey = async () => {
+    setError('');
+    autofill.current?.abort();
+    if (!passkeyHere) {
+      // The desktop app's window can't show the prompt: finish in the browser.
+      setPasskeyBusy(true);
+      try {
+        setBrowserStep(await startBrowserStep('sign_in'));
+      } catch (err) {
+        setError(errorMessage(err, tr('ui.login.couldNotOpenTheBrowser')));
+      } finally {
+        setPasskeyBusy(false);
+      }
+      return;
+    }
+    setPasskeyBusy(true);
+    try {
+      signedIn(await signInWithPasskey());
+    } catch (err) {
+      if (!wasCanceled(err)) setError(errorMessage(err, tr('ui.login.thatPasskeyDidNotWork')));
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
+  // Desktop app: wait for the browser to finish the passkey step.
+  useEffect(() => {
+    if (!browserStep) return;
+    let alive = true;
+    const timer = setInterval(() => {
+      browserStepStatus(browserStep.secret).then((s) => {
+        if (!alive) return;
+        if (s.status === 'done' && s.kind === 'sign_in') {
+          alive = false;
+          setBrowserStep(null);
+          signedIn(s);
+        } else if (s.status === 'expired') {
+          setBrowserStep(null);
+          setError(tr('ui.login.thePasskeyStepExpiredTry'));
+        }
+      }).catch(() => {});
+    }, 1500);
+    return () => { alive = false; clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browserStep]);
+
+  const cancelStep = () => {
+    if (browserStep) void cancelBrowserStep(browserStep.secret).catch(() => {});
+    setBrowserStep(null);
+  };
+
+  const passkeyButton = showPasskey ? (
+    <button
+      type="button"
+      onClick={() => void handlePasskey()}
+      disabled={passkeyBusy || !!browserStep}
+      className="flex h-11 w-full items-center justify-center gap-2.5 rounded-md border border-line bg-panel text-[14px] font-medium transition-colors hover:bg-panel-2 disabled:opacity-60"
+    >
+      <KeyRound size={16} aria-hidden />
+      {passkeyBusy ? tr('ui.login.waitingForYourPasskey') : tr('ui.login.signInWithAPasskey')}
+    </button>
+  ) : null;
+  const atLocalhost = options.passkeys && !isDesktop() && !passkeyHere ? localhostAddress() : '';
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,7 +267,24 @@ export default function Login() {
             <h1 className="mt-2 text-3xl font-bold tracking-tight">{t('login.title')}</h1>
             <p className="mt-2 text-fg-dim">{t('login.subtitle')}</p>
 
-            <OAuthButtons mode="signin" />
+            <OAuthButtons mode="signin" first={passkeyButton} />
+            {browserStep && (
+              <div role="status" className="mt-3 rounded-lg border border-line bg-panel-2 px-3.5 py-3 text-[13px] leading-snug">
+                <p className="font-medium">{tr('ui.login.finishInYourBrowser')}</p>
+                <p className="mt-1 text-fg-dim">{tr('ui.login.weOpenedYourBrowserUse')}</p>
+                <div className="mt-2 flex flex-wrap gap-3">
+                  <button type="button" className="text-accent-ink hover:underline"
+                    onClick={() => void desktop.openExternal(browserStepUrl(browserStep))}>{tr('ui.login.openItAgain')}</button>
+                  <button type="button" className="text-fg-dim hover:underline" onClick={cancelStep}>{tr('ui.login.cancel')}</button>
+                </div>
+              </div>
+            )}
+            {atLocalhost && (
+              <p className="mt-6 text-[12.5px] leading-snug text-fg-dim">
+                {tr('ui.login.passkeysDonTWorkOn')}{' '}
+                <a href={atLocalhost} className="text-accent-ink hover:underline">{tr('ui.login.openThisPageAtLocalhost')}</a>
+              </p>
+            )}
             {options.code_sign_in && (
               <div role="tablist" aria-label={tr('ui.login.howToSignIn')} className="mt-6 flex gap-0.5 rounded-lg bg-panel-2 p-1">
                 {tab('password', tr('ui.login.password'))}
@@ -182,7 +316,7 @@ export default function Login() {
               <div className="space-y-1.5">
                 <label htmlFor="email" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">{t('auth.email')}</label>
                 <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com" required autoComplete="email" autoFocus />
+                  placeholder="you@example.com" required autoComplete="username webauthn" autoFocus />
               </div>
               <div className="space-y-1.5">
                 <label htmlFor="password" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">{t('auth.password')}</label>

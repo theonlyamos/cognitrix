@@ -84,6 +84,7 @@ mini-racer = ">=0.14.1,<1"
 # Agent Client Protocol server for code editors (cognitrix/acp, `cognitrix acp`).
 agent-client-protocol = ">=1.0.0,<2"
 anthropic = ">=1.0"
+webauthn = "^2.7"
 
 [build-system]
 requires = ["poetry-core"]
