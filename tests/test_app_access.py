@@ -9,6 +9,7 @@
 - The app's key opens only this; a person's session or another key doesn't.
 - When someone else publishes the app's code, everything pauses for the owner.
 """
+import base64
 import json
 import os
 import sys
@@ -183,9 +184,18 @@ async def test_saved_sign_ins_are_filled_in_for_the_app_not_given_to_it(db, tmp_
     assert 'ghp_' not in json.dumps(await _env_of(app))
 
     seen = []
+    echoes = {
+        '/utf16': (json.dumps({'t': 'ghp_supersecretvalue123'}).encode('utf-16'), 'application/json; charset=utf-16'),
+        '/bin': (b'\xff\xfe\x00\x81' + 'ghp_supersecretvalue123'.encode('utf-16-le') + b'\x81ghp_supersecretvalue123',
+                 'application/octet-stream'),
+    }
+
 
     def handler(request):
         seen.append(request)
+        if request.url.path in echoes:
+            body, kind = echoes[request.url.path]
+            return httpx.Response(200, content=body, headers={'content-type': kind})
         if request.url.path == '/hop':
             return httpx.Response(302, headers={'location': 'https://evil.example/steal'})
         return httpx.Response(200, json={'you_sent': request.headers.get('authorization'), 'q': str(request.url)},
@@ -210,6 +220,15 @@ async def test_saved_sign_ins_are_filled_in_for_the_app_not_given_to_it(db, tmp_
     assert json.loads(seen[-1].content) == {'token': 'ghp_supersecretvalue123'} and seen[-1].method == 'POST'
     assert 'ghp_' not in json.dumps(got)
 
+    # An answer in another encoding, or one that isn't text, hides the value just the same.
+    got = await routes.app_access_http(routes.AppRequest(url='https://api.github.com/utf16', credential='GITHUB_TOKEN'),
+                                       found)
+    assert json.loads(got['body']) == {'t': '[GITHUB_TOKEN hidden]'}
+    got = await routes.app_access_http(routes.AppRequest(url='https://api.github.com/bin', credential='GITHUB_TOKEN'),
+                                       found)
+    raw = base64.b64decode(got['body_base64'])
+    assert got['body'] == '' and b'ghp_' not in raw and 'ghp_'.encode('utf-16-le') not in raw
+    assert raw.count(b'[GITHUB_TOKEN hidden]') == 1
     sent = len(seen)
     refused_calls = (
         # Another host than the sign-in was saved for.

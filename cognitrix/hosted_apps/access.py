@@ -425,11 +425,25 @@ async def call_app(app: HostedApp, row: HostedAppAccess | None, name: str, tool:
 
 
 def _hide(data: bytes, secrets_map: dict[str, str]) -> bytes:
+    """Bytes that aren't text in the encoding the answer names: hide a saved value
+    in any of the usual ways of writing text as bytes."""
     for value in sorted(secrets_map, key=len, reverse=True):
-        raw = value.encode('utf-8')
-        if raw in data:
-            data = data.replace(raw, f'[{secrets_map[value]} hidden]'.encode())
+        marker = f'[{secrets_map[value]} hidden]'
+        for encoding in ('utf-8', 'utf-16-le', 'utf-16-be'):
+            raw = value.encode(encoding)
+            if raw in data:
+                data = data.replace(raw, marker.encode(encoding))
     return data
+
+
+def _text(data: bytes, encoding: str | None) -> str | None:
+    """The answer as text, or None when it isn't text."""
+    for name in dict.fromkeys(filter(None, (encoding, 'utf-8'))):
+        try:
+            return data.decode(name)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return None
 
 
 async def send(app: HostedApp, row: HostedAppAccess | None, *, url: str, method: str = 'GET',
@@ -457,22 +471,27 @@ async def send(app: HostedApp, row: HostedAppAccess | None, *, url: str, method:
                  detail=f"{sent.method} {host} with {', '.join(sorted(resolver.used))}", outcome='ran')
     secrets_map = resolver.redaction_map()
     response = sent.response
-    data = _hide(response.content or b'', secrets_map)
-    truncated = len(data) > MAX_RESPONSE
-    data = data[:MAX_RESPONSE]
+    data = response.content or b''
     out: dict[str, Any] = {
         'status': response.status_code,
         'reason': response.reason_phrase,
         'headers': {k: redact(v, secrets_map) for k, v in response.headers.items()
                     if k.lower() not in ('set-cookie', 'content-encoding', 'content-length', 'transfer-encoding')},
         'used': sorted(resolver.used),
-        'truncated': truncated,
     }
-    try:
-        out['body'] = data.decode(response.encoding or 'utf-8')
-    except (UnicodeDecodeError, LookupError):
+    # Read it as text the way the answer says it is written (it may be UTF-16), and hide
+    # saved values in that text. Scrub before cutting, so a value split by the cut can't
+    # leak its start.
+    text = _text(data, response.encoding)
+    if text is not None:
+        text = redact(text, secrets_map)
+        out['truncated'] = len(text) > MAX_RESPONSE
+        out['body'] = text[:MAX_RESPONSE]
+    else:
+        data = _hide(data, secrets_map)
+        out['truncated'] = len(data) > MAX_RESPONSE
         out['body'] = ''
-        out['body_base64'] = base64.b64encode(data).decode('ascii')
+        out['body_base64'] = base64.b64encode(data[:MAX_RESPONSE]).decode('ascii')
     if sent.stopped_at:
         out['redirect_not_followed'] = redact(sent.stopped_at, secrets_map)
     return out
