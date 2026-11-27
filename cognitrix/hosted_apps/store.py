@@ -25,7 +25,7 @@ import jwt
 from cognitrix.artifact_pages.models import EVERYONE, SHARE_ROLES
 from cognitrix.artifact_pages.store import ROLE_OWNER, can_edit, names, role_of, shares, task_info  # noqa: F401
 from cognitrix.computer.sandbox.apps import AppHostError, pack_folder, unpack
-from cognitrix.hosted_apps import icons
+from cognitrix.hosted_apps import access, icons
 from cognitrix.hosted_apps.models import POWERS, HostedApp, HostedAppGrant, HostedAppVersion
 from cognitrix.hosted_apps.runner import RunnerError, default_runtime, runner_for
 
@@ -165,13 +165,15 @@ def api_url_for(runtime: str) -> str:
     return url
 
 
-async def _ensure_api_key(app: HostedApp) -> tuple[str, str]:
-    """A Cognitrix API key for the app (made once; shown to the app only)."""
+async def _ensure_api_key(app: HostedApp, full: bool = True) -> tuple[str, str]:
+    """A Cognitrix API key for the app (a fresh one per version; shown to the app only).
+    ``full``: it may run agents and read tasks too. Without it the key only opens
+    ``/api/v1/app-access`` (what the owner let the app use, see ``access.py``)."""
     from cognitrix.models.api_key import APIKey, generate_secret, hash_secret
 
     secret = generate_secret()
     key = APIKey(name=f'App: {app.title}'[:80], user_id=app.owner_id, key_hash=hash_secret(secret),
-                 prefix=secret[:10], scopes=list(API_SCOPES))
+                 prefix=secret[:10], scopes=list(API_SCOPES) if full else [])
     await key.save()
     return str(key.id), secret
 
@@ -223,11 +225,14 @@ async def publish(
     task_id: str = '',
     runtime: str | None = None,
     icon: str = '',
+    wants: dict | None = None,
 ) -> tuple[HostedApp, HostedAppVersion, bool]:
     """Create an app or add a version to one, and start it. Returns (app, version, created).
     A version that fails to start is recorded as failed; the live one keeps serving.
     ``icon`` names the icon file in the folder (default: icon.svg, icon.png, ...); see
-    :func:`icon_note` for what the agent should hear about it."""
+    :func:`icon_note` for what the agent should hear about it. ``wants``: what its server
+    code needs from the owner (``{'apps': [...], 'credentials': [...], 'secrets': [...]}``,
+    see ``access.ask``); only the owner can give it, on the app's page."""
     if not user_key:
         raise AppError('no_owner', 'Apps need a signed-in person to belong to.')
     if not str(folder or '').strip() and app_id:
@@ -295,7 +300,8 @@ async def publish(
             pack_error = ''
         changes: dict[str, Any] = {
             'latest': number, 'title': clean_title, 'folder': str(home), 'command': command,
-            'install': ' '.join(str(install or '').split()), 'port': int(port or 0), 'env': _clean_env(env),
+            'install': ' '.join(str(install or '').split()), 'port': int(port or 0),
+            'env': _clean_env(env) if env is not None else dict(app.env),
             'branch': str(branch or '')[:120], 'updated': stamp,
         }
         if description:
@@ -312,12 +318,22 @@ async def publish(
         _icon_notes[str(app.id)] = note_text
         await _set(app, **changes)
 
+        if wants:
+            try:
+                await access.ask(app, **{k: wants.get(k) for k in ('apps', 'credentials', 'secrets')})
+            except access.AccessError as exc:
+                raise AppError(exc.code, exc.message) from None
         run_env = dict(app.env)
+        # What the owner set on the app's page (Access): its secrets, and a key when it
+        # may use connected apps or saved sign-ins.
+        allowed, app_secrets = await access.before_start(app, user_key, use_cognitrix_api)
+        run_env.update(app_secrets)
         run_env['APP_TITLE'] = app.title
         new_key = ''
-        if use_cognitrix_api or app.api_key_id:
+        if access.wants_key(allowed):
             # A fresh key per version; the old one is revoked once the new version is live.
-            new_key, secret = await _ensure_api_key(app)
+            new_key, secret = await _ensure_api_key(app, full=bool(allowed.full_api))
+            await access.starting_with(allowed, new_key)
             run_env.update({'COGNITRIX_API_URL': api_url_for(app.runtime), 'COGNITRIX_API_KEY': secret})
 
         try:
@@ -340,6 +356,10 @@ async def publish(
             if new_key:
                 await _revoke_api_key(app)
                 await _set(app, api_key_id=new_key)
+            elif app.api_key_id:
+                # This version runs without a key (nothing is allowed any more).
+                await _revoke_api_key(app)
+                await _set(app, api_key_id='')
             touch(app.slug)
         else:
             error = str(out.get('error') or 'It did not start.')
@@ -348,6 +368,7 @@ async def publish(
                        updated=now())
             if new_key:
                 await _revoke_api_key(app, new_key)
+        await access.started(allowed, bool(out.get('ok')))
         return app, row, created
 
 
@@ -531,6 +552,7 @@ async def delete_app(app: HostedApp) -> None:
     icons.remove(str(app.id))
     await HostedAppVersion.delete_many({'app_id': str(app.id)})
     await HostedAppGrant.delete_many({'app_id': str(app.id)})
+    await access.forget(app)
     await HostedApp.delete_many({'id': str(app.id)})
 
 

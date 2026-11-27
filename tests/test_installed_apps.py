@@ -183,3 +183,32 @@ async def test_connected_apps_read_freely_and_ask_before_each_change(db, monkeyp
     with pytest.raises(HTTPException) as unknown:
         await routes.app_bridge(ref, routes.BridgeCall(kind='data.get'), _ctx(amos))
     assert unknown.value.status_code == 400
+
+
+async def test_a_link_opened_on_its_own_is_shown_inside_cognitrix(db, tmp_path):  # noqa: F811
+    """Alone in a tab the app's page has nobody to ask for connected apps, so the
+    link moves into Cognitrix's page (bare: nothing around the app)."""
+    from cognitrix.hosted_apps import store
+
+    amos = await _user('Amos', 'amos@example.com')
+    folder = tmp_path / 'solo'
+    folder.mkdir()
+    (folder / 'app.py').write_text(HTML_APP)
+    await store.publish(user_key=str(amos.id), title='Solo', folder=str(folder), command=f'{sys.executable} app.py')
+    token = store.open_token('solo', str(amos.id))
+    top = {'Sec-Fetch-Dest': 'document', 'Accept': 'text/html'}
+    async with _proxy_client() as client:
+        r = await client.get(f'/a/solo/~{token}/', headers=top)
+        assert r.status_code == 302 and r.headers['location'] == '/apps/open/solo?bare=1'
+        r = await client.get(f'/a/solo/~{token}/reports/q3?tab=2&x=a%20b', headers=top)
+        assert r.headers['location'] == '/apps/open/solo?bare=1&at=reports%2Fq3%3Ftab%3D2%26x%3Da%2520b'
+        # An expired or foreign link too: the page signs the person in and gets a new one.
+        r = await client.get('/a/solo/~stale.token/', headers=top)
+        assert r.status_code == 302 and r.headers['location'] == '/apps/open/solo?bare=1'
+        # Inside Cognitrix's frame, and for the app's own requests, nothing changes.
+        r = await client.get(f'/a/solo/~{token}/', headers={'Sec-Fetch-Dest': 'iframe', 'Accept': 'text/html'})
+        assert r.status_code == 200 and b'data-cognitrix-runtime' in r.content
+        r = await client.get(f'/a/solo/~{token}/data', headers={'Sec-Fetch-Dest': 'empty'})
+        assert r.status_code == 200 and r.json() == {'ok': True}
+        r = await client.post(f'/a/solo/~{token}/data', headers={'Sec-Fetch-Dest': 'document'})
+        assert r.status_code != 302

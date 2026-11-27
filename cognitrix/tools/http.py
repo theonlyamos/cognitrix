@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -55,6 +56,94 @@ def _mentions_secret(*values: Any) -> bool:
     return bool(PLACEHOLDER_RE.search(text))
 
 
+class SendError(Exception):
+    """A request that was not sent, or failed on the way (the message never holds a saved value)."""
+
+    def __init__(self, code: str, message: str, denied: bool = False):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.denied = denied
+
+
+@dataclass
+class Sent:
+    response: Any
+    method: str
+    """The method of the last request (a redirect may have turned a POST into a GET)."""
+    stopped_at: str = ''
+    """A redirect to another host that was not followed, because the request carried a credential."""
+
+
+async def send_signed(resolver: Resolver, url: str, *, method: str = 'GET', headers: dict | None = None,
+                      body: str | None = None, json_body: Any = None, credential: str | None = None) -> Sent:
+    """Send one request with ``resolver``'s saved credentials filled in.
+
+    Shared by the Http Request tool and by apps' server code
+    (``hosted_apps/access.py``). The rules live here: a value is only filled in
+    for a host its credential allows, it is never part of the host name, private
+    addresses are refused, and a credential never follows a redirect to another host.
+    """
+    import httpx
+
+    from cognitrix.utils.webhooks import check_public_url
+
+    method = str(method or 'GET').upper()
+    if method not in _METHODS:
+        raise SendError('bad_method', f'unsupported method {method}')
+    if body is not None and json_body is not None:
+        raise SendError('bad_body', 'send either body or json_body, not both')
+    if body is not None and len(body) > _MAX_BODY_IN:
+        raise SendError('body_too_large', 'the request body is too large')
+
+    allow_private = app_setting('COGNITRIX_WEBFETCH_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
+
+    # The address itself may carry a placeholder (an API key in the query).
+    # Its host is the part before any placeholder, so check that first.
+    raw_host = _host(url)
+    if PLACEHOLDER_RE.search(raw_host):
+        raise SendError('bad_url', 'a credential cannot be part of the host name')
+    try:
+        real_url = resolver.fill(url, raw_host)
+        send_headers = {str(k): str(resolver.fill(str(v), raw_host)) for k, v in (headers or {}).items()}
+        if credential:
+            send_headers.update(resolver.auth_headers(str(credential).strip(), raw_host))
+        send_body = resolver.fill(body, raw_host) if body is not None else None
+        send_json = _fill_json(json_body, resolver, raw_host) if json_body is not None else None
+    except SecretUseError as exc:
+        raise SendError('credential_not_allowed', str(exc), denied=True) from None
+
+    secrets_map = resolver.redaction_map()
+    current = real_url
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+            for _hop in range(_MAX_REDIRECTS + 1):
+                reason = await asyncio.to_thread(
+                    check_public_url, current, label='URL', allow_private=allow_private,
+                    allow_env='COGNITRIX_WEBFETCH_ALLOW_PRIVATE',
+                )
+                if reason:
+                    raise SendError('blocked_url', redact(str(reason), secrets_map))
+                response = await client.request(
+                    method, current, headers=send_headers, content=send_body, json=send_json,
+                )
+                location = response.headers.get('location')
+                if not (response.is_redirect and location):
+                    return Sent(response, method)
+                nxt = urljoin(current, location)
+                if resolver.used and _host(nxt) != _host(current):
+                    # Never carry a credential to another host.
+                    return Sent(response, method, stopped_at=nxt)
+                if response.status_code in (301, 302, 303) and method not in ('GET', 'HEAD'):
+                    method, send_body, send_json = 'GET', None, None
+                current = nxt
+            raise SendError('too_many_redirects', 'too many redirects')
+    except httpx.HTTPError as exc:
+        raise SendError('http_error', redact(f'request failed: {exc}', secrets_map)) from None
+    finally:
+        await resolver.mark_used()
+
+
 @tool(category='web', retryable=False, max_attempts=1)
 async def http_request(
     url: str,
@@ -89,17 +178,6 @@ async def http_request(
     Returns:
         str: The status, a few useful response headers and the response body.
     """
-    import httpx
-
-    from cognitrix.utils.webhooks import check_public_url
-
-    method = str(method or 'GET').upper()
-    if method not in _METHODS:
-        return ToolOutcome.failure('bad_method', f"Error: unsupported method {method}")
-    if body is not None and json_body is not None:
-        return ToolOutcome.failure('bad_body', 'Error: send either body or json_body, not both')
-    if body is not None and len(body) > _MAX_BODY_IN:
-        return ToolOutcome.failure('body_too_large', 'Error: the request body is too large')
     try:
         max_length = max(200, min(int(max_length), 200_000))
     except (TypeError, ValueError):
@@ -112,58 +190,19 @@ async def http_request(
         return ToolOutcome.failure(
             'no_credentials', 'Error: saved credentials are only available to a signed-in person',
         )
-
-    allow_private = app_setting('COGNITRIX_WEBFETCH_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
-
-    # The address itself may carry a placeholder (an API key in the query).
-    # Its host is the part before any placeholder, so check that first.
-    raw_host = _host(url)
-    if PLACEHOLDER_RE.search(raw_host):
-        return ToolOutcome.failure('bad_url', 'Error: a credential cannot be part of the host name')
     try:
-        real_url = resolver.fill(url, raw_host)
-        send_headers = {str(k): str(resolver.fill(str(v), raw_host)) for k, v in (headers or {}).items()}
-        if credential:
-            send_headers.update(resolver.auth_headers(str(credential).strip(), raw_host))
-        send_body = resolver.fill(body, raw_host) if body is not None else None
-        send_json = _fill_json(json_body, resolver, raw_host) if json_body is not None else None
-    except SecretUseError as exc:
-        return ToolOutcome.failure('credential_not_allowed', f'Error: {exc}', denied=True)
-
+        sent = await send_signed(resolver, url, method=method, headers=headers, body=body, json_body=json_body,
+                                 credential=credential)
+    except SendError as exc:
+        return ToolOutcome.failure(exc.code, f'Error: {exc.message}', denied=exc.denied)
     secrets_map = resolver.redaction_map()
-    current = real_url
-    try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
-            for _hop in range(_MAX_REDIRECTS + 1):
-                reason = await asyncio.to_thread(
-                    check_public_url, current, label='URL', allow_private=allow_private,
-                    allow_env='COGNITRIX_WEBFETCH_ALLOW_PRIVATE',
-                )
-                if reason:
-                    return ToolOutcome.failure('blocked_url', redact(f'Error: {reason}', secrets_map))
-                response = await client.request(
-                    method, current, headers=send_headers, content=send_body, json=send_json,
-                )
-                location = response.headers.get('location')
-                if not (response.is_redirect and location):
-                    break
-                nxt = urljoin(current, location)
-                if resolver.used and _host(nxt) != _host(current):
-                    # Never carry a credential to another host.
-                    return ToolOutcome.success(redact(
-                        f'HTTP {response.status_code} redirect to {nxt}\n'
-                        'Not followed: the request carried a saved credential and the redirect goes to another host.',
-                        secrets_map,
-                    ))
-                if response.status_code in (301, 302, 303) and method not in ('GET', 'HEAD'):
-                    method, send_body, send_json = 'GET', None, None
-                current = nxt
-            else:
-                return ToolOutcome.failure('too_many_redirects', 'Error: too many redirects')
-    except httpx.HTTPError as exc:
-        return ToolOutcome.failure('http_error', redact(f'Error: request failed: {exc}', secrets_map))
-    finally:
-        await resolver.mark_used()
+    if sent.stopped_at:
+        return ToolOutcome.success(redact(
+            f'HTTP {sent.response.status_code} redirect to {sent.stopped_at}\n'
+            'Not followed: the request carried a saved credential and the redirect goes to another host.',
+            secrets_map,
+        ))
+    response, method = sent.response, sent.method
 
     shown = [f'{name}: {response.headers[name]}' for name in _SHOWN_HEADERS if name in response.headers]
     # Scrub before cutting, so a value split by the cut can't leak its start.

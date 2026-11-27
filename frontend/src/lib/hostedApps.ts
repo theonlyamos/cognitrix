@@ -54,7 +54,22 @@ export interface AppVersion {
   created: string;
 }
 
+/** What the app's own server code may use, as its owner chose (never a value). */
+export interface AppAccessInfo {
+  apps: { id: string; name: string; account: string; level: '' | 'read' | 'all'; asked: boolean }[];
+  credentials: { name: string; kind: string; description: string; allowed_hosts: string[]; allowed: boolean; asked: boolean }[];
+  secrets: { name: string; hint: string }[];
+  /** Asked for by the agent that built it, and not there yet. */
+  asked: { apps: string[]; credentials: string[]; secrets: string[] };
+  paused: boolean;
+  needs_restart: boolean;
+  can_restart: boolean;
+  full_api: boolean;
+}
+
 export interface AppDetail extends AppSummary {
+  /** Owner only: how many things on the Access tab wait for them. */
+  access_waiting?: number;
   versions?: AppVersion[];
   task?: { id: string; title: string; schedule: string } | null;
   people?: { id: string; name: string }[];
@@ -98,6 +113,13 @@ export function appLink(app: Pick<AppSummary, 'slug'>): string {
 export async function openUrl(ref: string): Promise<string> {
   const { data } = await api.post<{ url: string }>(`/hosted-apps/${encodeURIComponent(ref)}/open`);
   return data.url;
+}
+
+/** A page inside the app from ?at= (a link opened on its own lands here with it):
+ *  only a path within the app, never another site. */
+export function pageInApp(at: string | null): string {
+  const page = (at || '').replace(/^[/\\]+/, '');
+  return /^[a-z][a-z0-9+.-]*:/i.test(page) || page.includes('\\') || /(^|\/)\.\.(\/|$)/.test(page.split(/[?#]/)[0]) ? '' : page;
 }
 
 /** Open an app in its own window: a desktop window in the app, a new tab on the web.

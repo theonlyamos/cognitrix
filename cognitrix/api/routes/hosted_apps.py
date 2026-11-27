@@ -13,14 +13,27 @@
     GET    /api/v1/hosted-apps/{id}/permissions     what I allowed it (notifications, connected apps)
     PUT    /api/v1/hosted-apps/{id}/permissions     my answer about one of them
     POST   /api/v1/hosted-apps/{id}/bridge          a connected-app call the app made (window.cognitrix)
+    GET    /api/v1/hosted-apps/{id}/access          what its server code may use (owner)
+    PUT    /api/v1/hosted-apps/{id}/access          connected apps, saved sign-ins, pause (owner)
+    PUT    /api/v1/hosted-apps/{id}/secrets         the app's own secrets (owner)
     DELETE /api/v1/hosted-apps/{id}
+
+An app's server code calls ``/api/v1/app-access`` with its own key (``app_access_api``
+below; see ``cognitrix/hosted_apps/access.py``):
+
+    GET    /api/v1/app-access                       what it may use right now
+    GET    /api/v1/app-access/apps                  the allowed connected apps and their tools
+    POST   /api/v1/app-access/apps/call             run one of those tools as the owner
+    POST   /api/v1/app-access/http                  send a request with a saved sign-in filled in
 
 The app itself is served at ``/a/<slug>/~<token>/...`` (``app_proxy`` below,
 mounted at the app root): the token in the path says who is looking, and the
 response's Content-Security-Policy sandboxes the page into an opaque origin so
 the app's code can never read this app's storage or act as the viewer.
 ``/a/<slug>/`` without a token sends people to ``/apps/open/<slug>``, which
-signs them in and comes back with one.
+signs them in and comes back with one. A tokened link opened on its own (not in
+Cognitrix's frame) goes to ``/apps/open/<slug>?bare=1``: the same app with nothing
+around it, but with Cognitrix's page there to answer ``window.cognitrix``.
 """
 from __future__ import annotations
 
@@ -36,8 +49,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from cognitrix.common.security import AuthContext, jwt_only
-from cognitrix.hosted_apps import bridge, icons, store
+from cognitrix.common.security import AuthContext, get_auth_context, jwt_only
+from cognitrix.hosted_apps import access, bridge, icons, store
 from cognitrix.hosted_apps.models import POWERS, HostedApp
 from cognitrix.hosted_apps.runner import RunnerError, default_runtime, runner_for
 from cognitrix.session_ownership import principal_key
@@ -45,6 +58,7 @@ from cognitrix.session_ownership import principal_key
 logger = logging.getLogger('cognitrix.apps')
 
 hosted_apps_api = APIRouter(prefix='/hosted-apps')
+app_access_api = APIRouter(prefix='/app-access')
 app_proxy = APIRouter()
 
 
@@ -152,6 +166,13 @@ async def get_app(ref: str, ctx: AuthContext = Depends(jwt_only)):
         out['task'] = await store.task_info(app.task_id)
     if role == store.ROLE_OWNER:
         out['people'] = [{'id': k, 'name': v} for k, v in people.items() if k != app.owner_id]
+    allowed = await access.row_for(app)
+    if allowed is not None:
+        # A key that only opens what the owner allowed is not "the Cognitrix API".
+        out['uses_api'] = bool(app.api_key_id and allowed.full_api)
+        if role == store.ROLE_OWNER:
+            waiting = await access.waiting(app, allowed)
+            out['access_waiting'] = sum(len(v) for v in waiting.values()) + int(bool(allowed.paused))
     return out
 
 
@@ -376,6 +397,112 @@ async def app_bridge(ref: str, body: BridgeCall, ctx: AuthContext = Depends(jwt_
         raise HTTPException(status_code=exc.status, detail=exc.message) from None
 
 
+# ------------------------------------------------------------------ what its server code may use
+
+def _no(exc: access.AccessError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=exc.message)
+
+
+@hosted_apps_api.get('/{ref}/access')
+async def get_access(ref: str, ctx: AuthContext = Depends(jwt_only)):
+    app, role = await _app(ref, ctx)
+    _owner_only(role)
+    return await access.describe(app)
+
+
+class AccessChoice(BaseModel):
+    apps: dict[str, str] | None = None
+    """Connected app id -> 'read', 'all' or '' (off)."""
+    credentials: list[str] | None = Field(default=None, max_length=200)
+    paused: bool | None = None
+
+
+@hosted_apps_api.put('/{ref}/access')
+async def put_access(ref: str, body: AccessChoice, ctx: AuthContext = Depends(jwt_only)):
+    """The owner's own choice, from Cognitrix's page: neither the app nor an agent can make it."""
+    app, role = await _app(ref, ctx)
+    _owner_only(role)
+    try:
+        await access.set_access(app, apps=body.apps, credentials=body.credentials, paused=body.paused)
+    except access.AccessError as exc:
+        raise _no(exc) from None
+    return await access.describe(app)
+
+
+class SecretsChange(BaseModel):
+    put: dict[str, str] | None = None
+    remove: list[str] | None = Field(default=None, max_length=access.MAX_SECRETS)
+
+
+@hosted_apps_api.put('/{ref}/secrets')
+async def put_secrets(ref: str, body: SecretsChange, ctx: AuthContext = Depends(jwt_only)):
+    """Add, replace or remove the app's own secrets. Values are never sent back."""
+    app, role = await _app(ref, ctx)
+    _owner_only(role)
+    try:
+        await access.set_secrets(app, put=body.put, remove=body.remove)
+    except access.AccessError as exc:
+        raise _no(exc) from None
+    return await access.describe(app)
+
+
+async def _calling_app(ctx: AuthContext = Depends(get_auth_context)):
+    """The app whose own key signed this request."""
+    try:
+        return await access.calling_app(str(ctx.api_key.id) if ctx.api_key is not None else '')
+    except access.AccessError as exc:
+        raise _no(exc) from None
+
+
+@app_access_api.get('')
+async def app_access(found=Depends(_calling_app)):
+    return await access.summary(*found)
+
+
+@app_access_api.get('/apps')
+async def app_access_apps(found=Depends(_calling_app)):
+    try:
+        return {'apps': await access.list_apps(*found)}
+    except access.AccessError as exc:
+        raise _no(exc) from None
+
+
+class AppToolCall(BaseModel):
+    app: str = Field(max_length=200)
+    tool: str = Field(max_length=200)
+    arguments: dict = {}
+
+
+@app_access_api.post('/apps/call')
+async def app_access_call(body: AppToolCall, found=Depends(_calling_app)):
+    try:
+        return {'value': await access.call_app(*found, body.app, body.tool, body.arguments)}
+    except access.AccessError as exc:
+        raise _no(exc) from None
+
+
+class AppRequest(BaseModel):
+    url: str = Field(max_length=8000)
+    method: str = 'GET'
+    headers: dict[str, str] | None = None
+    body: str | None = None
+    json_body: Any = Field(default=None, alias='json')
+    credential: str | None = Field(default=None, max_length=80)
+
+    model_config = {'populate_by_name': True}
+
+
+@app_access_api.post('/http')
+async def app_access_http(body: AppRequest, found=Depends(_calling_app)):
+    """Send a request with one of the owner's saved sign-ins filled in. The app gets the
+    answer, never the value."""
+    try:
+        return await access.send(*found, url=body.url, method=body.method, headers=body.headers, body=body.body,
+                                 json_body=body.json_body, credential=body.credential)
+    except access.AccessError as exc:
+        raise _no(exc) from None
+
+
 # ------------------------------------------------------------------ the app itself
 
 _HOP = {'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers',
@@ -460,6 +587,14 @@ async def app_request(slug: str, rest: str, request: Request):
         return RedirectResponse('/a/' + slug + '/~' + token + '/', status_code=302)
     if request.method == 'OPTIONS':
         return Response(status_code=204, headers=_cors({}))
+    if request.method == 'GET' and request.headers.get('sec-fetch-dest', '').lower() == 'document':
+        # The link was opened on its own (a new tab, a pasted address, a popup the app opened)
+        # instead of inside Cognitrix's frame. Alone, the page has nobody to ask for
+        # notifications or connected apps (window.cognitrix), so show it inside Cognitrix's
+        # page with nothing around it. That page signs the person in, so an old link works too.
+        at = path + (f'?{request.url.query}' if request.url.query else '')
+        where = f'/apps/open/{slug}?bare=1' + (f'&at={urllib.parse.quote(at, safe="")}' if at else '')
+        return RedirectResponse(where, status_code=302, headers={'Cache-Control': 'no-store'})
     read = store.read_open_token(token, slug)
     viewer, thumb = read if read else ('', False)
     app = await store.by_slug(slug) if viewer else None

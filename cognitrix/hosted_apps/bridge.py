@@ -16,8 +16,13 @@ remembers their answer (``store.set_permission``), and does the work:
 - ``cognitrix.permissions.query(power) / request(power)``, and
   ``cognitrix.host()``: where the app is shown (desktop or web, installed).
 
-Calls reject when nothing answers within a few seconds, for example when the
-app's link was opened outside Cognitrix.
+Calls reject when nothing answers within a few seconds. An app's link opened on
+its own (a new tab, a pasted address) is moved into Cognitrix's page by the proxy
+(``/apps/open/<slug>?bare=1``, the app with nothing around it), so there is
+someone to answer there too.
+
+This is the page asking whoever is looking. The app's server code, with nobody
+looking, uses what its owner allowed instead: see ``access.py``.
 """
 from __future__ import annotations
 

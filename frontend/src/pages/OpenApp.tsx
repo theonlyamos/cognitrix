@@ -6,17 +6,22 @@ import { AppStatusBadge } from '@/components/hosted-apps/parts';
 import { api, errorMessage } from '@/lib/api';
 import { desktop, isDesktop, windowAction } from '@/lib/desktop';
 import { installedChanged, useInstalledApp } from '@/lib/installedApps';
-import { APP_FRAME_SANDBOX, openUrl, type AppSummary } from '@/lib/hostedApps';
+import { APP_FRAME_SANDBOX, openUrl, pageInApp, type AppSummary } from '@/lib/hostedApps';
 import { tr } from '@/lib/i18n';
 
 /** /apps/open/:slug, the app's stable link: signs you in, then shows the running app full
  *  screen under a thin bar with a way back to Cognitrix (the button, or Esc).
- *  With ?window=1 it is the app's own window (Open button), and the way out closes it. */
+ *  With ?window=1 it is the app's own window (Open button), and the way out closes it.
+ *  With ?bare=1 the app fills the page with nothing around it: where the app's own link
+ *  lands when it is opened by itself (a new tab, a pasted address), so that it still has
+ *  Cognitrix to ask for notifications and connected apps. */
 export default function OpenApp() {
   const { slug = '' } = useParams();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const ownWindow = params.get('window') === '1';
+  const bare = params.get('bare') === '1';
+  const page = pageInApp(params.get('at'));
   const trayItem = params.get('tray') || undefined;
   const [url, setUrl] = useState('');
   const [app, setApp] = useState<AppSummary | null>(null);
@@ -37,12 +42,12 @@ export default function OpenApp() {
 
   useEffect(() => {
     let live = true;
-    openUrl(slug).then((u) => { if (live) setUrl(u); })
+    openUrl(slug).then((u) => { if (live) setUrl(u + page); })
       .catch((e) => { if (live) setError(errorMessage(e, tr('ui.openApp.youCanTOpenThis'))); });
     api.get<AppSummary>(`/hosted-apps/${encodeURIComponent(slug)}`).then((r) => { if (live) setApp(r.data); })
       .catch(() => undefined);
     return () => { live = false; };
-  }, [slug]);
+  }, [slug, page]);
 
   const back = app ? `/apps/${app.id}` : '/apps';
   const leave = useCallback(() => {
@@ -61,10 +66,11 @@ export default function OpenApp() {
   }, [app]);
   useEffect(() => {
     // Esc leaves while focus is on Cognitrix (keys pressed inside the app stay with the app).
+    if (bare) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') leave(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [leave]);
+  }, [bare, leave]);
 
   if (error) {
     return (
@@ -85,7 +91,7 @@ export default function OpenApp() {
 
   return (
     <div className="flex h-dvh flex-col bg-bg text-fg">
-      <header className="flex h-11 flex-none items-center gap-2 border-b border-line bg-panel px-2 md:px-3">
+      {!bare && <header className="flex h-11 flex-none items-center gap-2 border-b border-line bg-panel px-2 md:px-3">
         {ownWindow ? (
           <button type="button" onClick={leave} title={tr('ui.openApp.closeThisWindowEsc')}
             className="inline-flex h-9 flex-none items-center gap-1.5 rounded-md px-2 text-[13px] font-medium text-fg-dim hover:bg-panel-2 hover:text-fg">
@@ -107,7 +113,7 @@ export default function OpenApp() {
             <ExternalLink size={15} aria-hidden />
           </a>
         )}
-      </header>
+      </header>}
       {url ? (
         <iframe ref={frame} src={url} title={app?.title || tr('ui.openApp.app')} sandbox={APP_FRAME_SANDBOX} className="min-h-0 w-full flex-1 border-0 bg-white" />
       ) : (

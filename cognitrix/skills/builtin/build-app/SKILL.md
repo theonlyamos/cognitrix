@@ -11,7 +11,7 @@ args:
     required: true
 tags: [apps, web, build, publish, dashboard]
 category: development
-version: "1.3.0"
+version: "1.4.0"
 author: cognitrix
 safety:
   risk-level: low
@@ -57,7 +57,11 @@ a second one: edit its folder and publish again with its `app_id`.
      give an installed app its own tray (menu bar) icon and menu;
      `cognitrix.apps.list()` and `cognitrix.apps.call(app, tool, args)` use the person's connected apps
      (Gmail, Calendar, ...) as them: reads run, changes ask the person each time.
-     Use these only when the user wants that; they're all optional.
+     Use these only when the user wants that; they're all optional. They work wherever the app is
+     open, including its link in a browser tab of its own.
+   - For work with nobody looking (a nightly sync, a webhook, a scheduled digest), and for any key or
+     password, see "Using connected apps and saved sign-ins from the server" below. Never put a key,
+     token or password in the app's files.
    - Don't commit `node_modules` or `.venv`; install them with the install command.
 4. **Make its icon. Every app needs one.** It shows on the Apps page and becomes the shortcut icon
    (Start menu, Dock, desktop) when someone installs the app. Save a square `icon.svg` in the app's
@@ -101,6 +105,52 @@ a second one: edit its folder and publish again with its `app_id`.
    Don't tell the user it's done while Check App shows errors or a test fails.
 10. **Tell the user** in two or three sentences what the app does, which flows you tested, and that the
    card in the chat opens it. It is private to them until they share it.
+
+## Using connected apps and saved sign-ins from the server
+
+The app's server code can act as its owner with nobody looking. You can only **ask** for this in
+`Publish App`; the owner allows it on the app's page, under **Access**. Tell them what you asked for
+and why, in plain words.
+
+- `connected_apps: ["Gmail"]`: the owner picks Read only or Read and change for each.
+- `credentials: ["GITHUB_TOKEN"]`: saved sign-ins (names from `List Credentials`). The app never
+  gets the value: Cognitrix sends the request for it.
+- `secrets: ["STRIPE_WEBHOOK_SECRET"]`: values only this app needs. The owner types them on the
+  Access tab; the app reads them as environment variables after a restart from that tab.
+
+The server code calls Cognitrix with the two environment variables it is started with
+(`COGNITRIX_API_URL`, `COGNITRIX_API_KEY`; they are there once you ask for a connected app or a
+sign-in), sending `Authorization: Bearer $COGNITRIX_API_KEY`:
+
+- `GET  {url}/api/v1/app-access`: what is allowed right now and what is still `waiting`.
+- `GET  {url}/api/v1/app-access/apps`: the allowed connected apps and their tools.
+- `POST {url}/api/v1/app-access/apps/call` with `{"app": "Gmail", "tool": "search_mail",
+  "arguments": {...}}`: answers `{"value": ...}`.
+- `POST {url}/api/v1/app-access/http` with `{"url": "https://api.github.com/user", "method": "GET",
+  "headers": {...}, "json": {...} or "body": "...", "credential": "GITHUB_TOKEN"}`: Cognitrix adds
+  the sign-in and sends it. Or write `{{secret:GITHUB_TOKEN}}` where the value goes (a header, the
+  address, the body). Answers `{"status", "headers", "body"}` (`body_base64` when it isn't text).
+  A sign-in only goes to the sites it was saved for.
+
+```python
+import json, os, urllib.request, urllib.error
+
+def cognitrix(path, payload=None):
+    req = urllib.request.Request(
+        os.environ["COGNITRIX_API_URL"] + "/api/v1/app-access" + path,
+        data=json.dumps(payload).encode() if payload is not None else None,
+        headers={"Authorization": "Bearer " + os.environ["COGNITRIX_API_KEY"],
+                 "Content-Type": "application/json"})
+    try:
+        return json.load(urllib.request.urlopen(req, timeout=60))
+    except urllib.error.HTTPError as e:   # 403: the owner has not allowed it (yet)
+        raise RuntimeError(json.load(e).get("detail", "Not allowed")) from None
+```
+
+Until the owner says yes, calls answer 403 with a sentence saying what to allow and where. Catch it
+and show that sentence in the app (a banner, a status line); don't crash and don't retry in a loop.
+Call these from the server only, never from browser code: the key must not reach the page.
+`Test App` copies get no key, so guard these calls when `APP_TEST=1`.
 
 ## Updating later
 

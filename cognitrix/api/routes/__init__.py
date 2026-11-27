@@ -34,7 +34,7 @@ from ...api.routes.oauth import oauth_api
 from ...api.routes.onboarding import onboarding_api
 from ...api.routes.whats_new import whats_new_api
 from ...api.routes.folders import folders_api
-from ...api.routes.hosted_apps import hosted_apps_api
+from ...api.routes.hosted_apps import app_access_api, hosted_apps_api
 from ...api.routes.base import api_router
 from ...api.routes.app_settings import app_settings_api
 from ...api.routes.server_setup import server_setup_api
@@ -74,6 +74,7 @@ api_router.include_router(artifact_pages_api)
 api_router.include_router(produced_files_api)
 api_router.include_router(app_views_api)
 api_router.include_router(hosted_apps_api)
+api_router.include_router(app_access_api)
 api_router.include_router(skills_api)
 api_router.include_router(providers_api)
 api_router.include_router(app_settings_api)

@@ -38,7 +38,8 @@ def _has_saved_tests(app) -> bool:
 @tool(category=APP_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
 async def publish_app(title: str, start_command: str, folder: str = '', install_command: str = '', note: str = '',
                       app_id: str = '', description: str = '', use_cognitrix_api: bool = False, branch: str = '',
-                      icon: str = '', *, parent=None) -> ToolOutcome:
+                      icon: str = '', connected_apps: list | None = None, credentials: list | None = None,
+                      secrets: list | None = None, *, parent=None) -> ToolOutcome:
     """Publish a live web app people open from a link that never changes: an internal tool, dashboard,
     form, review queue, or a staging copy of a project. Unlike Publish Artifact (one static page), an app
     is a real server with its own backend and database. It runs in the agents' sandboxed computer
@@ -63,6 +64,13 @@ async def publish_app(title: str, start_command: str, folder: str = '', install_
     - Give it an icon: a square icon.svg (or a 512 x 512 icon.png) in its folder. It shows on the Apps
       page and becomes the shortcut icon when someone installs the app on their computer.
 
+    The app's SERVER code can use the person's connected apps (Gmail, Calendar, any MCP server), their
+    saved sign-ins and its own secrets, with nobody looking (a nightly sync, a webhook). You can only ask:
+    name what it needs in connected_apps / credentials / secrets, and the person allows it on the app's
+    page under Access. Until they do, those calls answer 403 with a message saying so: show that in the
+    app instead of crashing. How the code calls them is in the build-app skill ("Using connected apps
+    and saved sign-ins from the server"). Never write a key or password into the app's files.
+
     If the new version doesn't answer HTTP within 90 seconds it is marked failed and the result shows
     its log; the live version keeps serving. Fix it and publish again with the same app_id.
 
@@ -80,6 +88,12 @@ async def publish_app(title: str, start_command: str, folder: str = '', install_
         branch (str): For a preview of a project: the git branch it was built from.
         icon (str): The icon file inside the folder, e.g. "static/logo.svg"; empty looks for icon.svg,
             icon.png (also in static/, public/, assets/) and favicon.svg/png.
+        connected_apps (list): Names of the person's connected apps its server code needs, e.g. ["Gmail"].
+            The whole list each time; [] takes the ask back. Leave out to keep what was asked before.
+        credentials (list): Names of saved sign-ins (see List Credentials) its server code needs to send
+            requests with, e.g. ["GITHUB_TOKEN"]. The app never sees the values.
+        secrets (list): Names of environment variables the person must fill in for this app only,
+            e.g. ["STRIPE_WEBHOOK_SECRET"]. They type the values on the app's page; you never see them.
     """
     user_key = _owner()
     if not user_key:
@@ -98,18 +112,20 @@ async def publish_app(title: str, start_command: str, folder: str = '', install_
             note=note, app_id=str(app_id or '').strip(), description=description,
             use_cognitrix_api=bool(use_cognitrix_api), branch=branch, agent_id=_agent_id(parent),
             session_id=str(ctx.session_id or ''), task_id=str(ctx.task_id or ''), icon=str(icon or '').strip(),
+            wants={'apps': connected_apps, 'credentials': credentials, 'secrets': secrets},
         )
     except store.AppError as exc:
         return ToolOutcome.failure(exc.code, exc.message)
     icon_note = store.icon_note(app)
     entity = [EntityRef(type='hosted_app', id=str(app.id), name=app.title)]
+    access_note = await _access_note(app)
     if row.status != 'live':
         live = f' Version {app.version} keeps serving.' if app.version else ''
         log = f'\nLog:\n{row.log[-3000:]}' if row.log else ''
         return ToolOutcome.failure(
             'did_not_start',
             f'Version {row.number} of "{app.title}" (app_id {app.id}) did not start: {row.error}{live}{log}'
-            + (f'\n{icon_note}' if icon_note else ''),
+            + (f'\n{icon_note}' if icon_note else '') + (f'\n{access_note}' if access_note else ''),
         )
     what = 'Published' if created else f'Updated to version {row.number}:'
     where = "the agents' sandboxed computer" if app.runtime == 'sandbox' else 'this machine'
@@ -118,9 +134,36 @@ async def publish_app(title: str, start_command: str, folder: str = '', install_
         f'It is private to the person until they share it; the link is /apps/open/{app.slug}. '
         'The person sees a card in the chat that opens it. Now look at it with Check App and click through it '
         'with Test App' + (' (no steps re-runs its saved tests)' if _has_saved_tests(app) else '')
-        + ' before you say it is done.' + (f' {icon_note}' if icon_note else ''),
+        + ' before you say it is done.' + (f' {icon_note}' if icon_note else '')
+        + (f' {access_note}' if access_note else ''),
         entities=entity,
     )
+
+
+async def _access_note(app) -> str:
+    """What the app is still waiting for from its owner, for the agent to pass on."""
+    from cognitrix.hosted_apps import access
+
+    row = await access.row_for(app)
+    if row is None:
+        return ''
+    waiting = await access.waiting(app, row)
+    parts = []
+    if waiting['apps']:
+        parts.append('connected apps: ' + ', '.join(waiting['apps']))
+    if waiting['credentials']:
+        parts.append('saved sign-ins: ' + ', '.join(waiting['credentials']))
+    if waiting['secrets']:
+        parts.append('secrets to fill in: ' + ', '.join(waiting['secrets']))
+    notes = []
+    if parts:
+        notes.append(f'Its server code is waiting for the person to allow these on the app\'s page '
+                     f'(/apps/{app.slug}, Access tab): ' + '; '.join(parts) + '. Tell them, in plain words. '
+                     'Filling in a secret needs a restart from that tab.')
+    if row.paused:
+        notes.append('Access to connected apps, saved sign-ins and secrets is paused until the owner checks '
+                     'this version on the Access tab.')
+    return ' '.join(notes)
 
 
 @tool(category=APP_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
