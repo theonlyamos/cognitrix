@@ -144,7 +144,7 @@ function inboxSource(item: InboxItem): string {
 }
 
 function inboxHref(item: InboxItem): string {
-  if (item.kind === 'notification' && item.link) return item.link;
+  if (item.kind === 'notification') return item.link || `/inbox?item=${encodeURIComponent(item.id)}`;
   if (item.kind === 'approval' && item.href) return item.href;
   return '/inbox';
 }
@@ -643,7 +643,11 @@ export default function Dashboard() {
                   <ul className="divide-y divide-line">
                     {inbox.slice(0, 4).map((item) => (
                       <li key={`${item.kind}:${item.id}`}>
-                        <Link to={inboxHref(item)} className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-panel-2/60">
+                        <Link
+                          to={inboxHref(item)}
+                          // An alert that opens its own page is done once opened. One without a link opens in the Inbox, which marks it read there.
+                          onClick={item.kind === 'notification' && item.link ? () => notifications?.openInboxItem(item) : undefined}
+                          className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-panel-2/60">
                           <span className={cn('w-[74px] flex-none rounded-full px-1.5 py-0.5 text-center text-[11px] font-medium', KIND_STYLE[item.kind].className)}>
                             {KIND_STYLE[item.kind].label}
                           </span>

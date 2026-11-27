@@ -83,3 +83,65 @@ describe('system notifications', () => {
     expect(systemNotify).not.toHaveBeenCalled();
   });
 });
+
+describe('opening inbox items', () => {
+  it('marks an alert read and drops it from the inbox, but leaves approvals', async () => {
+    const { api } = await import('@/lib/api');
+    const alert = { kind: 'notification', id: 'n1', title: 'Backup finished' };
+    const approval = { kind: 'approval', source: 'chat', id: 'ap1', tool_name: 'Shell' };
+    let items: unknown[] = [approval, alert];
+    vi.mocked(api.get).mockImplementation(async (path: string) => ({ data: path === '/inbox' ? { items } : [] }));
+    vi.mocked(api.post).mockImplementation(async () => {
+      items = [approval];
+      return { data: { read: true } };
+    });
+    render(<NotificationsProvider><Probe /></NotificationsProvider>);
+    await waitFor(() => expect(ctx.inbox).toHaveLength(2));
+    act(() => ctx.openInboxItem(ctx.inbox[0]));
+    expect(api.post).not.toHaveBeenCalled();
+    expect(ctx.inbox).toHaveLength(2);
+    act(() => ctx.openInboxItem(ctx.inbox[1]));
+    expect(ctx.inbox.map((i) => i.id)).toEqual(['ap1']);
+    expect(api.post).toHaveBeenCalledWith('/notifications/n1/read');
+    await waitFor(() => expect(vi.mocked(api.get).mock.calls.filter(([p]) => p === '/inbox').length).toBeGreaterThan(1));
+    expect(ctx.inbox.map((i) => i.id)).toEqual(['ap1']);
+  });
+});
+
+describe('a slow poll after an alert is opened', () => {
+  it('does not bring the alert back', async () => {
+    const { api } = await import('@/lib/api');
+    const alert = { kind: 'notification', id: 'n2', title: 'Report ready' };
+    let unread = true;
+    let hold = false;
+    let release: (() => void) | undefined;
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path !== '/inbox') return { data: [] };
+      const items = unread ? [alert] : [];
+      if (hold) {
+        // A poll that read the inbox before the alert was opened, and answers late.
+        hold = false;
+        await new Promise<void>((resolve) => { release = resolve; });
+      }
+      return { data: { items } };
+    });
+    vi.mocked(api.post).mockReset();
+    vi.mocked(api.post).mockImplementation(async () => {
+      unread = false;
+      return { data: { read: true } };
+    });
+    render(<NotificationsProvider><Probe /></NotificationsProvider>);
+    await waitFor(() => expect(ctx.inbox).toHaveLength(1));
+    hold = true;
+    let slow: Promise<void> | undefined;
+    act(() => { slow = ctx.refreshInbox(); });
+    expect(release).toBeDefined();
+    act(() => ctx.openInboxItem(ctx.inbox[0]));
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    await act(async () => {
+      release?.();
+      await slow;
+    });
+    expect(ctx.inbox).toHaveLength(0);
+  });
+});
