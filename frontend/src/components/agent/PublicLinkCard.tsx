@@ -4,6 +4,7 @@ import { isDesktop } from '@/lib/desktop';
 import { Card, Check, Pill, buttonClass, inputClass, linkButtonClass, primaryButtonClass } from '@/components/agent/ui';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
+import { linksOrigin, useAddresses } from '@/lib/tailscale';
 
 export interface PublicLink {
   enabled: boolean;
@@ -39,8 +40,8 @@ export function serverOrigin(): string {
   }
 }
 
-export function embedSnippet(widgetUrl: string): string {
-  return `<script src="${serverOrigin()}${widgetUrl}" async></script>`;
+export function embedSnippet(widgetUrl: string, origin: string = serverOrigin()): string {
+  return `<script src="${origin}${widgetUrl}" async></script>`;
 }
 
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -74,6 +75,7 @@ export default function PublicLinkCard({ agentId }: { agentId: string }) {
   const [notice, setNotice] = useState('');
   const [chats, setChats] = useState<VisitorChat[] | null>(null);
   const [openChat, setOpenChat] = useState<{ id: string; messages: Message[] } | null>(null);
+  const addresses = useAddresses();
 
   const apply = useCallback((next: PublicLinkView) => {
     setView(next);
@@ -123,7 +125,9 @@ export default function PublicLinkCard({ agentId }: { agentId: string }) {
   }
 
   const link = view.link;
-  const fullUrl = link ? `${serverOrigin()}${link.url}` : '';
+  // Visitors are outside: the server's public address when it has one.
+  const origin = linksOrigin(addresses, serverOrigin());
+  const fullUrl = link ? `${origin}${link.url}` : '';
 
   const save = () => call(() => api.put(base, {
     title: form?.title ?? '',
@@ -192,9 +196,9 @@ export default function PublicLinkCard({ agentId }: { agentId: string }) {
             <div className="text-[14.5px] font-medium">{tr('ui.agent.publicLinkCard.chatBubbleForAWebsite')}</div>
             <div className="mt-0.5 text-[13px] text-fg-dim">{tr('ui.agent.publicLinkCard.pasteThisBeforeBodyOn')}</div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <input readOnly value={embedSnippet(link.widget_url)} aria-label={tr('ui.agent.publicLinkCard.websiteCode')} className={cn(inputClass, 'min-w-0 flex-1 font-mono text-[12.5px]')}
+              <input readOnly value={embedSnippet(link.widget_url, origin)} aria-label={tr('ui.agent.publicLinkCard.websiteCode')} className={cn(inputClass, 'min-w-0 flex-1 font-mono text-[12.5px]')}
                 onFocus={(e) => e.currentTarget.select()} />
-              <CopyButton text={embedSnippet(link.widget_url)} label={tr('ui.agent.publicLinkCard.copyWebsiteCode')} />
+              <CopyButton text={embedSnippet(link.widget_url, origin)} label={tr('ui.agent.publicLinkCard.copyWebsiteCode')} />
             </div>
           </div>
 

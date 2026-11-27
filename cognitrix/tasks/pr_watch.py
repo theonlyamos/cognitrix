@@ -133,16 +133,24 @@ def check_seconds() -> int:
 
 
 def public_url() -> str:
-    return app_setting('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/')
+    """Where GitHub can post to: the public address in Settings, or the
+    public Tailscale address (Settings > Tailscale)."""
+    from cognitrix.common import addresses
+
+    return addresses.hooks_url()
 
 
 def webhooks_possible() -> bool:
-    """GitHub can only post to a server it can reach: not the desktop app,
-    and only over https."""
-    if os.environ.get('COGNITRIX_DESKTOP') == '1':
-        return False
+    """GitHub can only post to a server it can reach, and only over https.
+    The desktop app has no address of its own: there it takes the public
+    Tailscale address (and the timed check still runs, for when the app is closed)."""
     if app_setting('COGNITRIX_GITHUB_WEBHOOKS', '1').strip().lower() in ('0', 'false', 'off', 'no'):
         return False
+    if os.environ.get('COGNITRIX_DESKTOP') == '1':
+        from cognitrix import tailscale
+        from cognitrix.common import addresses
+
+        return addresses.funnel_passes(tailscale.ALLOW_WEBHOOKS)
     return public_url().startswith('https://')
 
 

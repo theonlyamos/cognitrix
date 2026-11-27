@@ -25,7 +25,11 @@ def configured() -> bool:
 
 
 def public_url() -> str:
-    return app_setting('COGNITRIX_PUBLIC_URL', '').strip().rstrip('/')
+    """Where people open this server, for links in emails: the public address
+    in Settings, else the Tailscale private address."""
+    from cognitrix.common import addresses
+
+    return addresses.people_url()
 
 
 def _send(to: str, subject: str, body: str) -> None:

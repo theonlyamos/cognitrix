@@ -143,8 +143,21 @@ async def lifespan(app: FastAPI):
         except Exception:
             import logging
             logging.getLogger('cognitrix.log').exception('Could not start picking up interrupted chats')
+        try:
+            # Settings > Tailscale: the two extra ways in, and the private
+            # and public addresses pointed at them.
+            from ..tailscale import service as tailscale_service
+            await tailscale_service.start(app)
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Tailscale did not start')
         yield
     finally:
+        try:
+            from ..tailscale import service as tailscale_service
+            await tailscale_service.stop()
+        except Exception:
+            pass
         try:
             # Turns cancelled from here on were interrupted, not stopped.
             from ..sessions.resume import shutting_down
@@ -219,13 +232,15 @@ _DEFAULT_CSP = (
 )
 
 
-def _content_security_policy() -> str:
+def _content_security_policy(through_tailscale: bool = False) -> str:
     configured = app_setting('COGNITRIX_CSP', '').strip()
     if configured.lower() in ('off', '0', 'false', 'none'):
         return ''
     if configured:
         return configured
-    return '' if os.environ.get('COGNITRIX_DESKTOP') == '1' else _DEFAULT_CSP
+    # The desktop app's own window is left alone; an ordinary browser that
+    # opens the app over Tailscale gets the policy like any other.
+    return '' if os.environ.get('COGNITRIX_DESKTOP') == '1' and not through_tailscale else _DEFAULT_CSP
 
 
 class SecurityHeaders:
@@ -247,7 +262,7 @@ class SecurityHeaders:
                 present = {name.lower() for name, _ in headers}
                 extra = [(b'x-content-type-options', b'nosniff'), (b'referrer-policy', b'same-origin')]
                 content_type = next((value for name, value in headers if name.lower() == b'content-type'), b'')
-                policy = _content_security_policy()
+                policy = _content_security_policy(scope.get('cognitrix.door') in ('tailnet', 'public'))
                 if policy and not docs_page and content_type.startswith(b'text/html'):
                     extra.append((b'content-security-policy', policy.encode('latin-1', 'ignore')))
                 headers.extend(item for item in extra if item[0] not in present)
@@ -284,6 +299,12 @@ class ClientTimezone:
 
 
 app.add_middleware(ClientTimezone)
+
+# Outermost: Tailscale's "who is this" headers only count on a request that
+# came through the tailnet door (cognitrix/tailscale/doors.py).
+from ..tailscale.doors import DoorGuard  # noqa: E402
+
+app.add_middleware(DoorGuard)
 
 app.include_router(api_router)
 # Apps agents built, served at /a/<slug>/~<token>/ (before the SPA catch-all).

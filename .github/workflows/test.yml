@@ -14,6 +14,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build runtime image
         run: docker build --tag cognitrix:test .
+      # Printed so a change that grows the image shows up in the check's log.
+      - name: Runtime image size and Tailscale
+        run: |
+          docker image inspect -f 'Runtime image size: {{.Size}} bytes' cognitrix:test
+          docker run --rm --user cognitrix --entrypoint sh cognitrix:test -c 'tailscale version && tailscaled --version'
       - name: Build the agents' sandbox computer image
         run: docker build --file sandbox/desktop/Dockerfile --tag cognitrix-desktop:test .
       # Printed so a change that grows the image shows up in the check's log.

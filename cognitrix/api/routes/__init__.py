@@ -46,6 +46,7 @@ from ...api.routes.chat_sharing import chat_sharing_api
 from ...api.routes.sessions import sessions_api
 from ...api.routes.skills import skills_api
 from ...api.routes.system import system_api
+from ...api.routes.tailscale import tailscale_api
 from ...api.routes.tasks import tasks_api, tasks_run_api
 from ...api.routes.team_chat import team_chat_api
 from ...api.routes.teams import teams_api, teams_run_api
@@ -112,6 +113,7 @@ api_router.include_router(account_api)
 api_router.include_router(knowledge_api)
 api_router.include_router(admin_api)
 api_router.include_router(system_api)
+api_router.include_router(tailscale_api)
 api_router.include_router(channel_hooks_api)
 api_router.include_router(channels_api)
 api_router.include_router(email_api)

@@ -78,7 +78,7 @@ def test_toggle_and_override(store):
 
 def test_every_page_has_settings():
     pages = {s.page for s in app_settings.registry().values()}
-    assert pages == {'models', 'people', 'apps', 'computers', 'notifications', 'advanced'}
+    assert pages == {'models', 'people', 'apps', 'computers', 'notifications', 'tailscale', 'advanced'}
 
 
 def test_no_code_reads_a_setting_from_the_environment():

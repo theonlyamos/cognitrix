@@ -4,6 +4,7 @@ import { api, errorMessage } from '@/lib/api';
 import { pageLink, publicLink, type PageDetail, type Sharing } from '@/lib/artifactPages';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
+import { linksOrigin, useAddresses } from '@/lib/tailscale';
 
 type Role = 'view' | 'edit';
 type General = 'people' | 'workspace' | 'public';
@@ -74,7 +75,10 @@ export function ShareDialog({ page, onClose, onChanged }: { page: PageDetail; on
     [data],
   );
   const general: General = data?.public ? 'public' : data?.everyone ? 'workspace' : 'people';
-  const link = data?.public && data.public_url ? publicLink(data.public_url) : pageLink(page.id);
+  const addresses = useAddresses();
+  const link = data?.public && data.public_url
+    ? (addresses?.links ? `${linksOrigin(addresses, '')}${data.public_url}` : publicLink(data.public_url))
+    : pageLink(page.id);
 
   const setPeople = (people: { user_id: string; role: Role }[]) => save({ people });
   const current = () => (data?.people || []).map((p) => ({ user_id: p.id, role: p.role }));

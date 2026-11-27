@@ -474,4 +474,8 @@ def _twilio_urls(request: Request, public_url: str) -> list[str]:
         urls.append(f'{proto}://{host}{path}')
     if public_url.strip():
         urls.append(public_url.strip().rstrip('/') + path)
+    from cognitrix.common import addresses
+    funnel = addresses.funnel_url()
+    if funnel:
+        urls.append(funnel + path)
     return urls

@@ -34,6 +34,12 @@ RUN apt-get update \
         supervisor \
     && rm -rf /var/lib/apt/lists/*
 
+# Tailscale, for Settings > Tailscale: when an admin turns it on there, the
+# server runs its own Tailscale (userspace mode, no special permissions) and
+# keeps its identity on the data volume. Never started otherwise.
+COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscaled /usr/local/bin/tailscaled
+COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscale /usr/local/bin/tailscale
+
 WORKDIR /app
 COPY . /app
 # The API serves the SPA from <repo>/frontend/dist (FRONTEND_BUILD_DIR); drop

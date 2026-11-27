@@ -13,7 +13,7 @@ import { takeAfterSignIn } from '@/lib/afterSignIn';
 import { codeFromAddress } from '@/lib/signIns';
 import { desktop, isDesktop } from '@/lib/desktop';
 import {
-  autofillAvailable, browserStepStatus, browserStepUrl, canUsePasskeysHere, cancelBrowserStep, localhostAddress,
+  autofillAvailable, browserStepStatus, browserStepUrl, canUsePasskeysHere, cancelBrowserStep, localhostAddress, otherAddress,
   signInWithPasskey, startBrowserStep, wasCanceled, type BrowserStep, type SignedIn,
 } from '@/lib/passkeys';
 import { cn } from '@/lib/utils';
@@ -42,7 +42,7 @@ export default function Login() {
   const navigate = useNavigate();
   const t = useT();
   const [options, setOptions] = useState({
-    signup_open: true, password_reset_by_email: false, code_sign_in: true, passkeys: false, passkey_handoff: false,
+    signup_open: true, password_reset_by_email: false, code_sign_in: true, passkeys: false, passkey_handoff: false, passkey_address: '',
   });
   const [initialCode] = useState(codeFromAddress);
   const [mode, setMode] = useState<'password' | 'code'>(initialCode ? 'code' : 'password');
@@ -180,6 +180,8 @@ export default function Login() {
     </button>
   ) : null;
   const atLocalhost = options.passkeys && !isDesktop() && !passkeyHere ? localhostAddress() : '';
+  // Opened at an IP address or over plain http: passkeys work at the server's secure address.
+  const secureAddress = options.passkeys && !isDesktop() && !passkeyHere && !atLocalhost ? otherAddress(options.passkey_address) : '';
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -283,6 +285,12 @@ export default function Login() {
               <p className="mt-6 text-[12.5px] leading-snug text-fg-dim">
                 {tr('ui.login.passkeysDonTWorkOn')}{' '}
                 <a href={atLocalhost} className="text-accent-ink hover:underline">{tr('ui.login.openThisPageAtLocalhost')}</a>
+              </p>
+            )}
+            {secureAddress && (
+              <p className="mt-6 text-[12.5px] leading-snug text-fg-dim">
+                {tr('ui.login.passkeysNeedASecureAddress')}{' '}
+                <a href={secureAddress} className="text-accent-ink hover:underline">{tr('ui.login.openThisPageAtAddress', { address: secureAddress })}</a>
               </p>
             )}
             {options.code_sign_in && (

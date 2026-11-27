@@ -18,6 +18,15 @@ A passkey belongs to the address it was made on (`cognitrix.example.com`, `local
   - Passkeys made this way belong to `localhost`, so they keep working when the app's port changes.
   - Only the desktop engine offers this, and only to callers on the same computer. The app keeps a secret for each step; the browser page only has a one-time link that expires in 5 minutes.
 
+### With Tailscale
+
+Settings › Tailscale gives the server a private address like `https://studio.your-tailnet.ts.net`. It is https and a real name, so passkeys work there, on every device on your tailnet. They do not work at the Tailscale IP address (`http://100.x.y.z:8000`) or the short name over http (`http://studio:8000`): those pages show a link to the private address instead.
+
+- A passkey made at the private address belongs to that name. It also works at the Tailscale **public** address when you let the whole app through there, because the two differ only in their port.
+- It does not work at `localhost`, at another domain you point at the server, or in the desktop app (whose passkeys belong to `localhost`). Add one passkey at each address you sign in from; Settings › Sign-ins shows which address each one works at.
+- Renaming the computer in Tailscale, or changing your tailnet's name, changes the address, so passkeys made at the old one stop working. Sign in with your password or a code and add a new one.
+- The desktop app's browser step is only offered to the computer the app runs on. Requests that come in through Tailscale never count as that computer.
+
 ## For admins
 
 - Turn passkeys on or off for everyone: Settings › People › Sign-up and sign-in › **Sign in with a passkey** (on by default).

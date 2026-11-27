@@ -63,6 +63,7 @@ const en = {
   'settings.section.engine': 'Engine',
   'settings.section.server': 'Server',
   'settings.section.advanced': 'Advanced',
+  'settings.section.tailscale': 'Tailscale',
 
   'appearance.description': 'How Cognitrix looks and behaves. Themes follow your account; the rest is set per device.',
   'appearance.theme': 'Theme',

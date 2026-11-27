@@ -159,14 +159,27 @@ def site_for(request) -> tuple[str, str]:
     return host, origin
 
 
+def secure_address() -> str:
+    """An address of this server where passkeys work (https and a real name):
+    the public address in Settings, else the Tailscale private address. Pages
+    opened somewhere passkeys can't work (an IP address, plain http) link here."""
+    from cognitrix.common import addresses
+    public = addresses.configured()
+    if public.startswith('https://') and not _is_ip(urlsplit(public).hostname or ''):
+        return public
+    return addresses.private_url()
+
+
 def _origin_trusted(request, origin: str, host: str) -> bool:
     forwarded = _header(request, 'x-forwarded-host').split(',')[0].strip()
     for candidate in (forwarded, _header(request, 'host')):
         if candidate and (urlsplit(f'//{candidate}').hostname or '') == host:
             return True
-    from cognitrix.common import email as mailer
-    public = mailer.public_url()
-    if public and public.rstrip('/') == origin:
+    # The public address in Settings and the Tailscale addresses are this
+    # server too. The Tailscale ones share a name (only the port differs), so
+    # a passkey made on one works on the other.
+    from cognitrix.common import addresses
+    if origin in addresses.own_origins():
         return True
     try:
         from cognitrix.config import settings

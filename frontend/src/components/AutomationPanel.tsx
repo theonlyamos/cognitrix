@@ -4,6 +4,7 @@ import { Button } from '@/lib/components/ui/button';
 import { cn } from '@/lib/utils';
 import { utcToLocal } from '@/lib/time';
 import { tr, trn } from '@/lib/i18n';
+import { hooksOrigin, useAddresses, type Addresses } from '@/lib/tailscale';
 
 const NOTES_MAX = 8000;
 
@@ -62,10 +63,11 @@ interface TriggerEventRow {
 
 
 /** Full URL for a webhook path. The API base can be relative (served by the engine). */
-function hookUrl(path: string): string {
+function hookUrl(path: string, addresses: Addresses | null): string {
   const base = API_BASE.replace(/\/api\/v1$/, '');
   const origin = base.startsWith('http') ? base : window.location.origin + base;
-  return origin.replace(/\/$/, '') + path;
+  // An outside service posts here: the server's public address when it has one.
+  return hooksOrigin(addresses, origin) + path;
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -195,6 +197,7 @@ export function AutomationPanel({
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const addresses = useAddresses();
 
   // Pick up notes an agent wrote while the panel was open, unless you're editing.
   const savedRef = useRef(task?.notes ?? '');
@@ -386,8 +389,8 @@ export function AutomationPanel({
           <div role="status" className="rounded-[10px] border border-accent/50 bg-accent/5 p-3">
             <p className="text-[12.5px] font-medium">{tr('ui.automationPanel.copyThisUrlNowIt')}</p>
             <div className="mt-2 flex items-center gap-2">
-              <code className="min-w-0 flex-1 break-all rounded bg-bg px-2 py-1.5 font-mono text-[11.5px]">{hookUrl(created.path)}</code>
-              <Button size="sm" variant="outline" onClick={() => copy(hookUrl(created.path))}>
+              <code className="min-w-0 flex-1 break-all rounded bg-bg px-2 py-1.5 font-mono text-[11.5px]">{hookUrl(created.path, addresses)}</code>
+              <Button size="sm" variant="outline" onClick={() => copy(hookUrl(created.path, addresses))}>
                 {copied ? tr('ui.automationPanel.copied') : tr('ui.automationPanel.copy')}
               </Button>
             </div>

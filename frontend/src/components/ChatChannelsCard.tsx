@@ -17,6 +17,7 @@ import {
   type ChatChannel,
 } from '@/lib/channels';
 import { tr } from '@/lib/i18n';
+import { hooksOrigin, useAddresses } from '@/lib/tailscale';
 
 interface AgentLite { id: string; name: string }
 
@@ -219,7 +220,9 @@ function ChannelPanel({
     || (kind === 'teams' && (!appId.trim() || !tenantId.trim()))
     || (kind === 'whatsapp' && (!appId.trim() || (!appSecret.trim() && !channel.configured)))
     || (kind === 'sms' && (!appId.trim() || !phone.trim()));
-  const endpoint = channel.webhook_path ? `${window.location.origin}${channel.webhook_path}` : '';
+  // The outside service posts here: the server's public address when it has one.
+  const addresses = useAddresses();
+  const endpoint = channel.webhook_path ? `${hooksOrigin(addresses, window.location.origin)}${channel.webhook_path}` : '';
   const copyEndpoint = async () => {
     try {
       await navigator.clipboard.writeText(endpoint);
