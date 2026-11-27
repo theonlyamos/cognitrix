@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Globe, Link as LinkIcon, Lock, Users, X } from 'lucide-react';
+import { Check, Globe, Link as LinkIcon, Lock, Network, Users, X } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import { appLink, type AppDetail } from '@/lib/hostedApps';
+import { useAddresses } from '@/lib/tailscale';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
 
@@ -29,7 +30,8 @@ function Option({ on, onPick, icon, title, detail, disabled }: {
   );
 }
 
-/** Who can open an app: people you add, or everyone on this server. Never public. */
+/** Who can open an app: people you add, or everyone on this server. Never public.
+ *  With a Tailscale private address, also people on the owner's tailnet who have no account. */
 export function AppShareDialog({ app, onClose, onChanged }: { app: AppDetail; onClose: () => void; onChanged: (d: AppDetail) => void }) {
   const [pick, setPick] = useState('');
   const [pickRole, setPickRole] = useState<Role>('view');
@@ -52,7 +54,31 @@ export function AppShareDialog({ app, onClose, onChanged }: { app: AppDetail; on
   const candidates = directory.filter((p) => !(p.id in (app.shared_with || {})));
   const link = appLink(app);
 
-  const save = async (body: { people?: Record<string, Role>; everyone?: string }) => {
+  // People on my tailnet, with no account here: Tailscale tells the server who they are.
+  const addresses = useAddresses();
+  const privateAddress = (addresses?.private || '').replace(/\/$/, '');
+  const tailnet = app.tailnet || { everyone: false, logins: [] };
+  const tailnetUsed = tailnet.everyone || tailnet.logins.length > 0;
+  const tailnetLink = privateAddress ? `${privateAddress}/apps/open/${app.slug}` : '';
+  const [login, setLogin] = useState('');
+  const [tailnetNotice, setTailnetNotice] = useState('');
+  const saveTailnet = (everyoneOnIt: boolean, logins: string[]) => save({ tailnet: [...(everyoneOnIt ? ['*'] : []), ...logins] });
+  const addLogin = () => {
+    const value = login.trim().toLowerCase();
+    if (!value) return;
+    setLogin('');
+    if (!tailnet.logins.includes(value)) void saveTailnet(tailnet.everyone, [...tailnet.logins, value]);
+  };
+  const copyTailnet = async () => {
+    try {
+      await navigator.clipboard.writeText(tailnetLink);
+      setTailnetNotice(tr('ui.hostedApps.appShareDialog.linkCopied'));
+    } catch {
+      setTailnetNotice(tailnetLink);
+    }
+  };
+
+  const save = async (body: { people?: Record<string, Role>; everyone?: string; tailnet?: string[] }) => {
     setBusy(true);
     setError('');
     try {
@@ -136,6 +162,55 @@ export function AppShareDialog({ app, onClose, onChanged }: { app: AppDetail; on
               icon={<Globe size={14} aria-hidden />} title={tr('ui.hostedApps.appShareDialog.anyoneWithTheLink')}
               detail={tr('ui.hostedApps.appShareDialog.notAvailableForAppsThey')} />
           </div>
+
+          {(privateAddress || tailnetUsed) && (
+            <div className="space-y-2">
+              <h3 className="font-mono text-[11px] uppercase tracking-wider text-fg-dim">{tr('ui.hostedApps.appShareDialog.yourTailnet')}</h3>
+              <p className="text-[12.5px] leading-snug text-fg-dim">{tr('ui.hostedApps.appShareDialog.yourTailnetDetail')}</p>
+              <label className={cn('flex items-start gap-3 rounded-[10px] border px-3 py-2.5', tailnet.everyone ? 'border-accent-ink/50 bg-accent/10' : 'border-line')}>
+                <input type="checkbox" className="mt-1 h-4 w-4 flex-none accent-[var(--accent)]" checked={tailnet.everyone} disabled={busy}
+                  onChange={(e) => void saveTailnet(e.target.checked, tailnet.logins)} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5 text-[13.5px] font-medium"><Network size={14} aria-hidden />{tr('ui.hostedApps.appShareDialog.everyoneOnYourTailnet')}</span>
+                  <span className="mt-0.5 block text-[12.5px] text-fg-dim">{tr('ui.hostedApps.appShareDialog.everyoneOnYourTailnetDetail')}</span>
+                </span>
+              </label>
+              {!tailnet.everyone && (
+                <>
+                  <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); addLogin(); }}>
+                    <input value={login} onChange={(e) => setLogin(e.target.value)} maxLength={254} autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                      aria-label={tr('ui.hostedApps.appShareDialog.tailscaleLoginToAdd')} placeholder={tr('ui.hostedApps.appShareDialog.tailscaleLoginPlaceholder')}
+                      className={cn(selectClass, 'min-w-0 flex-1 px-2.5')} />
+                    <button type="submit" className={buttonClass} disabled={!login.trim() || busy}>{tr('ui.hostedApps.appShareDialog.add')}</button>
+                  </form>
+                  {tailnet.logins.length > 0 && (
+                    <ul className="space-y-1.5">
+                      {tailnet.logins.map((entry) => (
+                        <li key={entry} className="flex items-center gap-2.5">
+                          <span className="grid h-7 w-7 flex-none place-items-center rounded-full border border-line bg-panel-2 text-fg-dim"><Network size={13} aria-hidden /></span>
+                          <span className="min-w-0 flex-1 truncate text-[13.5px]">{entry}</span>
+                          <button type="button" disabled={busy} className="text-[12.5px] text-fg-dim hover:text-fg hover:underline disabled:opacity-60"
+                            aria-label={tr('ui.hostedApps.appShareDialog.removeLogin', { login: entry })}
+                            onClick={() => void saveTailnet(false, tailnet.logins.filter((l) => l !== entry))}>{tr('ui.hostedApps.appShareDialog.remove')}</button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+              {tailnetUsed && (tailnetLink ? (
+                <div className="flex items-center gap-2 rounded-[10px] border border-line px-3 py-2">
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[12px] text-fg-dim">{tr('ui.hostedApps.appShareDialog.linkForYourTailnet')}</span>
+                    <span className="block truncate font-mono text-[11.5px]" title={tailnetLink}>{tailnetNotice || tailnetLink}</span>
+                  </span>
+                  <button type="button" className={buttonClass} onClick={() => void copyTailnet()}><LinkIcon size={14} aria-hidden />{tr('ui.hostedApps.appShareDialog.copyTailnetLink')}</button>
+                </div>
+              ) : (
+                <p role="status" className="text-[12.5px] leading-snug text-warn-ink">{tr('ui.hostedApps.appShareDialog.privateAddressIsOff')}</p>
+              ))}
+            </div>
+          )}
 
           {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
         </div>

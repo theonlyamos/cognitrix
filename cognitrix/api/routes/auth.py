@@ -187,7 +187,7 @@ async def _usable_invite(token: str | None, email: str):
 
 
 @auth_api.get("/options")
-async def auth_options(invite: str | None = None):
+async def auth_options(invite: str | None = None, request: Request = None):  # type: ignore[assignment]
     """What the sign-in pages can offer. Public."""
 
     valid_invite = False
@@ -205,8 +205,20 @@ async def auth_options(invite: str | None = None):
         'passkey_handoff': _passkeys_on() and _desktop_engine(),
         # Where passkeys work, for a page opened somewhere they can't (an IP address, plain http).
         'passkey_address': _passkey_address(),
+        # A visitor from the tailnet whose Tailscale login is linked to an account: "Continue as ...".
+        'tailscale_login': await _tailscale_login(request),
         'server_setup': await _server_setup_pending(),
     }
+
+
+async def _tailscale_login(request) -> str:
+    try:
+        from cognitrix.tailscale import identity
+
+        seen = await identity.view(request) if request is not None else None
+        return seen['login'] if seen and seen['can_sign_in'] else ''
+    except Exception:  # noqa: BLE001 - the sign-in page works without it
+        return ''
 
 
 async def _server_setup_pending() -> bool:

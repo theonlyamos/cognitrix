@@ -14,7 +14,7 @@ const address = (over = {}) => ({ wanted: false, port: 443, active: false, url: 
 const status = (over: Partial<TailscaleStatus> = {}): TailscaleStatus => ({
   enabled: true, mode: 'system', state: 'running', version: '1.94.1', name: NAME, machine: 'studio', tailnet: 'ada@example.com',
   ips: ['100.64.0.7'], user: 'ada@example.com', tags: [], key_expiry: '', https: true, funnel_allowed: true, login_url: '',
-  hostname: 'cognitrix', can_sign_in: false, can_edit: true, door: 'direct', listen_local: false,
+  hostname: 'cognitrix', can_sign_in: false, can_edit: true, door: 'direct', listen_local: false, signin: false,
   private: address({ wanted: true, active: true, url: `https://${NAME}` }),
   public: { ...address({ port: 8443 }), allow: ['webhooks'], ports: [443, 8443, 10000] },
   ...over,
@@ -106,6 +106,16 @@ describe('TailscaleSettings', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('lets an admin turn on signing in from the tailnet', async () => {
+    put.mockResolvedValue({ data: status({ signin: true }) });
+    render(<TailscaleSettings />);
+    const toggle = await screen.findByRole('checkbox', { name: 'Sign in from the tailnet' });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/tailscale', { signin: true }));
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Sign in from the tailnet' })).toBeChecked());
   });
 
   it('is read-only for people who are not admins', async () => {

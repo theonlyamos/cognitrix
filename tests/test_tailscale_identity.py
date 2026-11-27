@@ -159,6 +159,13 @@ async def test_sign_in_routes_through_the_doors(db):  # noqa: F811
     ada = await _user('Ada', 'ada@example.com')
     _on(signin=True)
     await identity.link(_request(ADA), ada)
+    # The sign-in page is told there is an account to continue as, only on the tailnet.
+    from cognitrix.api.routes import auth
+
+    assert (await auth.auth_options(request=_request(ADA)))['tailscale_login'] == 'ada@example.com'
+    assert (await auth.auth_options(request=_request({'Tailscale-User-Login': 'eve@example.com'})))['tailscale_login'] == ''
+    assert (await auth.auth_options(request=_request(ADA, door=doors.DIRECT)))['tailscale_login'] == ''
+    assert (await auth.auth_options())['tailscale_login'] == ''
     async with _client() as tailnet, _client(doors.PUBLIC) as public, _client(None) as direct:
         me = (await tailnet.get('/api/v1/tailscale/me', headers=ADA)).json()
         assert me['login'] == 'ada@example.com' and me['can_sign_in'] is True
