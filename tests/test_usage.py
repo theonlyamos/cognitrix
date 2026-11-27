@@ -66,6 +66,8 @@ async def test_model_calls_land_in_the_owners_totals(tmp_path, monkeypatch):
     assert [m['model'] for m in mine['by_model']] == ['claude-opus-5-5', 'my-private-model']
     assert len(mine['by_day']) == 30 and mine['by_day'][-1]['calls'] == 3
     assert mine['by_agent'][0]['agent_id'] == 'agent-1'
+    # 800 cached tokens read at $0.20 instead of $4 a million.
+    assert mine['total']['cache_saved'] == pytest.approx(800 * 3.8 / 1_000_000, abs=1e-6)
 
     theirs = await routes.get_usage(30, _ctx('user-2'))
     assert theirs['total']['calls'] == 0 and theirs['by_model'] == []
@@ -74,3 +76,56 @@ async def test_model_calls_land_in_the_owners_totals(tmp_path, monkeypatch):
 async def test_price_lookup_can_be_switched_off(monkeypatch):
     monkeypatch.setenv('COGNITRIX_PRICE_LOOKUP', '0')
     assert await pricing.load() == {}
+
+
+def test_plan_use_gets_an_api_list_price():
+    prices = {**PRICES, **pricing.parse({'data': [
+        {'id': 'anthropic/claude-opus-4.5', 'pricing': {'prompt': '0.000001', 'completion': '0.000001'}},
+        {'id': 'anthropic/claude-sonnet-5', 'pricing': {'prompt': '0.000003', 'completion': '0.000015'}},
+    ]})}
+    counts = {'prompt_tokens': 1_000_000, 'completion_tokens': 100_000}
+    # Plan use is not billed, but has a list price.
+    assert pricing.cost(prices, 'chatgpt', 'gpt-5.5', counts) == 0.0
+    assert pricing.list_cost(prices, 'chatgpt', 'gpt-5.5', counts) == pytest.approx(8.0)
+    assert pricing.list_cost(prices, 'codex', 'gpt-5.5', counts) == pytest.approx(8.0)
+    # Claude Code's short names cost what the newest model of that family costs.
+    assert pricing.cost(prices, 'claude-code', 'opus', counts) is None
+    assert pricing.list_cost(prices, 'claude-code', 'opus', counts) == pytest.approx(6.0)
+    assert pricing.list_cost(prices, 'claude-code', 'opus[1m]', counts) == pytest.approx(6.0)
+    assert pricing.list_cost(prices, 'claude-code', 'sonnet', counts) == pytest.approx(4.5)
+    assert pricing.list_cost(prices, 'claude-code', 'claude-opus-5-5', counts) == pytest.approx(6.0)
+    assert pricing.list_cost(prices, 'claude-code', 'haiku', counts) is None
+    assert pricing.list_cost(prices, 'opencode', 'openai/gpt-5.5', counts) == pytest.approx(8.0)
+    # Billed models cost the same either way.
+    assert pricing.list_cost(prices, 'anthropic', 'claude-opus-5-5', counts) == pytest.approx(6.0)
+    assert pricing.list_cost(prices, 'ollama', 'llama3', counts) == 0.0
+
+
+async def test_days_split_by_model_and_agent_with_list_prices(tmp_path, monkeypatch):
+    await _initialize_routes_db(tmp_path)
+    from cognitrix.models.usage import UsageDay
+    await UsageDay._create_table_async()
+
+    async def prices():
+        return PRICES
+    monkeypatch.setattr(pricing, 'load', prices)
+
+    await usage.add('user-3', 'agent-a', 'chatgpt', 'gpt-5.5', {'prompt_tokens': 1_000_000, 'completion_tokens': 0})
+    await usage.add('user-3', 'agent-b', 'anthropic', 'claude-opus-5-5', {'prompt_tokens': 1_000_000, 'completion_tokens': 0})
+    await usage.add('user-3', 'agent-b', 'claude-code', 'mystery', {'prompt_tokens': 10, 'completion_tokens': 5})
+    # Plan use of a model with no list price: $0 paid, but no API price either.
+    await usage.add('user-3', 'agent-b', 'chatgpt', 'gpt-unlisted', {'prompt_tokens': 100, 'completion_tokens': 0})
+
+    result = await usage.summary('user-3', 7)
+    total = result['total']
+    assert total['cost'] == pytest.approx(4.0) and total['api_cost'] == pytest.approx(9.0)
+    assert total['unpriced_tokens'] == 15 and total['api_unpriced_tokens'] == 115
+    assert total['cache_saved'] == 0.0
+    today = result['by_day'][-1]
+    assert set(today['models']) == {'chatgpt/gpt-5.5', 'anthropic/claude-opus-5-5', 'claude-code/mystery', 'chatgpt/gpt-unlisted'}
+    assert today['models']['chatgpt/gpt-5.5']['api_cost'] == pytest.approx(5.0)
+    assert today['models']['chatgpt/gpt-5.5']['cost'] == 0.0
+    assert today['agents']['agent-b']['prompt_tokens'] == 1_000_110
+    assert result['by_day'][0]['models'] == {}
+    # Sorted by what the use is worth, so plan use is not buried at the bottom.
+    assert [m['model'] for m in result['by_model']][:2] == ['gpt-5.5', 'claude-opus-5-5']

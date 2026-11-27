@@ -113,6 +113,23 @@ html.dark {
   --syn-alt:#6fb3d2;
 }
 
+/* Chart series colours (usage charts). Made from the theme's own colours, so
+   a custom theme recolours them too; not part of the theme contract. */
+:root {
+  --chart-1: color-mix(in oklab, var(--accent) 62%, var(--fg));
+  --chart-1-soft: color-mix(in oklab, var(--chart-1) 36%, transparent);
+  --chart-2: var(--info-ink);
+  --chart-3: var(--violet-ink);
+  --chart-4: var(--warn-ink);
+  --chart-5: color-mix(in oklab, var(--fg-dim) 60%, transparent);
+}
+html.dark {
+  --chart-1: var(--accent);
+  --chart-2: var(--info);
+  --chart-3: var(--violet);
+  --chart-4: var(--warn);
+}
+
 @layer base {
   *, ::before, ::after { border-color: var(--line); }
 

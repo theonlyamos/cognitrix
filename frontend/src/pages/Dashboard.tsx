@@ -27,6 +27,7 @@ import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/lib/components/ui/button';
 import { AgentBadge } from '@/components/StartChat';
 import { formatCost, formatTokens } from '@/components/settings/Usage';
+import { weekChange } from '@/lib/weekChange';
 import { parseUtc, timeAgo, timeUntil } from '@/lib/agentDraft';
 import { CHAT_DRAFT_KEY } from '@/lib/chatDraft';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
@@ -424,7 +425,7 @@ export default function Dashboard() {
   const amount = (t: Totals) => (byCost ? t.cost : tokensOf(t));
   const thisWeek = days.slice(-7).reduce((s, d) => s + amount(d), 0);
   const lastWeek = days.slice(-14, -7).reduce((s, d) => s + amount(d), 0);
-  const change = lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null;
+  const change = weekChange(thisWeek, lastWeek);
   const fmt = (n: number) => (byCost ? formatCost(n) : formatTokens(n));
 
   // Quick ask: opens a fresh chat with the picked agent, the question typed in.
@@ -588,12 +589,18 @@ export default function Dashboard() {
               icon={Coins}
               value={usage.data ? fmt(thisWeek) : '–'}
               detail={
-                change === null ? (
+                change.kind === 'none' ? (
                   tr('ui.dashboard.last7Days')
+                ) : change.kind === 'from' ? (
+                  <span>
+                    <span className="font-mono text-fg-dim">▲</span>{' '}
+                    {tr('ui.dashboard.upFromLastWk', { amount: fmt(change.previous) })}
+                  </span>
                 ) : (
                   <span>
-                    <span className={cn('font-mono', change > 0 ? 'text-warn-ink' : 'text-ok')}>
-                      {change > 0 ? '▲' : '▼'} {Math.abs(change)}%
+                    {/* More cost is worth a warning; more tokens is just more work done. */}
+                    <span className={cn('font-mono', !change.up ? 'text-ok' : byCost ? 'text-warn-ink' : 'text-fg-dim')}>
+                      {change.up ? '▲' : '▼'} {change.value}%
                     </span>{' '}{tr('ui.dashboard.vsLastWk')}
                   </span>
                 )

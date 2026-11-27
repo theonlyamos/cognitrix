@@ -7,6 +7,11 @@ or what they used. Turn "Look up model prices" off in Settings to stop the looku
 page then shows tokens without a cost. A model that is not in the list (a
 local model's own name, a private deployment) has no cost either, apart from
 Ollama, which runs on the person's own machine and is counted as free.
+
+``list_cost`` answers a second question: what the same use would cost at API
+list prices. Plan use (a ChatGPT plan, Claude Code, Codex and the other coding
+agent CLIs) is paid by the plan, so its ``cost`` is 0 or unknown, but its list
+price shows what the plan covered.
 """
 from __future__ import annotations
 
@@ -136,14 +141,42 @@ def _candidates(provider: str, model: str) -> list[str]:
     return [f'{prefix}/{name}' for name in names]
 
 
-def cost(prices: dict[str, dict[str, float]], provider: str, model: str, counts: dict[str, int]) -> float | None:
-    """Dollars for these token counts, or None when the model has no known price."""
-    if (provider or '').lower() in ('ollama', 'chatgpt'):
-        # Local models, and a ChatGPT plan (usage comes out of the plan).
-        return 0.0
-    entry = next((prices[name] for name in _candidates(provider, model) if name in prices), None)
-    if entry is None:
-        return None
+# Plans and coding agent CLIs: which API's list price their models carry.
+_PLAN_PREFIX = {'chatgpt': 'openai', 'codex': 'openai', 'claude-code': 'anthropic',
+                'gemini-cli': 'google', 'antigravity-cli': 'google'}
+_FAMILY = re.compile(r'^(opus|sonnet|haiku|fable)$')
+
+
+def _guess_prefix(model: str) -> str | None:
+    model = model.lower()
+    if model.startswith(('gpt-', 'o1', 'o3', 'o4', 'codex')):
+        return 'openai'
+    if model.startswith('claude') or _FAMILY.match(model):
+        return 'anthropic'
+    if model.startswith('gemini'):
+        return 'google'
+    return None
+
+
+def _version(name: str) -> tuple[int, ...]:
+    return tuple(int(n) for n in re.findall(r'\d+', name))
+
+
+def _newest_family(prices: dict[str, dict[str, float]], family: str) -> dict[str, float] | None:
+    """Claude Code's short names (opus, sonnet) cost what the newest such model costs."""
+    names = [
+        key for key in prices
+        if key.startswith('anthropic/claude-') and ':' not in key
+        and re.search(rf'(^|-){family}(-|$)', key.split('/', 1)[1])
+    ]
+    return prices[max(names, key=_version)] if names else None
+
+
+def _price_of(prices: dict[str, dict[str, float]], provider: str, model: str) -> dict[str, float] | None:
+    return next((prices[name] for name in _candidates(provider, model) if name in prices), None)
+
+
+def _dollars(entry: dict[str, float], counts: dict[str, int]) -> float:
     cached = int(counts.get('cached_tokens') or 0)
     written = int(counts.get('cache_write_tokens') or 0)
     fresh = max(0, int(counts.get('prompt_tokens') or 0) - cached - written)
@@ -153,3 +186,30 @@ def cost(prices: dict[str, dict[str, float]], provider: str, model: str, counts:
         + written * entry.get('cache_write', entry['prompt'])
         + int(counts.get('completion_tokens') or 0) * entry['completion']
     )
+
+
+def list_cost(prices: dict[str, dict[str, float]], provider: str, model: str, counts: dict[str, int]) -> float | None:
+    """Dollars at API list prices, even for plan use. None when the model has no known price."""
+    provider, model = (provider or '').lower(), re.sub(r'\[1m\]$', '', (model or '').lower())
+    if provider == 'ollama':
+        return 0.0
+    entry = _price_of(prices, provider, model)
+    if entry is None and (provider in _PLAN_PREFIX or provider in ('copilot-cli', 'opencode')):
+        family = _FAMILY.match(model)
+        prefix = _PLAN_PREFIX.get(provider) or _guess_prefix(model)
+        if family:
+            entry = _newest_family(prices, family.group(1))
+        elif '/' in model:
+            entry = _price_of(prices, 'openrouter', model)
+        elif prefix:
+            entry = _price_of(prices, prefix, model)
+    return None if entry is None else _dollars(entry, counts)
+
+
+def cost(prices: dict[str, dict[str, float]], provider: str, model: str, counts: dict[str, int]) -> float | None:
+    """Dollars for these token counts, or None when the model has no known price."""
+    if (provider or '').lower() in ('ollama', 'chatgpt'):
+        # Local models, and a ChatGPT plan (usage comes out of the plan).
+        return 0.0
+    entry = _price_of(prices, provider, model)
+    return None if entry is None else _dollars(entry, counts)
