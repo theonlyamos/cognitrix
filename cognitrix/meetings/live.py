@@ -594,7 +594,8 @@ async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
                 if seen == 'working':
                     view = await desk.do(desk.screen.look)
                     where = view.url()
-                    if where and (urlsplit(row.url).hostname or '') not in where:
+                    host = urlsplit(where if '://' in where else f'https://{where}').hostname or ''
+                    if where and host != (urlsplit(row.url).hostname or ''):
                         await desk.do(desk.screen.close)
                         await desk.do(desk.screen.open, row.url)
                         typed.clear()

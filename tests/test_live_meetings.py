@@ -8,6 +8,7 @@ import math
 import struct
 import wave
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -508,7 +509,7 @@ async def test_it_waits_for_the_person_to_sign_in_then_joins(monkeypatch):
     class Screen:
         def open(self, url):
             opened.append(url)
-            state['page'] = 'google' if 'accounts.google.com' in url else 'meet-out'
+            state['page'] = 'google' if urlsplit(url).hostname == 'accounts.google.com' else 'meet-out'
 
         def close(self):
             pass
