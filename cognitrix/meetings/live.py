@@ -44,8 +44,9 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
-from urllib.parse import SplitResult, parse_qs, quote, urlsplit
+from urllib.parse import SplitResult, parse_qs, quote, unquote, urlsplit
 
 from cognitrix.computer import Stale
 from cognitrix.meetings import notes as meeting_notes
@@ -72,12 +73,31 @@ UI_WAIT_S = 1.5  # for a panel or a dialog to open after a click
 CHECK_SCREEN_S = 20  # how often the call's window is read to see if it ended
 ANSWER_GAP_S = 15  # at most one answer this often
 MAX_ANSWER_CHARS = 600
+OFF_RANGES = 50  # times off the record kept with the row
+RESUME_SLACK_S = 0.25  # speech that starts this close to a resume is on the record
+
+
+def _pieces_of(text: str, size: int) -> list[str]:
+    """``text`` in parts of at most ``size`` characters, split between words."""
+    text = text.strip()
+    parts: list[str] = []
+    while len(text) > size:
+        cut = text.rfind(' ', 0, size)
+        cut = cut if cut > size // 2 else size
+        parts.append(text[:cut].rstrip())
+        text = text[cut:].lstrip()
+    return [*parts, text] if text else parts
 CONTEXT_LINES = 60  # transcript lines the model reads to answer
 
 PLATFORMS = {
     'meet': ('meet.google.com',),
     'teams': ('teams.microsoft.com', 'teams.live.com'),
     'zoom': ('zoom.us',),
+}
+# Sign-in pages a join can pass through, which still belong to the call.
+SIGN_IN_HOSTS = {
+    'meet': ('accounts.google.com',),
+    'teams': ('login.microsoftonline.com', 'login.live.com', 'login.microsoft.com'),
 }
 PLATFORM_LABELS = {'meet': 'Google Meet', 'teams': 'Microsoft Teams', 'zoom': 'Zoom', 'other': 'the call'}
 
@@ -88,6 +108,33 @@ def platform_of(url: str) -> str:
         if any(host == h or host.endswith('.' + h) for h in hosts):
             return name
     return 'other'
+
+
+def room_key(url: str) -> str:
+    """Exactly which meeting a link or browser address is for ('meet:abc-defg-hij',
+    'zoom:85012345678', 'teams:<thread id>', or the whole address on other
+    sites), or '' when it doesn't say."""
+    parts = urlsplit(url or '')
+    host = (parts.hostname or '').lower()
+    if not host:
+        return ''
+    platform = platform_of(url)
+    path = parts.path.strip('/')
+    if platform == 'meet':
+        return f'meet:{path.lower()}' if MEET_CODE.fullmatch(path.lower()) else ''
+    if platform == 'zoom':
+        number = re.search(r'(?:^|/)(?:j|s|w|wc/join|wc)/(\d{9,12})(?:/|$)', path)
+        if number:
+            return f'zoom:{number.group(1)}'
+        personal = re.search(r'(?:^|/)my/([\w.-]+)$', path)
+        return f'zoom:my:{personal.group(1).lower()}' if personal else ''
+    if platform == 'teams':
+        meetup = re.match(r'l/meetup-join/([^/]+)', path)
+        if meetup:
+            return f'teams:{unquote(meetup.group(1))}'
+        live = re.match(r'meet/(\d+)$', path) if host == 'teams.live.com' else None
+        return f'teams:live:{live.group(1)}' if live else ''
+    return f'{host}/{path}' + (f'?{parts.query}' if parts.query else '')
 
 
 def check_link(url: str) -> tuple[str, str]:
@@ -332,9 +379,22 @@ class Screen:
     def look(self, *, for_close: bool = False) -> View:
         view = self._look(for_close=for_close)
         # Kept for "what the agent saw" when joining fails: only a page that
-        # is the call, never another tab that was read and rejected.
-        self.last_view, self.last_image = view, view.image
+        # is the call's site, never another tab the person switched to.
+        if self.on_call_site(view):
+            self.last_view, self.last_image = view, view.image
         return view
+
+    def on_call_site(self, view: View) -> bool:
+        """The page is on the call's site (or its sign-in on the way), not another tab."""
+        address = view.address()
+        host = (address.hostname or '').lower()
+        if not host:
+            return view.about_the_call(self.platform)
+        if self.platform == 'other':
+            return host == (urlsplit(self.url).hostname or '').lower()
+        if platform_of(address.geturl()) == self.platform:
+            return True
+        return any(host == h or host.endswith('.' + h) for h in SIGN_IN_HOSTS.get(self.platform, ()))
 
     def _look(self, *, for_close: bool = False) -> View:
         if self.window_id is not None:
@@ -644,20 +704,53 @@ class Live:
     leave: asyncio.Event = field(default_factory=asyncio.Event)
     say: asyncio.Queue = field(default_factory=asyncio.Queue)
     control: asyncio.Queue = field(default_factory=asyncio.Queue)
-    """From the person, the page or a tool: ('note' | 'raise' | 'answer', text), ('pause' | 'resume', '')."""
+    """From the person, the page or a tool: (kind, text, at, done): 'note' | 'raise' |
+    'answer' with text, or 'pause' | 'resume'; ``at`` is when it was asked
+    (time.time()), ``done`` a future set once the call has applied it."""
     started: float = field(default_factory=time.monotonic)
     resume: bool = False
     """Picking a call back up after Cognitrix restarted."""
     stopping: bool = False
     """Stopped on purpose (the meeting was deleted), not Cognitrix shutting down."""
+    lost: bool = False
+    """Another process took the call over: stop without touching the call or its row."""
 
 
 _live: dict[str, Live] = {}
 
-# This process. A call's row names the process running it (``runner``), so
-# after a restart only one process can take it over: the claim succeeds only
-# while the row still names the process that was running it before.
+# This process. A call's row names the process running it and when it last
+# said so (``runner`` = '<BOOT>:<unix time>', a lease renewed every
+# HEARTBEAT_S). Another process takes a call over only once the lease is
+# older than LEASE_S (or released on shutdown), and only while the row still
+# holds the lease it read; the call's writes check the lease too, so a
+# process that lost the call stops without touching it.
 BOOT = uuid.uuid4().hex
+LEASE_S = 90
+HEARTBEAT_S = 20
+_owned: dict[str, str] = {}
+"""Meeting id -> the ``runner`` value this process last wrote for it."""
+
+
+class LostCall(Exception):
+    """Another process runs this call now."""
+
+
+def lease(at: float | None = None) -> str:
+    return f'{BOOT}:{int(time.time() if at is None else at)}'
+
+
+def _lease_of(runner: str) -> tuple[str, float]:
+    boot, _, at = str(runner or '').partition(':')
+    try:
+        return boot, float(at or 0)
+    except ValueError:
+        return boot, 0.0
+
+
+def _held_elsewhere(runner: str) -> bool:
+    """Another process still holds this call's lease."""
+    boot, at = _lease_of(runner)
+    return bool(boot) and boot != BOOT and time.time() - at < LEASE_S
 
 
 def running(meeting_id: str) -> bool:
@@ -684,16 +777,20 @@ def queue_say(meeting_id: str, text: str, mode: str | None = None) -> bool:
 STEER_KINDS = ('note', 'raise', 'answer', 'pause', 'resume')
 
 
-def steer(meeting_id: str, kind: str, text: str = '') -> bool:
+def steer(meeting_id: str, kind: str, text: str = '') -> asyncio.Future | None:
     """Private steering from the person while the agent is in the call:
     'note' (guidance it uses in answers), 'raise' (bring it up at the next
     pause), 'answer' (the answer to the question it asked them), 'pause' /
-    'resume' (off the record)."""
+    'resume' (off the record). Returns a future that is done once the call
+    has applied it, or None when the agent isn't in the call. A pause counts
+    from now: speech that reaches the agent later but was heard after this
+    moment is dropped."""
     item = _live.get(meeting_id)
     if item is None or not running(meeting_id) or kind not in STEER_KINDS:
-        return False
-    item.control.put_nowait((kind, (text or '').strip()[:MAX_ANSWER_CHARS]))
-    return True
+        return None
+    done: asyncio.Future = asyncio.get_running_loop().create_future()
+    item.control.put_nowait((kind, (text or '').strip()[:MAX_ANSWER_CHARS], time.time(), done))
+    return done
 
 
 def start(meeting_id: str, *, resume: bool = False) -> None:
@@ -705,7 +802,22 @@ def start(meeting_id: str, *, resume: bool = False) -> None:
 
 
 async def _set(meeting_id: str, **fields: Any) -> None:
-    await MeetingNote.update_one({'id': meeting_id}, fields)
+    """Write a meeting's fields. For a call this process runs, only while it
+    still holds the lease (LostCall otherwise). update_many on the unique id:
+    update_one adds a LIMIT that PostgreSQL rejects."""
+    held = _owned.get(meeting_id)
+    where = {'id': meeting_id} if held is None else {'id': meeting_id, 'runner': held}
+    if 'call_state' in fields and isinstance(fields['call_state'], dict):
+        fields['call_state'] = json.dumps(fields['call_state'])
+    fields['updated_at'] = datetime.now()  # always a change, so MySQL counts the row
+    count = await MeetingNote.update_many(where, fields)
+    if held is None:
+        return
+    if isinstance(count, int) and count == 0:
+        _owned.pop(meeting_id, None)
+        raise LostCall(meeting_id)
+    if 'runner' in fields:
+        _owned[meeting_id] = fields['runner']
 
 
 def _clock(seconds: float) -> str:
@@ -946,8 +1058,16 @@ class _Call:
         self.lines = lines
         self.id = str(row.id)
         self.started = time.monotonic() - float(row.seconds or 0)
-        self.after = 0
-        self.done = 0  # the newest piece handled; the recorder keeps the rest for a restart
+        # Pieces of speech by the recorder's numbers: ``after`` the newest one
+        # read, ``heard`` the newest whose text (or nothing) is in ``lines``,
+        # ``done`` the newest saved with the transcript, which the recorder
+        # may then forget. After a restart with the same recorder, reading
+        # carries on after the last saved piece: nothing lost, nothing twice.
+        self.state: dict = dict(row.call_state or {})
+        self.recorder = str(self.state.get('recorder') or '')
+        start_at = int(self.state.get('heard') or 0) if self.recorder else 0
+        self.after = self.done = self.heard = start_at
+        self.skew = 0.0  # this machine's clock minus the sandbox's
         self.names = call_names(row.bot_name, agent.name)
         self.hints = extras.hints(row, agent.name, owner, settings)
         self.watch = extras.words(list(row.watch_words) + extras.words(getattr(settings, 'watch_words', '')))
@@ -955,12 +1075,15 @@ class _Call:
         self.queue: asyncio.Queue = asyncio.Queue()
         self.worker: asyncio.Task | None = None
         self.paused = bool(row.paused)
-        # Off the record by piece number, not by the state when a piece's text
-        # comes back: a piece heard while paused stays dropped even if notes
-        # resume before its transcription finishes, and pieces already queued
-        # after "pause notes" was said are dropped too. [start, end or None].
-        self.piece_no = 0
-        self.off: list[list[int | None]] = [[1, None]] if self.paused else []
+        # Off the record by when the speech was heard (time.time() on this
+        # machine), not by when its text comes back: speech that overlaps a
+        # pause is dropped even if notes resume before it is transcribed, or
+        # after a restart. [start, end or None], kept with the row.
+        self.off: list[list[float | None]] = [
+            [float(a), None if b is None else float(b)] for a, b in self.state.get('off') or []
+            if isinstance(a, int | float)]
+        if self.paused and not (self.off and self.off[-1][1] is None):
+            self.off.append([0.0, None])
         self.paused_at = 0.0
         self.pending_question = False
         self.last_heard = time.monotonic()
@@ -971,6 +1094,7 @@ class _Call:
         self.to_raise: list[str] = []
         self.raise_tries = 0
         self.owner_answer = ''  # the owner's answer, until it is out in the call
+        self.answer_parts: list[str] = []  # what of it is still to say
         self.answer_tries = 0
         self.question = row.owner_question
         self.question_at = time.monotonic() if self.question else 0.0
@@ -994,8 +1118,34 @@ class _Call:
         self.lines.append(f'[{at or self.now()}] {text}')
 
     async def save(self, **more: Any) -> None:
+        heard = self.heard
+        self.state.update(off=self.off[-OFF_RANGES:], recorder=self.recorder, heard=heard)
         await _set(self.id, transcript='\n'.join(self.lines)[-meeting_notes.MAX_TRANSCRIPT_CHARS:],
-                   seconds=round(time.monotonic() - self.started, 1), **more)
+                   seconds=round(time.monotonic() - self.started, 1), call_state=dict(self.state), **more)
+        self.done = max(self.done, heard)  # saved: the recorder may forget these pieces now
+
+    def use_recorder(self, recorder: str) -> None:
+        """The sandbox's recorder (newer images name it). A new one counts
+        its pieces from one again."""
+        if recorder and recorder != self.recorder:
+            if self.recorder or self.after:
+                self.after = self.done = self.heard = 0
+            self.recorder = recorder
+
+    def recorder_restarted(self, recorder: str = '') -> None:
+        if recorder:
+            self.use_recorder(recorder)
+        else:
+            self.recorder = ''
+            self.after = self.done = self.heard = 0
+
+    def heard_from(self, reply: dict) -> list[dict]:
+        """The pieces in a reply from the sandbox's recorder, after noting its clock and name."""
+        now = reply.get('now')
+        if isinstance(now, int | float) and now > 0:
+            self.skew = time.time() - float(now)
+        self.use_recorder(str(reply.get('recorder') or ''))
+        return reply.get('pieces') or []
 
     # ---------------------------------------------------------- hearing
 
@@ -1006,9 +1156,11 @@ class _Call:
             if seq <= self.after:
                 continue
             self.after = seq
-            self.piece_no += 1
             self.last_heard = time.monotonic()  # someone is talking, even before the text is back
-            self.queue.put_nowait((piece.get('audio') or '', self.now(), self.piece_no, seq))
+            at = piece.get('at')
+            end = float(at) + self.skew if isinstance(at, int | float) and at > 0 else time.time()
+            span = (end - float(piece.get('seconds') or 0), end)
+            self.queue.put_nowait((piece.get('audio') or '', self.now(), span, seq))
         if self.worker is None or self.worker.done():
             self.worker = asyncio.create_task(self._work())
 
@@ -1027,13 +1179,28 @@ class _Call:
 
     async def _work(self) -> None:
         while True:
-            audio, at, number, seq = await self.queue.get()
+            audio, at, span, seq = await self.queue.get()
             try:
-                await self._one(audio, at, number)
+                await self._one(audio, at, span, seq)
+            except LostCall:
+                self.item.lost = True
+                self.queue.task_done()
+                if self.item.task is not None:
+                    self.item.task.cancel()
+                return
             except Exception:
                 logger.exception('Meeting %s: a piece of speech could not be handled', self.id)
+            self.heard = max(self.heard, seq)
+            try:
+                if self.queue.empty() and self.heard > self.done:
+                    await self.save()  # pieces with nothing to keep still move the saved mark on
+            except LostCall:
+                self.item.lost = True
+                if self.item.task is not None:
+                    self.item.task.cancel()
+            except Exception:
+                logger.info('Meeting %s: could not save the transcript yet', self.id, exc_info=True)
             finally:
-                self.done = seq  # in order: everything up to here has its text (or a gap mark)
                 self.queue.task_done()
 
     async def _transcribe(self, clip: bytes) -> str | None:
@@ -1066,13 +1233,21 @@ class _Call:
         except OSError:
             logger.debug('Meeting %s: could not keep audio for the second pass', self.id, exc_info=True)
 
-    def off_record(self, number: int) -> bool:
-        return any(start <= number and (end is None or number <= end) for start, end in self.off)
+    def off_record(self, start: float, end: float) -> bool:
+        """Speech heard from ``start`` to ``end`` overlaps a time off the record."""
+        return any(end > a and (b is None or start < b - RESUME_SLACK_S) for a, b in self.off)
 
-    async def _one(self, audio_b64: str, at: str, number: int = 0) -> None:
-        off = self.off_record(number) if number else self.paused
+    async def _one(self, audio_b64: str, at: str, span: tuple[float, float] | None = None, seq: int = 0) -> None:
+        start, end = span or (time.time(), time.time())
+        if self.off_record(start, end) and not self.paused:
+            self.heard = max(self.heard, seq)  # off the record and already back on: nothing to listen for
+            return
         clip = base64.b64decode(audio_b64 or '')
         text = await self._transcribe(clip)
+        # From here to the save, no waiting: a save elsewhere sees the
+        # piece's text and its number together, or neither.
+        self.heard = max(self.heard, seq)
+        off = self.off_record(start, end)  # a pause may have come in meanwhile
         if text is None:
             if not off:
                 self.add('(some speech here could not be transcribed)', at)
@@ -1085,10 +1260,10 @@ class _Call:
         named = addressed(text, self.names)
         from cognitrix.meetings import extras
 
-        order = extras.command(text) if named else None
+        order = extras.command(text, self.names) if named else None
         if off:
             if order and order[0] == 'resume' and self.paused:
-                await self.set_paused(False, by='the room', at=number)
+                await self.set_paused(False, by='the room', at=end)
             return
         if order and order[0] == 'pause':
             text = extras.up_to_command(text)  # whatever followed "pause notes" in the same piece is not kept
@@ -1096,7 +1271,7 @@ class _Call:
             self._keep_audio(clip)  # a piece with a pause in it isn't kept for the speaker pass either
         self.add(text, at)
         if order:
-            await self._obey(order, number)
+            await self._obey(order, end)
         elif named:
             self.pending_question = True
         hits = extras.watch_hits(text, self.watch)
@@ -1107,10 +1282,11 @@ class _Call:
                 await _alert(self.row, f'"{word}" came up in {self.row.title}', f'[{at}] {text}'[:300],
                              urgent=True)
 
-    async def _obey(self, order: tuple[str, str], number: int = 0) -> None:
+    async def _obey(self, order: tuple[str, str], heard_at: float | None = None) -> None:
         kind, detail = order
         if kind == 'pause':
-            await self.set_paused(True, by='the room', at=number + 1 if number else None)
+            # From the end of the piece that asked: whatever was said after it is off the record.
+            await self.set_paused(True, by='the room', at=heard_at)
         elif kind == 'resume':
             await self.say_now('I am listening and taking notes.', 'chat')
         elif kind == 'leave':
@@ -1120,17 +1296,17 @@ class _Call:
         elif kind == 'mark':
             self.add(f'(marked: {detail} — the line above)')
 
-    async def set_paused(self, paused: bool, *, by: str, at: int | None = None) -> None:
-        """``at``: the first piece off the record (pausing) or the last one
-        (resuming); by default the pieces already handed over stay as they
-        were heard and the change applies from the next one."""
+    async def set_paused(self, paused: bool, *, by: str, at: float | None = None) -> None:
+        """``at``: when the pause (or resume) was asked for, time.time() on
+        this machine; now by default. Speech heard across it is dropped."""
         if paused == self.paused:
             return
         self.paused = paused
+        at = time.time() if at is None else at
         if paused:
-            self.off.append([self.piece_no + 1 if at is None else at, None])
+            self.off.append([at, None])
         elif self.off and self.off[-1][1] is None:
-            self.off[-1][1] = self.piece_no if at is None else at
+            self.off[-1][1] = max(at, self.off[-1][0] or 0.0)
         if paused:
             self.paused_at = time.monotonic()
             self.pending_question = False
@@ -1208,21 +1384,26 @@ class _Call:
 
     async def take_control(self) -> None:
         while not self.item.control.empty():
-            kind, text = self.item.control.get_nowait()
-            if kind == 'pause':
-                await self.set_paused(True, by=self.owner or 'you')
-            elif kind == 'resume':
-                await self.set_paused(False, by=self.owner or 'you')
-            elif kind == 'note' and text:
-                self.guidance.append(text)
-                self.guidance = self.guidance[-20:]
-                await _set(self.id, guidance=json.dumps(self.guidance))
-            elif kind == 'raise' and text:
-                self.to_raise.append(text)
-            elif kind == 'answer' and text:
-                self.owner_answer = text
-                self.answer_tries = 0
-                await self.give_answer()
+            kind, text, at, done = self.item.control.get_nowait()
+            try:
+                if kind == 'pause':
+                    await self.set_paused(True, by=self.owner or 'you', at=at)
+                elif kind == 'resume':
+                    await self.set_paused(False, by=self.owner or 'you', at=at)
+                elif kind == 'note' and text:
+                    self.guidance.append(text)
+                    self.guidance = self.guidance[-20:]
+                    await _set(self.id, guidance=json.dumps(self.guidance))
+                elif kind == 'raise' and text:
+                    self.to_raise.append(text)
+                elif kind == 'answer' and text:
+                    self.owner_answer = text
+                    self.answer_parts = []
+                    self.answer_tries = 0
+                    await self.give_answer()
+            finally:
+                if done is not None and not done.done():
+                    done.set_result(True)  # applied here, even if saving it failed
 
     async def give_answer(self) -> None:
         """Pass the owner's answer on; it stays (and the question with it)
@@ -1232,8 +1413,15 @@ class _Call:
         text = self.owner_answer
         owner = self.owner or 'The person who sent me'
         reply = f'{owner} says: {text}' if self.question else f'{owner} got back to me: {text}'
-        how = await self.say_now(reply[:MAX_ANSWER_CHARS],
-                                 self.row.reply_mode if self.row.reply_mode != 'off' else 'chat')
+        if not self.answer_parts:
+            self.answer_parts = _pieces_of(reply, MAX_ANSWER_CHARS)  # all of it, in as many messages as it takes
+        how = ''
+        while self.answer_parts:
+            how = await self.say_now(self.answer_parts[0],
+                                     self.row.reply_mode if self.row.reply_mode != 'off' else 'chat')
+            if not how:
+                break
+            self.answer_parts.pop(0)  # out in the call: a retry carries on from the next part
         if how:
             self.owner_answer, self.answer_tries = '', 0
             self.question, self.question_at = '', 0.0
@@ -1241,7 +1429,7 @@ class _Call:
             return
         self.answer_tries += 1
         if self.answer_tries >= DELIVERY_TRIES:
-            self.owner_answer, self.answer_tries = '', 0
+            self.owner_answer, self.answer_tries, self.answer_parts = '', 0, []
             await _alert(self.row, f"Your answer didn't reach {self.row.title}",
                          f'{self.row.bot_name} could not pass it on in the call: {text}'[:300])
 
@@ -1364,7 +1552,7 @@ class _Call:
             self.last_sound = float(heard.get('last_sound') or 0)
             quiet = heard.get('quiet_s')
             self.quiet_s = float(quiet) if quiet is not None else (None if 'quiet_s' not in heard else 1e9)
-            self.hear(heard.get('pieces') or [])
+            self.hear(self.heard_from(heard))
             # Things the agent was asked to say (Say In Meeting).
             while not item.say.empty():
                 text, mode = item.say.get_nowait()
@@ -1387,8 +1575,9 @@ class _Call:
                 if not await self.check_screen():
                     break
             if heard.get('error') and not heard.get('listening'):
-                if (await self.desk.audio('POST', 'start')).get('ok'):
-                    self.after = self.done = 0  # the new recorder starts its own sequence at one
+                started = await self.desk.audio('POST', 'start')
+                if started.get('ok'):
+                    self.recorder_restarted(str(started.get('recorder') or ''))  # it counts from one again
             try:
                 await asyncio.wait_for(item.leave.wait(), POLL_S)
             except TimeoutError:
@@ -1446,8 +1635,12 @@ async def run(item: Live) -> None:
         return
     desk: _Desk | None = None
     joined = False
+    departed = False  # left the call (or it ended): a restart now must not go back in
     call: _Call | None = None
     lines: list[str] = [ln for ln in (row.transcript or '').splitlines() if ln.strip()]
+    if _lease_of(row.runner)[0] == BOOT:
+        _owned[meeting_id] = row.runner
+    beat = asyncio.create_task(_keep_lease(item))
     try:
         voice = await meeting_notes._voice(row.user_id)
         agent = await meeting_notes._agent_llm(row.user_id, row.agent_id)
@@ -1457,7 +1650,7 @@ async def run(item: Live) -> None:
         except Exception:
             settings = None
         desk = await asyncio.to_thread(_Desk, row.user_id, str(agent.id), agent.name, meeting_id)
-        back = item.resume and await _still_in_call(desk, row)
+        back = item.resume and await _back_in_call(item, desk, row)
         if not back:
             await _set(meeting_id, status=JOINING, agent_id=str(agent.id), error='',
                        progress='rejoining after a restart' if item.resume else row.progress)
@@ -1465,6 +1658,7 @@ async def run(item: Live) -> None:
         joined = True
         call = _Call(item, row, desk, agent, owner, voice, settings, lines)
         call.last_check = time.monotonic()
+        call.state['room'] = _room_now(desk.screen, row.url)
         if item.resume:
             call.add('(Cognitrix restarted; back in the call)')
         await call.save(status=LIVE, progress='listening')
@@ -1479,15 +1673,23 @@ async def run(item: Live) -> None:
         out = await desk.audio('POST', 'start')
         if not out.get('ok'):
             raise MeetingError(out.get('message') or "The agent's computer can't listen to calls yet.")
+        call.heard_from(out)  # its recorder: the same one after a restart, or a new one counting from one
         if row.test:
             await _test_call(call)
         else:
             await call.listen()
         joined = joined and not call.ended
-        tail = await _cleanup(desk, joined, after=call.after)
+        # Left for good, before leaving: a restart from here on writes the
+        # notes from what was saved and never goes back into the call.
+        call.state['left'] = True
+        await call.save(status=meeting_notes.TRANSCRIBING, progress='leaving the call')
+        departed = True
+        stopped = await _cleanup(desk, joined, after=call.after, whole=True)
         desk = None  # already left, including if final transcription is cancelled
+        tail = call.heard_from(stopped)
+        if tail or not call.queue.empty():
+            await _set(meeting_id, progress='transcribing the end of the call')
         if tail:
-            await _set(meeting_id, status=meeting_notes.TRANSCRIBING, progress='transcribing the end of the call')
             call.hear(tail)
         await call.heard_all()
         await call.stop_hearing()
@@ -1495,21 +1697,40 @@ async def run(item: Live) -> None:
             await _finish_test(call)
         else:
             await _finish(call)
-    except asyncio.CancelledError:
-        if joined and call is not None and not item.stopping and not row.test:
-            # Cognitrix is shutting down: stay in the call, so the next start
-            # picks it up (resume_interrupted). The recorder keeps what was
-            # not transcribed yet.
+    except LostCall:
+        logger.info('Meeting %s: another Cognitrix process runs this call now', meeting_id)
+        item.lost = True
+        if call is not None:
             await call.stop_hearing()
-            await _set(meeting_id, progress='Cognitrix stopped; it picks the call back up when it starts',
-                       transcript='\n'.join(call.lines)[-meeting_notes.MAX_TRANSCRIPT_CHARS:])
+    except asyncio.CancelledError:
+        if item.lost:
+            # Another process runs the call now: leave its window, row and audio alone.
+            if call is not None:
+                await call.stop_hearing()
+            raise
+        if joined and call is not None and not departed and not item.stopping and not row.test:
+            # Cognitrix is shutting down: stay in the call, so the next start
+            # picks it up (resume_interrupted), and give the lease up so it
+            # can do that at once. The recorder keeps what was not saved yet.
+            await call.stop_hearing()
+            try:
+                await _set(meeting_id, progress='Cognitrix stopped; it picks the call back up when it starts',
+                           transcript='\n'.join(call.lines)[-meeting_notes.MAX_TRANSCRIPT_CHARS:],
+                           runner=lease(0))
+            except LostCall:
+                pass
             raise
         await _cleanup(desk, joined)
         if call is not None:
             await call.stop_hearing()
             call.drop_audio()
-        await _set(meeting_id, status=meeting_notes.FAILED, progress='', error='Stopped.',
-                   transcript='\n'.join(lines)[-meeting_notes.MAX_TRANSCRIPT_CHARS:])
+        why = 'Stopped.' if item.stopping or not departed else \
+            'Cognitrix stopped while finishing the call. Write the notes from what was heard so far.'
+        try:
+            await _set(meeting_id, status=meeting_notes.FAILED, progress='', error=why,
+                       transcript='\n'.join(lines)[-meeting_notes.MAX_TRANSCRIPT_CHARS:])
+        except LostCall:
+            pass
         raise
     except (MeetingError, meeting_notes.TranscriptionError) as exc:
         await _failed(row, desk, joined, call, lines, str(exc))
@@ -1519,19 +1740,43 @@ async def run(item: Live) -> None:
             'Something went wrong in the call.'
         await _failed(row, desk, joined, call, lines, message)
     finally:
+        beat.cancel()
         _live.pop(meeting_id, None)
+        _owned.pop(meeting_id, None)
 
 
-async def _cleanup(desk: _Desk | None, joined: bool, *, after: int | None = None) -> list[dict]:
-    pieces = []
+async def _keep_lease(item: Live) -> None:
+    """Renew this process's lease on the call while it runs; stop the call
+    if another process has taken it over."""
+    meeting_id = item.meeting_id
+    while True:
+        await asyncio.sleep(HEARTBEAT_S)
+        if meeting_id not in _owned:
+            continue  # not this process's to renew (a row from before leases)
+        try:
+            await _set(meeting_id, runner=lease())
+        except LostCall:
+            item.lost = True
+            if item.task is not None:
+                item.task.cancel()
+            return
+        except Exception:
+            logger.debug('Meeting %s: could not renew the lease', meeting_id, exc_info=True)
+
+
+async def _cleanup(desk: _Desk | None, joined: bool, *, after: int | None = None, whole: bool = False) -> Any:
+    """Stop listening and leave (or close the page). Returns the recorder's
+    unread pieces (``after`` given), or its whole reply with ``whole``."""
+    pieces: list[dict] = []
+    reply: dict = {}
     if desk is None:
-        return pieces
+        return reply if whole else pieces
     try:
         if after is None:
             await desk.audio('POST', 'stop')
         else:
-            stopped = await desk.audio('POST', 'stop', {'after': after})
-            pieces = stopped.get('pieces') or []  # older images just acknowledge the stop
+            reply = await desk.audio('POST', 'stop', {'after': after}) or {}
+            pieces = reply.get('pieces') or []  # older images just acknowledge the stop
     except Exception:
         logger.debug('Could not stop listening', exc_info=True)
     try:
@@ -1543,7 +1788,7 @@ async def _cleanup(desk: _Desk | None, joined: bool, *, after: int | None = None
             await desk.do(desk.screen.close)
     except Exception:
         logger.debug('Could not leave the call', exc_info=True)
-    return pieces
+    return reply if whole else pieces
 
 
 async def _failed(row: MeetingNote, desk: _Desk | None, joined: bool, call: _Call | None, lines: list[str],
@@ -1607,11 +1852,19 @@ async def _record_seen(desk: _Desk, row: MeetingNote) -> str:
 
 
 async def _still_in_call(desk: _Desk, row: MeetingNote) -> bool:
-    """After a restart: is the agent's browser still in the call?"""
+    """After a restart: is the agent's browser still in the call? Raises
+    HumanControl while the person has the computer (nothing can be read then)."""
+    from cognitrix.computer import HumanControl
+
     screen = desk.screen
     screen.platform, screen.url = row.platform or platform_of(row.url), row.url
+    room = str((row.call_state or {}).get('room') or '')
+    if screen.platform == 'meet' and room.startswith('meet:'):
+        screen._room_code = room[5:]  # a nickname link's room, as it was resolved when the agent got in
     try:
         windows = await desk.do(desk.driver.list_windows)
+    except HumanControl:
+        raise
     except Exception:
         logger.info('Meeting %s: could not list windows after a restart', row.id, exc_info=True)
         windows = []
@@ -1620,28 +1873,59 @@ async def _still_in_call(desk: _Desk, row: MeetingNote) -> bool:
             continue
         try:
             view = await desk.do(screen._read, int(win.id))
-            if not view.in_call(screen.platform) or not _is_this_call(screen, view, win):
+            if not view.in_call(screen.platform) or not _is_this_call(screen, view, win, room):
                 continue
             screen.window_id = int(win.id)
             return True
+        except HumanControl:
+            raise
         except Exception:  # a window that closed or can't be read: try the next one
             logger.debug('Meeting %s: window %s not readable after a restart', row.id, win.id, exc_info=True)
     screen.window_id = None
     return False
 
 
-def _is_this_call(screen: Screen, view: View, win: Any) -> bool:
-    """The page is this meeting, not another call open in the same browser."""
-    address = view.address()
+def _is_this_call(screen: Screen, view: View, win: Any, room: str = '') -> bool:
+    """The page is exactly this meeting, not another call open in the same
+    browser: the meeting its address names matches the one the agent got
+    into (or the link's, for calls from before that was kept)."""
     if screen.platform == 'meet':
         return screen._matches_meet(view, getattr(win, 'title', '') or '', False)
-    if not address.hostname:
-        return False  # can't tell which call it is
-    if platform_of(address.geturl()) != screen.platform:
-        return False
-    # Zoom's web client keeps the meeting number in the address.
-    wanted = re.search(r'/(?:j|wc/join|wc)/(\d{6,})', urlsplit(screen.url).path)
-    return not wanted or wanted.group(1) in address.path
+    wanted = room or room_key(screen.url)
+    return bool(wanted) and room_key(view.address().geturl()) == wanted
+
+
+def _room_now(screen: Screen, url: str) -> str:
+    """The meeting the browser is in now, to find it again after a restart."""
+    if screen.platform == 'meet' and screen._room_code:
+        return f'meet:{screen._room_code}'
+    view = screen.last_view
+    shown = room_key(view.address().geturl()) if view is not None else ''
+    return shown or room_key(url)
+
+
+async def _back_in_call(item: Live, desk: _Desk, row: MeetingNote) -> bool:
+    """After a restart: find the call window, waiting while the person has
+    the computer (opening the call again then would put the agent in twice)."""
+    from cognitrix.computer import HumanControl
+
+    waited, told = 0.0, False
+    while True:
+        try:
+            return await _still_in_call(desk, row)
+        except HumanControl:
+            if waited >= HANDBACK_WAIT_S:
+                raise MeetingError('You had the computer for too long after Cognitrix restarted, so the agent '
+                                   'could not check the call.') from None
+            if not told:
+                told = True
+                await _set(str(row.id), progress='waiting for you to hand back the computer')
+            await asyncio.sleep(HANDBACK_POLL_S)
+            waited += HANDBACK_POLL_S
+
+
+HANDBACK_WAIT_S = 30 * 60
+HANDBACK_POLL_S = 10
 
 
 async def _test_call(call: _Call) -> None:
@@ -1651,7 +1935,7 @@ async def _test_call(call: _Call) -> None:
     call.reasons.append('spoke' if await call.say_now(sentence, 'voice') == 'voice' else 'no voice')
     while time.monotonic() - started < TEST_LISTEN_S:
         heard = await call.desk.audio('GET', after=call.after)
-        call.hear(heard.get('pieces') or [])
+        call.hear(call.heard_from(heard))
         await call.heard_all()
         if any('testing' in ln.lower() or 'checking the sound' in ln.lower()
                for ln in call.lines if f'{call.row.bot_name} (' not in ln):
@@ -1741,14 +2025,27 @@ async def _owner_name(user_key: str) -> str:
 
 async def fail_interrupted() -> None:
     """On start: a call that can't be picked up again keeps what was heard, so
-    the notes can still be written from it."""
+    the notes can still be written from it. A call another running process
+    still holds (its lease is fresh) is left alone, audio and all."""
+    keep: set[str] = set()
     for row in await MeetingNote.find({'kind': 'live'}) or []:
-        if row.status in LIVE_STATES and not running(str(row.id)):
-            await _set(str(row.id), status=meeting_notes.FAILED, progress='',
-                       error='Cognitrix restarted during the call. Write the notes from what was heard so far.')
+        meeting_id = str(row.id)
+        if row.status not in LIVE_STATES:
+            continue
+        if running(meeting_id) or _held_elsewhere(row.runner):
+            keep.add(meeting_id)
+            continue
+        # Only while the row still holds what was read: a process that took
+        # the call over in the meantime keeps it.
+        taken = await MeetingNote.update_many(
+            {'id': row.id, 'runner': row.runner},
+            {'status': meeting_notes.FAILED, 'progress': '', 'runner': '', 'updated_at': datetime.now(),
+             'error': 'Cognitrix restarted during the call. Write the notes from what was heard so far.'})
+        if isinstance(taken, int) and taken == 0:
+            keep.add(meeting_id)
     try:
         for leftover in audio_dir().iterdir():
-            if leftover.is_file() and not running(leftover.stem):
+            if leftover.is_file() and leftover.stem not in keep and not running(leftover.stem):
                 leftover.unlink(missing_ok=True)
     except OSError:
         logger.debug('Could not clear old meeting audio', exc_info=True)
@@ -1757,25 +2054,60 @@ async def fail_interrupted() -> None:
 async def resume_interrupted() -> int:
     """On start: an agent that was in a call when Cognitrix stopped goes back
     to it (its browser in the sandbox is usually still in the call). Calls
-    still being joined, and everything when the computer is off, fail as
-    before. Returns how many were picked up."""
+    still being joined, calls the agent had already left, and everything when
+    the computer is off, fail as before. A call whose lease another process
+    still holds is checked again once that lease runs out. Returns how many
+    were picked up."""
     from cognitrix.computer.sandbox.client import sandbox_mode
 
     picked = 0
+    wait: float | None = None
     if sandbox_mode() is not None:
         for row in await MeetingNote.find({'kind': 'live'}) or []:
             if (row.status != LIVE or running(str(row.id)) or not row.url or not row.agent_id
-                    or row.runner == BOOT):
+                    or (row.call_state or {}).get('left')):
                 continue
-            # Claim it from the process that ran it, so two processes starting
-            # together never both pick it up.
-            if await MeetingNote.update_one({'id': row.id, 'status': LIVE, 'runner': row.runner},
-                                            {'runner': BOOT, 'progress': 'picking the call back up'}) != 1:
+            boot, at = _lease_of(row.runner)
+            if boot == BOOT:
                 continue
+            if _held_elsewhere(row.runner):
+                left = LEASE_S - (time.time() - at) + 1
+                wait = left if wait is None else min(wait, left)
+                continue
+            # Take it over only while the row still holds the lease that was
+            # read: of two processes starting together, one gets it.
+            mine = lease()
+            taken = await MeetingNote.update_many(
+                {'id': row.id, 'status': LIVE, 'runner': row.runner},
+                {'runner': mine, 'progress': 'picking the call back up', 'updated_at': datetime.now()})
+            if not isinstance(taken, int) or taken != 1:
+                continue
+            _owned[str(row.id)] = mine
             start(str(row.id), resume=True)
             picked += 1
     await fail_interrupted()
+    if wait is not None:
+        _check_again(wait)
     return picked
+
+
+_recheck: asyncio.Task | None = None
+
+
+def _check_again(delay: float) -> None:
+    """Look at calls held by another process again once their lease runs out."""
+    global _recheck
+    if _recheck is not None and not _recheck.done():
+        return
+
+    async def later() -> None:
+        await asyncio.sleep(max(1.0, delay))
+        try:
+            await resume_interrupted()
+        except Exception:
+            logger.exception('Could not pick calls back up')
+
+    _recheck = asyncio.create_task(later())
 
 
 async def cancel(meeting_id: str) -> None:

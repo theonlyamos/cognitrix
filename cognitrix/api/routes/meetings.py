@@ -29,6 +29,7 @@ calendar, ``PUT /meetings/calendar`` changes how they are suggested,
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -238,7 +239,7 @@ async def start_live(user_key: str, *, url: str, agent_id: str = '', title: str 
         status=live_meetings.JOINING, progress='starting its computer',
         context=background, watch_words=extras.words(watch_words or []), share=share or settings.share,
         session_id=session_id, chat_agent_id=chat_agent_id, series_id=series_id, test=bool(test),
-        runner=live_meetings.BOOT,
+        runner=live_meetings.lease(),
     )
     await row.save()
     live_meetings.start(str(row.id))
@@ -357,10 +358,21 @@ async def steer_live(meeting_id: str, body: Steer, ctx: AuthContext = Depends(ge
 
 @meetings_api.post('/{meeting_id}/pause')
 async def pause_live(meeting_id: str, body: PauseBody, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Off the record (or back on). Answers once the call has applied it, so
+    the page only says "paused" when it is; 'pending' if that took too long
+    (it still counts from the moment it was asked)."""
     row = await _mine(meeting_id, ctx)
-    if not live_meetings.steer(str(row.id), 'pause' if body.paused else 'resume'):
+    done = live_meetings.steer(str(row.id), 'pause' if body.paused else 'resume')
+    if done is None:
         raise HTTPException(status_code=409, detail='The agent is not in this call.')
-    return {'status': 'queued'}
+    try:
+        await asyncio.wait_for(asyncio.shield(done), PAUSE_WAIT_S)
+    except TimeoutError:
+        return {'status': 'pending'}
+    return {'status': 'paused' if body.paused else 'resumed'}
+
+
+PAUSE_WAIT_S = 15
 
 
 @meetings_api.get('/{meeting_id}/seen.png')
@@ -377,7 +389,7 @@ async def leave_live(meeting_id: str, ctx: AuthContext = Depends(get_auth_contex
     row = await _mine(meeting_id, ctx)
     if not live_meetings.request_leave(str(row.id)):
         raise HTTPException(status_code=409, detail='The agent is not in this call.')
-    await MeetingNote.update_one({'id': row.id}, {'progress': 'leaving the call'})
+    await MeetingNote.update_many({'id': row.id}, {'progress': 'leaving the call'})
     return _view(await MeetingNote.get(row.id))
 
 

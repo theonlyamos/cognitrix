@@ -226,21 +226,36 @@ def hints(row: MeetingNote, agent_name: str, owner: str, settings: MeetingSettin
 # ---------------------------------------------------------------- spoken commands
 
 _PAUSE = re.compile(r"\b(?:pause|stop|hold)\s+(?:the\s+|your\s+)?(?:notes|note[- ]?taking|taking notes|recording|"
-                    r"listening|transcri\w+)\b|\b(?:go|we're|we\s+are|let's\s+go)\s+off\s+(?:the\s+)?record\b",
-                    re.I)
+                    r"listening|transcri\w+)\b|\boff\s+(?:the\s+)?record\b", re.I)
 # A resume is said to the note-taker about the notes ("resume the notes",
 # "start taking notes again", "back on the record"), or is the whole request
 # ("Ada, resume."), never a word inside another sentence ("continue the
-# budget discussion").
+# budget discussion") or a question ("when should we resume taking notes?").
 _RESUME = re.compile(r"\b(?:resume|restart|continue|start|keep)\s+(?:taking\s+)?(?:the\s+|your\s+)?(?:notes|"
-                     r"note[- ]?taking|recording|listening|transcri\w+)\b|\bback\s+on\s+(?:the\s+)?record\b|"
-                     r"^\W*(?:you\s+can\s+|please\s+)?resume(?:\s+now|\s+please)?\W*$", re.I)
+                     r"note[- ]?taking|recording|listening|transcri\w+)(?:\s+again)?\b|"
+                     r"\b(?:go\s+|we're\s+|we\s+are\s+)?back\s+on\s+(?:the\s+)?record\b|"
+                     r"\bresume(?:\s+now|\s+please)?$", re.I)
+# What may come before a resume in the same clause: a polite way of asking,
+# nothing that makes it a question or a remark.
+_ASKING = re.compile(r"^(?:(?:ok(?:ay)?|alright|right|so|now|and|then|please|yes|yeah|great|thanks|"
+                     r"thank\s+you|you\s+can|we\s+can|can\s+you|could\s+you|would\s+you|will\s+you|"
+                     r"go\s+ahead\s+and|let's|let\s+us|time\s+to|i\s+need\s+you\s+to|i'd\s+like\s+you\s+to)\b"
+                     r"[\s,]*)*$", re.I)
 _NOT = re.compile(r"\b(?:don'?t|do\s+not|never|no\s+need\s+to|not\s+yet|shouldn'?t|won'?t|can'?t|cannot|"
-                  r"wouldn'?t|not)\b[\w\s,']{0,20}$", re.I)
+                  r"wouldn'?t|isn'?t|aren'?t|wasn'?t|not)\b[\w\s,']{0,20}$", re.I)
 _LEAVE = re.compile(r"\b(?:please\s+leave|leave\s+(?:the|this|our)\s+(?:call|meeting)|you\s+can\s+(?:go|leave)"
                     r"(?:\s+now)?\b|drop\s+off\b|hang\s+up\b)", re.I)
 _MARK = re.compile(r"\b(?:mark|note|record|log|add)\s+(?:that|this|it)\s+(?:down\s+)?as\s+(?:an?\s+)?"
                    r"(action(?:\s+item)?|decision|todo|to-do|follow[- ]up)\b", re.I)
+_CLAUSE = re.compile(r"[.!?;:,]\s*")
+
+
+def _strip_names(text: str, names: list[str] | None) -> str:
+    """The words without the agent's name ("Ada resume" and "Ada, resume" alike)."""
+    out = text
+    for name in sorted((n for n in names or [] if n), key=len, reverse=True):
+        out = re.sub(rf"(?:\b(?:hey|ok|okay)\s+)?\b{re.escape(name)}\b\s*[,:]?\s*", ' ', out, flags=re.I)
+    return re.sub(r'\s+', ' ', out).strip()
 
 
 def _after_name(text: str) -> str:
@@ -256,13 +271,35 @@ def _said(pattern: re.Pattern, text: str) -> re.Match | None:
     return None
 
 
-def command(text: str) -> tuple[str, str] | None:
-    """A command in something said to the agent: ('pause'|'resume'|'leave'|'mark', detail)."""
+def _clauses(text: str) -> list[str]:
+    return [c.strip() for c in _CLAUSE.split(text) if c.strip()]
+
+
+def _asks_to_resume(text: str) -> bool:
+    """A clause that is a request to resume: the resume words with at most a
+    polite lead-in, and not a question unless it is "can you / could you"."""
+    for clause in _clauses(text):
+        match = _RESUME.search(clause)
+        if match is None:
+            continue
+        lead = clause[:match.start()].strip()
+        if not _ASKING.match(lead):
+            continue
+        tail = text[text.find(clause) + len(clause):].lstrip()[:1]
+        if tail == '?' and not re.match(r'^(?:can|could|would|will)\s+you\b', lead, re.I):
+            continue
+        return True
+    return False
+
+
+def command(text: str, names: list[str] | None = None) -> tuple[str, str] | None:
+    """A command in something said to the agent: ('pause'|'resume'|'leave'|'mark', detail).
+    ``names``: what the agent is called in the call, so "Ada resume" (no comma) reads too."""
     text = str(text or '')
-    rest = _after_name(text)
+    rest = _strip_names(text, names) if names else _after_name(text)
     if _said(_PAUSE, text):
         return 'pause', ''
-    if _said(_RESUME, text) or _said(_RESUME, rest):
+    if _asks_to_resume(rest):
         return 'resume', ''
     if _said(_LEAVE, text):
         return 'leave', ''
@@ -274,13 +311,12 @@ def command(text: str) -> tuple[str, str] | None:
 
 
 def up_to_command(text: str) -> str:
-    """The words up to the end of the sentence that asked for the pause:
-    what followed it in the same piece of speech is off the record."""
+    """The words up to and including the pause itself: whatever followed it
+    in the same piece of speech is off the record."""
     match = _said(_PAUSE, text)
     if match is None:
         return text
-    stop = re.search(r'[.!?]', text[match.end():])
-    return text[:match.end() + (stop.end() if stop else 0)].strip()
+    return text[:match.end()].strip()
 
 
 def watch_hits(text: str, watch: list[str]) -> list[str]:

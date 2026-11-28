@@ -102,8 +102,24 @@ export function LiveCall({ meeting, agents, onBack, onChanged, onReload }: {
       if (mode !== 'say') void onReload();
     }
   };
-  const pause = () => void post('pause', { paused: !meeting.paused },
-    meeting.paused ? tr('ui.meetingExtras.backOnTheRecord') : tr('ui.meetingExtras.pausedNothingIsKeptUntil')).then(() => void onReload());
+  // The page says "paused" only once the agent has applied it; until then
+  // it says so (the pause still counts from the moment it was asked).
+  const pause = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const r = await api.post(`/meetings/${meeting.id}/pause`, { paused: !meeting.paused });
+      const status = (r.data as { status?: string } | undefined)?.status;
+      setNotice(status === 'pending' ? tr('ui.meetingExtras.notConfirmedYetBotname', { botName: bot })
+        : meeting.paused ? tr('ui.meetingExtras.backOnTheRecord') : tr('ui.meetingExtras.pausedNothingIsKeptUntil'));
+      window.setTimeout(() => setNotice(''), 6000);
+      void onReload();
+    } catch (e) {
+      setError(errorMessage(e, tr('ui.meetingExtras.couldNotReachTheAgent')));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const where = PLATFORM[meeting.platform ?? ''] ?? 'the call';
   const badge = live
@@ -167,7 +183,7 @@ export function LiveCall({ meeting, agents, onBack, onChanged, onReload }: {
             {watching ? tr('ui.meetings.hideScreen') : tr('ui.meetings.watch')}
           </Button>
           {steering && (
-            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={pause}>
+            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void pause()}>
               {meeting.paused ? <Play size={14} aria-hidden /> : <Pause size={14} aria-hidden />}
               {meeting.paused ? tr('ui.meetingExtras.resumeNotes') : tr('ui.meetingExtras.pauseNotes')}
             </Button>

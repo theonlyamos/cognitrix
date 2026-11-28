@@ -446,6 +446,7 @@ _MEETING_MIGRATION_COLUMNS = (
     ('rejoins', 'INTEGER DEFAULT 0'),
     ('test', 'BOOLEAN DEFAULT 0'),
     ('runner', "TEXT DEFAULT ''"),
+    ('call_state', "TEXT DEFAULT '{}'"),
 )
 
 # PostgreSQL / MySQL: every meeting field added after the table was first
@@ -458,7 +459,7 @@ _MEETING_RELATIONAL_COLUMNS = (
     ('share', 'TEXT'), ('watch_words', 'TEXT'), ('guidance', 'TEXT'), ('paused', 'BOOLEAN'),
     ('owner_question', 'TEXT'), ('owner_answer', 'TEXT'), ('live_notes', 'TEXT'), ('rejoins', 'INTEGER'),
     ('runner', 'TEXT'), ('seen', 'TEXT'), ('test', 'BOOLEAN'), ('speaker_transcript', 'TEXT'),
-    ('action_items', 'TEXT'),
+    ('action_items', 'TEXT'), ('call_state', 'TEXT'),
 )
 
 _AGENT_MIGRATION_COLUMNS = (
@@ -769,6 +770,12 @@ async def _migrate_relational_task_schema(database) -> None:
                     raise RuntimeError(
                         f'Could not migrate {table}.{column} on {dbms}'
                     ) from exc
+
+    # A live call's claim after a restart compares ``runner`` with what was
+    # read (an empty string for NULL), so a NULL never matches: backfill it.
+    await database.query(
+        "UPDATE meetingnotes SET runner = '' WHERE runner IS NULL"
+    )
 
     await database.query(
         "UPDATE taskruns SET authority_kind = 'system' "
