@@ -43,6 +43,9 @@ ENV_NAME = 'COGNITRIX_TAILNET_NAME'
 ENV_KEY = 'COGNITRIX_TAILNET_AUTHKEY'
 # Ports the engine dials on a computer (its tools, its live screen).
 PORTS = (8790, 6080)
+# Ports the computers dial on the engine: its hidden-keys proxy. A few, since
+# each Cognitrix process on the machine (web, task worker) runs its own.
+PROXY_PORTS = tuple(range(8791, 8799))
 _STATUS_FRESH_S = 5.0
 # How long a started machine gets to show up on the tailnet.
 JOIN_WAIT_S = 75.0
@@ -269,9 +272,9 @@ def policy_snippet() -> str:
         f'"{tag}": ["autogroup:admin"],',
         '',
         '// 2. Under "grants": this server reaches the computers (their tools and live screen),',
-        '//    and the computers reach this server (its hidden-keys proxy picks its port at start).',
+        '//    and the computers reach this server\'s hidden-keys proxy, nothing else on it.',
         f'{{"src": ["{server}"], "dst": ["{tag}"], "ip": ["tcp:{PORTS[0]}", "tcp:{PORTS[1]}"]}},',
-        f'{{"src": ["{tag}"], "dst": ["{server}"], "ip": ["tcp:*"]}},',
+        f'{{"src": ["{tag}"], "dst": ["{server}"], "ip": ["tcp:{PROXY_PORTS[0]}-{PROXY_PORTS[-1]}"]}},',
         '',
         '// 3. Optional, one line per machine the agents\' computers may reach, for example a NAS:',
         f'// {{"src": ["{tag}"], "dst": ["my-nas"], "ip": ["tcp:445"]}},',

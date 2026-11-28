@@ -196,7 +196,7 @@ def test_the_policy_snippet_names_this_server_and_the_tag(tailnet):
     assert '"tag:agents-box": ["autogroup:admin"]' in text
     assert '{"src": ["100.64.0.7"], "dst": ["tag:agents-box"], "ip": ["tcp:8790", "tcp:6080"]}' in text
     tailnet.self_tags = ['tag:server']
-    assert '{"src": ["tag:agents-box"], "dst": ["tag:server"], "ip": ["tcp:*"]}' in computers.policy_snippet()
+    assert '{"src": ["tag:agents-box"], "dst": ["tag:server"], "ip": ["tcp:8791-8798"]}' in computers.policy_snippet()
 
 
 def test_check_tries_the_oauth_client(ts_api, tailnet):
@@ -320,6 +320,41 @@ def test_hidden_keys_proxy_listens_on_the_tailnet_address(fly, tailnet, monkeypa
     mgr._proxy_where = None
     monkeypatch.setattr(outbound, 'proxy_port', lambda: 1055)
     assert mgr._proxy_addresses() == ('127.0.0.1', '100.64.0.7')
+
+
+def test_hidden_keys_proxy_uses_the_ports_the_policy_names(fly, tailnet, monkeypatch):
+    import socket
+
+    from cognitrix.common import key_proxy
+
+    mgr, _ = fly
+    assert mgr._proxy_ports() == ()                      # on Fly's own network: any free port
+    _turn_on()
+    assert mgr._proxy_ports() == computers.PROXY_PORTS == tuple(range(8791, 8799))
+    low, high = computers.PROXY_PORTS[0], computers.PROXY_PORTS[-1]
+    assert f'"dst": ["100.64.0.7"], "ip": ["tcp:{low}-{high}"]' in computers.policy_snippet()
+
+    # Each Cognitrix process on the machine runs its own proxy: the second takes the next port.
+    taken = socket.socket()
+    taken.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        taken.bind(('127.0.0.1', 0))
+        first = taken.getsockname()[1]
+        taken.listen(1)
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            second = probe.getsockname()[1]
+        proxy = key_proxy.KeyProxy()
+        monkeypatch.setattr(key_proxy.KeyProxy, 'ca', property(lambda self: None))
+        try:
+            assert proxy.ensure_started('127.0.0.1', (first, second)) == ('127.0.0.1', second)
+        finally:
+            proxy.stop()
+        only = key_proxy.KeyProxy()
+        with pytest.raises(OSError):
+            only.ensure_started('127.0.0.1', (first,))
+    finally:
+        taken.close()
 
 
 def test_idle_check_asks_over_the_tailnet(fly, tailnet, ts_api, monkeypatch):

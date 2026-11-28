@@ -607,6 +607,11 @@ class FlyManager(SandboxManager):
         self._boxes.pop(self.machine_name(user_id), None)
 
     # -- keys the agent never sees ---------------------------------------------
+    def _proxy_ports(self) -> tuple[int, ...]:
+        # Over the tailnet the owner's policy has to name the ports computers may reach here.
+        from cognitrix.tailscale import computers
+        return computers.PROXY_PORTS if computers.dial_over_tailnet() else ()
+
     def _proxy_addresses(self) -> tuple[str, str]:
         """The key proxy runs in the engine. Machines reach the engine over
         Fly's private network, so it listens on IPv6 (every proxied request

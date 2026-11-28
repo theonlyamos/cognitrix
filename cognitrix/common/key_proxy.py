@@ -404,8 +404,10 @@ class KeyProxy:
             self._ca = _CA(_state_dir())
         return self._ca
 
-    def ensure_started(self, bind: str) -> tuple[str, int]:
-        """Start listening on ``bind`` (once). Returns (bind, port)."""
+    def ensure_started(self, bind: str, ports: tuple[int, ...] = ()) -> tuple[str, int]:
+        """Start listening on ``bind`` (once). Returns (bind, port). The port
+        is any free one, unless ``ports`` names the ones to pick from (where a
+        firewall or a tailnet policy has to name them)."""
         with self._lock:
             if self._server is not None:
                 return self.bind, self.port
@@ -417,9 +419,17 @@ class KeyProxy:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    port = int(os.environ.get(PORT_ENV, '0') or 0)
-                    self._server = loop.run_until_complete(
-                        asyncio.start_server(self._handle, bind, port, limit=MAX_HEAD))
+                    fixed = int(os.environ.get(PORT_ENV, '0') or 0)
+                    choices = [fixed] if fixed or not ports else list(ports)
+                    for at, port in enumerate(choices):
+                        try:
+                            self._server = loop.run_until_complete(
+                                asyncio.start_server(self._handle, bind, port, limit=MAX_HEAD))
+                            break
+                        except OSError:
+                            # Another Cognitrix process on this machine has that one: try the next.
+                            if at == len(choices) - 1:
+                                raise
                     self._loop = loop
                     self.bind = bind
                     self.port = self._server.sockets[0].getsockname()[1]
