@@ -33,7 +33,7 @@ export interface MeetingSummary {
   bot_name?: string;
   reply_mode?: ReplyMode;
   answers?: number;
-  /** The agent is in the call right now. */
+  /** The live meeting worker is running, including while it writes notes after the call. */
   in_call?: boolean;
 }
 interface Meeting extends MeetingSummary { transcript: string; notes: string }
@@ -241,7 +241,7 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
     }
   };
 
-  if (meeting.in_call || IN_CALL.includes(meeting.status)) {
+  if (IN_CALL.includes(meeting.status)) {
     return (
       <div className="border-t border-line px-4 py-3">
         <LiveCall meeting={meeting} agents={agents} onChanged={onChanged} onReload={load} />

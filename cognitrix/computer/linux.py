@@ -55,6 +55,7 @@ _MAX_DEPTH = 40
 _TEXT_LIMIT = 2000
 
 # AtspiStateType
+_ST_ACTIVE = 1
 _ST_CHECKED, _ST_DEFUNCT, _ST_EDITABLE, _ST_ENABLED, _ST_EXPANDABLE, _ST_EXPANDED = 4, 6, 7, 8, 9, 10
 _ST_FOCUSABLE, _ST_FOCUSED, _ST_HORIZONTAL, _ST_PRESSED, _ST_SELECTABLE, _ST_SELECTED = 11, 12, 14, 20, 22, 23
 _ST_SENSITIVE, _ST_SHOWING, _ST_VISIBLE = 24, 25, 30
@@ -427,9 +428,9 @@ class _Atspi:
         if not ptr:
             return {_ST_DEFUNCT}
         try:
-            return {s for s in (_ST_CHECKED, _ST_DEFUNCT, _ST_EDITABLE, _ST_ENABLED, _ST_EXPANDABLE, _ST_EXPANDED,
-                                _ST_FOCUSABLE, _ST_FOCUSED, _ST_HORIZONTAL, _ST_PRESSED, _ST_SELECTABLE,
-                                _ST_SELECTED, _ST_SENSITIVE, _ST_SHOWING, _ST_VISIBLE)
+            return {s for s in (_ST_ACTIVE, _ST_CHECKED, _ST_DEFUNCT, _ST_EDITABLE, _ST_ENABLED, _ST_EXPANDABLE,
+                                _ST_EXPANDED, _ST_FOCUSABLE, _ST_FOCUSED, _ST_HORIZONTAL, _ST_PRESSED,
+                                _ST_SELECTABLE, _ST_SELECTED, _ST_SENSITIVE, _ST_SHOWING, _ST_VISIBLE)
                     if self.lib.atspi_state_set_contains(ptr, s)}
         finally:
             self.gobject.g_object_unref(ptr)
@@ -696,9 +697,30 @@ class LinuxBackend:
                     frames.append((top, a.name(top)))
         if not frames:
             return None
-        for frame, name in frames:
-            if name == info.title:
-                return frame
+        # With multiple profiles Chromium appends the profile name to its
+        # accessible frame title, while the X title still ends in " - Chromium".
+        chromium = info.app in ('chrome', 'chromium', 'chromium-browser', 'google-chrome')
+        named = [frame for frame, name in frames if name == info.title
+                 or (chromium and info.title and name.startswith(info.title + ' - '))]
+        if len(named) == 1:
+            return named[0]
+        if named:
+            # Chromium can have several maximized windows with the same title.
+            # AT-SPI order does not identify the X window.
+            positioned = [frame for frame in named if a.extents(frame) == info.rect]
+            if len(positioned) == 1:
+                return positioned[0]
+            front = self.window(self.foreground())
+            if front is None or front.pid != info.pid or front.title != info.title:
+                return None
+            active = [frame for frame in named if _ST_ACTIVE in a.states(frame)]
+            if len(active) != 1:
+                return None
+            options = positioned or named
+            if info.id == front.id:
+                return active[0] if active[0] in options else None
+            inactive = [frame for frame in options if frame != active[0]]
+            return inactive[0] if len(inactive) == 1 else None
         if len(frames) == 1:
             return frames[0][0]
         showing = [f for f, _ in frames if _ST_SHOWING in a.states(f)]
@@ -755,7 +777,7 @@ class LinuxBackend:
                 value = _number(current)
                 if role != 'progress bar' and role != 'level bar':
                     actions.append('set_value')
-        elif role in ('text', 'terminal', 'paragraph', 'document text') and a.has(acc, 'text'):
+        elif role in ('entry', 'text', 'terminal', 'paragraph', 'document text') and a.has(acc, 'text'):
             value = a.text(acc)
         if 'set_value' in actions and 'invoke' in actions:
             # A field's own action is "activate" (like pressing Enter), not a click.

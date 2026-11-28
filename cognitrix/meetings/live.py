@@ -35,8 +35,9 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, parse_qs, urlsplit
 
+from cognitrix.computer import Stale
 from cognitrix.meetings import notes as meeting_notes
 from cognitrix.meetings.notes import MeetingError, MeetingNote
 
@@ -47,6 +48,7 @@ LIVE_STATES = (JOINING, WAITING, LIVE)
 REPLY_MODES = ('chat', 'voice', 'off')
 
 JOIN_TIMEOUT_S = 120  # getting through the join screen
+SIGN_IN_WAIT_S = 15 * 60  # time to take over and sign in when the call requires it
 LOBBY_WAIT_S = 15 * 60  # waiting for the host to let it in
 QUIET_LEAVE_S = 15 * 60  # nothing heard for this long: the call is over
 MAX_MEETING_S = 4 * 3600
@@ -110,14 +112,18 @@ JOIN_BUTTONS = (
 AUDIO_BUTTONS = ('join audio by computer', 'join with computer audio', 'join audio')
 NAME_FIELDS = ('your name', 'type your name', 'enter your name', 'enter name', 'name')
 LEAVE_BUTTONS = ('leave call', 'leave meeting', 'leave', 'hang up', 'end call')
+MEET_LEAVE_BUTTONS = ('leave call', 'leave meeting', 'hang up', 'end call')
+MEET_CODE = re.compile(r'\b[a-z]{3}-[a-z]{4}-[a-z]{3}\b')
 LOBBY = ('asking to be let in', 'waiting for the host', 'someone in the meeting should let you in',
          'when the meeting starts', 'let you in soon', 'please wait', 'waiting to be admitted',
          'host will let you in', 'lobby')
 REFUSED = ("you can't join this video call", 'denied your request', 'no one responded to your request',
            "you've been removed", 'you have been removed', 'removed you from', 'meeting has been locked',
-           'invalid meeting id', 'this meeting link is invalid', 'check your meeting code', 'sign in to join')
+           'invalid meeting id', 'this meeting link is invalid', 'check your meeting code')
 ENDED = ('you left the meeting', 'you left the call', 'the call has ended', 'the meeting has ended',
-         'meeting has ended', 'call ended', 'return to home screen', 'rejoin', 'this meeting has been ended')
+         'meeting has ended', 'call ended', 'return to home screen', 'this meeting has been ended')
+MEET_ROOM_CONTROLS = (('show everyone',), ('chat with everyone', 'in-call messages'),
+                      ('raise hand', 'lower hand'), ('meeting details',))
 CHAT_BUTTONS = ('chat with everyone', 'open chat', 'show conversation', 'chat')
 CHAT_FIELDS = ('send a message', 'type a message', 'type message here', 'send a message to everyone', 'message')
 TEXT_ROLES = ('entry', 'text', 'password text', 'combo box', 'editbar', 'textbox')
@@ -125,7 +131,7 @@ BUTTON_ROLES = ('push button', 'button', 'link', 'toggle button', 'menu item', '
 
 
 def _norm(text: Any) -> str:
-    return re.sub(r'\s+', ' ', str(text or '')).strip().lower()
+    return re.sub(r'\s+', ' ', str(text or '')).strip().lower().replace('’', "'")
 
 
 @dataclass
@@ -167,6 +173,29 @@ class View:
                     return index
         return None
 
+    def address(self) -> SplitResult:
+        bar = self.field(('address and search bar',))
+        raw = str(self.elements[bar].value or '').strip() if bar is not None else ''
+        try:
+            return urlsplit(raw if '://' in raw else '//' + raw)
+        except ValueError:
+            return urlsplit('')
+
+    def in_call(self, platform: str) -> bool:
+        meet = platform == 'meet'
+        if self.find(('ask to join', 'join') if meet else ('ask to join', 'join now')) is not None:
+            return False
+        if not meet:
+            return self.find(LEAVE_BUTTONS) is not None
+        if self.find(MEET_LEAVE_BUTTONS) is not None:
+            return True
+        # Mic and camera are present even before admission. These controls
+        # belong to the in-call toolbar; require two independent controls.
+        return sum(self.find(labels) is not None for labels in MEET_ROOM_CONTROLS) >= 2
+
+    def ended(self) -> str:
+        return 'rejoin' if self.find(('rejoin',)) is not None else self.says(ENDED)
+
     def point(self, index: int) -> tuple[float, float]:
         """Where a control is, in the screenshot's pixels (what type_text takes)."""
         r = self.elements[index].rect
@@ -181,22 +210,86 @@ class Screen:
         self.driver = driver
         self.viewer = viewer
         self.window_id: int | None = None
+        self.platform = 'other'
+        self.url = ''
+        self._room_code = ''
+        self._previous_windows: set[int] = set()
 
-    def open(self, url: str) -> int:
+    def open(self, url: str) -> None:
+        self.platform = platform_of(url)
+        self.url = url
+        if self.platform == 'meet':
+            self._previous_windows = {w.id for w in self.driver.list_windows()}
         win = self.driver.open('chromium', args=f'--new-window {url}', timeout_s=20)
-        if win is None:
-            windows = [w for w in self.driver.list_windows() if 'chrom' in (w.app or '').lower()]
-            if not windows:
-                raise MeetingError("The browser on the agent's computer didn't open.")
-            win = windows[-1]
-        self.window_id = int(win.id)
-        return self.window_id
+        if self.platform != 'meet':
+            if win is None:
+                windows = [w for w in self.driver.list_windows() if 'chrom' in (w.app or '').lower()]
+                if not windows:
+                    raise MeetingError("The browser on the agent's computer didn't open.")
+                win = windows[-1]
+            self.window_id = int(win.id)
 
-    def look(self) -> View:
-        if self.window_id is None:
+    def _new_windows(self):
+        return [w for w in self.driver.list_windows()
+                if w.id not in self._previous_windows and 'chrom' in (w.app or '').lower()]
+
+    def _matches_meet(self, view: View, title: str, only_window: bool) -> bool:
+        target = urlsplit(self.url)
+        path = target.path.strip('/')
+        address = view.address()
+        if address.hostname == 'accounts.google.com':
+            resume = parse_qs(address.query).get('continue')
+            if not resume:
+                return only_window
+            address = urlsplit(resume[0])
+        if address.hostname:
+            if address.hostname != target.hostname:
+                return False
+            # A nickname (/lookup/...) can resolve to the meeting's canonical code.
+            shown = address.path.strip('/')
+            if MEET_CODE.fullmatch(shown):
+                if self._room_code:
+                    return shown == self._room_code
+                if shown != path and (not only_window or MEET_CODE.fullmatch(path)):
+                    return False
+                self._room_code = shown
+                return True
+            return shown == path
+        # Older workers don't expose the omnibox value. Use the room code in
+        # the title, or an unambiguous new Meet window for named meetings.
+        title_code = MEET_CODE.search(title.lower())
+        if title_code and MEET_CODE.fullmatch(path):
+            return title_code.group() == path
+        return only_window and ('meet' in title.lower() or view.in_call('meet')
+                                or view.find(('ask to join', 'join now')) is not None)
+
+    def _read(self, window_id: int) -> View:
+        _image, snap, _shown, _note = self.driver.look(window_id, None, 1, viewer=self.viewer)
+        return View(window_id, snap.id, list(snap.elements), tuple(snap.origin), float(snap.scale or 1.0))
+
+    def look(self, *, for_close: bool = False) -> View:
+        if self.window_id is not None:
+            view = self._read(self.window_id)
+            address = view.address()
+            if self.platform == 'meet' and address.hostname and not self._matches_meet(view, '', True):
+                if (not for_close and address.hostname == urlsplit(self.url).hostname
+                        and not MEET_CODE.fullmatch(address.path.strip('/')) and view.ended()):
+                    return view
+                # The person can open or switch tabs when taking over. An X11
+                # window ID then still points to Chromium, but to a different page.
+                raise Stale('The Google Meet tab is no longer the selected tab in its window.')
+            return view
+        if self.platform != 'meet':
             raise MeetingError('The call is not open.')
-        _image, snap, _shown, _note = self.driver.look(self.window_id, None, 1, viewer=self.viewer)
-        return View(self.window_id, snap.id, list(snap.elements), tuple(snap.origin), float(snap.scale or 1.0))
+        # Chromium can restore several windows when it starts a signed-in
+        # profile. Driver.open may return any of them before Meet has loaded.
+        windows = self._new_windows()
+        for win in windows:
+            view = self._read(int(win.id))
+            if self._matches_meet(view, win.title or '', len(windows) == 1 and not for_close):
+                self.window_id = view.window_id
+                return view
+        raise Stale('Waiting for the requested Google Meet window to open.')
 
     def click(self, view: View, index: int) -> None:
         self.driver.act_on_element(view.window_id, index, 'click', snapshot_id=view.snapshot_id, viewer=self.viewer)
@@ -207,27 +300,40 @@ class Screen:
                               use_screen=True)
 
     def close(self) -> None:
-        if self.window_id is not None:
-            try:
+        try:
+            if self.platform == 'meet':
+                self.look(for_close=True)  # Ctrl+W closes the active tab in this window.
+            if self.window_id is not None:
                 self.driver.press_key(self.window_id, 'ctrl+w', use_screen=True)
-            except Exception:
-                logger.debug('Could not close the call window', exc_info=True)
+        except Exception:
+            logger.debug('Could not close the call window', exc_info=True)
 
 
 def join_step(screen: Screen, name: str, typed: set[int]) -> str:
     """One look at the join screen and one action. Returns what it saw:
-    'live', 'lobby', 'refused: <why>', 'ended', or 'working'."""
+    'live', 'lobby', 'sign_in', 'refused: <why>', 'ended', or 'working'."""
     view = screen.look()
-    refused = view.says(REFUSED)
-    if refused:
-        return f'refused: {refused}'
-    if view.find(LEAVE_BUTTONS) is not None and view.find(('ask to join', 'join now')) is None:
+    meet = screen.platform == 'meet'
+    if meet and view.address().hostname == 'accounts.google.com':
+        return 'sign_in'
+    if view.in_call(screen.platform):
         audio = view.find(AUDIO_BUTTONS)
         if audio is not None:  # Zoom asks how to join the sound
             screen.click(view, audio)
         return 'live'
+    refused = view.says(REFUSED)
+    if refused:
+        return f'refused: {refused}'
+    if view.ended():
+        return 'ended'
     if view.says(LOBBY):
         return 'lobby'
+    join_button = view.find(('ask to join', 'join') if meet else ('ask to join', 'join now'))
+    if view.says(('sign in to join',)):
+        if not meet:
+            return 'refused: sign in to join'
+        if join_button is None:
+            return 'sign_in'
     name_field = view.field(NAME_FIELDS)
     if name_field is not None and name_field not in typed and not _norm(view.elements[name_field].value):
         typed.add(name_field)
@@ -259,7 +365,7 @@ def post_chat(screen: Screen, text: str) -> bool:
 def leave(screen: Screen) -> None:
     try:
         view = screen.look()
-        button = view.find(LEAVE_BUTTONS)
+        button = view.find(MEET_LEAVE_BUTTONS if screen.platform == 'meet' else LEAVE_BUTTONS)
         if button is not None:
             screen.click(view, button)
             time.sleep(UI_WAIT_S)
@@ -453,10 +559,12 @@ async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
     await desk.do(desk.screen.open, row.url)
     typed: set[int] = set()
     deadline = time.monotonic() + JOIN_TIMEOUT_S
-    lobby_until = 0.0
+    extended_for: set[str] = set()
+    previous = ''
     while True:
         if item.leave.is_set():
-            raise MeetingError('Stopped before it got in.')
+            raise MeetingError('You stopped the attempt before the agent confirmed it had joined. '
+                               'Transcription had not started.')
         try:
             seen = await desk.do(join_step, desk.screen, row.bot_name, typed)
         except HumanControl:
@@ -470,18 +578,32 @@ async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
             return
         if seen.startswith('refused'):
             raise MeetingError(f"It couldn't join: the call says {seen.split(': ', 1)[-1]!r}.")
-        if seen == 'lobby':
-            if not lobby_until:
-                lobby_until = time.monotonic() + LOBBY_WAIT_S
-                await _set(item.meeting_id, status=WAITING, progress='waiting for someone to let it in')
-            if time.monotonic() > lobby_until:
+        if seen == 'ended':
+            raise MeetingError('The call ended before the agent could confirm it had joined.')
+
+        now = time.monotonic()
+        if seen == 'held':
+            deadline = max(deadline, now + JOIN_TIMEOUT_S)
+        elif seen in ('sign_in', 'lobby') and seen not in extended_for:
+            deadline = now + (SIGN_IN_WAIT_S if seen == 'sign_in' else LOBBY_WAIT_S)
+            extended_for.add(seen)
+        elif now >= deadline:
+            if seen == 'lobby':
                 raise MeetingError('Nobody let it in.')
-        elif seen == 'held':
-            await _set(item.meeting_id, progress='you have control of its computer')
-            deadline = time.monotonic() + JOIN_TIMEOUT_S
-        elif not lobby_until and time.monotonic() > deadline:
-            raise MeetingError("It couldn't find its way into the call. Open the agent's computer to see the "
-                               'page, or take over and join it yourself, then try again.')
+            if seen == 'sign_in':
+                raise MeetingError("Google Meet is waiting for sign-in. Sign in on this agent's computer and try again.")
+            raise MeetingError("The agent couldn't confirm it was in the call. Open Watch on the next attempt. "
+                               "If you join manually, select Hand back.")
+
+        if seen != previous:
+            progress = {
+                'lobby': 'waiting for someone to let it in',
+                'sign_in': 'open Watch and take over to sign in to Google, then select Hand back',
+                'held': 'select Hand back when you are ready for the agent to check the call',
+                'working': 'checking the meeting window',
+            }[seen]
+            await _set(item.meeting_id, status=WAITING if seen == 'lobby' else JOINING, progress=progress)
+            previous = seen
         await asyncio.sleep(JOIN_POLL_S)
 
 
@@ -519,15 +641,14 @@ async def run(item: Live) -> None:
         last_screen = time.monotonic()
         last_answer = 0.0
         pending_question = False
-        while True:
-            if item.leave.is_set():
-                break
-            now = time.monotonic()
-            if now - started > MAX_MEETING_S:
-                break
-            heard = await desk.audio('GET', after=after)
-            for piece in heard.get('pieces') or []:
-                after = max(after, int(piece.get('seq') or 0))
+
+        async def append_speech(pieces: list[dict]) -> None:
+            nonlocal after, last_heard, pending_question
+            for piece in pieces:
+                seq = int(piece.get('seq') or 0)
+                if seq <= after:
+                    continue
+                after = seq
                 try:
                     text = await meeting_notes.transcribe(
                         base64.b64decode(piece.get('audio') or ''), mime='audio/wav', provider=provider,
@@ -542,9 +663,15 @@ async def run(item: Live) -> None:
                 lines.append(f'[{_clock(time.monotonic() - started)}] {text}')
                 if addressed(text, names):
                     pending_question = True
-            if heard.get('pieces'):
+            if pieces:
                 transcript = '\n'.join(lines)[-meeting_notes.MAX_TRANSCRIPT_CHARS:]
                 await _set(meeting_id, transcript=transcript, seconds=round(time.monotonic() - started, 1))
+
+        while True:
+            if item.leave.is_set() or time.monotonic() - started > MAX_MEETING_S:
+                break
+            heard = await desk.audio('GET', after=after)
+            await append_speech(heard.get('pieces') or [])
             # Things the agent was asked to say (Say In Meeting).
             while not item.say.empty():
                 text, mode = item.say.get_nowait()
@@ -570,21 +697,27 @@ async def run(item: Live) -> None:
                 last_screen = time.monotonic()
                 try:
                     view = await desk.do(desk.screen.look)
-                    gone = view.says(ENDED) or view.says(REFUSED)
-                    if gone and view.find(LEAVE_BUTTONS) is None:
+                    gone = view.ended() or view.says(REFUSED)
+                    if gone and not view.in_call(row.platform):
                         lines.append(f'[{_clock(time.monotonic() - started)}] (the call ended: {gone})')
                         joined = False  # nothing to leave
                         break
                 except Exception:
                     logger.debug('Meeting %s: screen check failed', meeting_id, exc_info=True)
             if heard.get('error') and not heard.get('listening'):
-                await desk.audio('POST', 'start')
+                if (await desk.audio('POST', 'start')).get('ok'):
+                    after = 0  # the new recorder starts its own sequence at one
             try:
                 await asyncio.wait_for(item.leave.wait(), POLL_S)
             except TimeoutError:
                 pass
 
-        await _finish(meeting_id, desk, joined, lines, agent, row)
+        tail = await _cleanup(desk, joined, after=after)
+        desk = None  # already left, including if final transcription is cancelled
+        if tail:
+            await _set(meeting_id, status=meeting_notes.TRANSCRIBING, progress='transcribing the end of the call')
+            await append_speech(tail)
+        await _finish(meeting_id, lines, agent, row)
     except asyncio.CancelledError:
         await _cleanup(desk, joined)
         await _set(meeting_id, status=meeting_notes.FAILED, progress='', error='Stopped.',
@@ -607,11 +740,16 @@ async def run(item: Live) -> None:
         _live.pop(meeting_id, None)
 
 
-async def _cleanup(desk: _Desk | None, joined: bool) -> None:
+async def _cleanup(desk: _Desk | None, joined: bool, *, after: int | None = None) -> list[dict]:
+    pieces = []
     if desk is None:
-        return
+        return pieces
     try:
-        await desk.audio('POST', 'stop')
+        if after is None:
+            await desk.audio('POST', 'stop')
+        else:
+            stopped = await desk.audio('POST', 'stop', {'after': after})
+            pieces = stopped.get('pieces') or []  # older images just acknowledge the stop
     except Exception:
         logger.debug('Could not stop listening', exc_info=True)
     try:
@@ -623,11 +761,10 @@ async def _cleanup(desk: _Desk | None, joined: bool) -> None:
             await desk.do(desk.screen.close)
     except Exception:
         logger.debug('Could not leave the call', exc_info=True)
+    return pieces
 
 
-async def _finish(meeting_id: str, desk: _Desk, joined: bool, lines: list[str], agent: Any,
-                  row: MeetingNote) -> None:
-    await _cleanup(desk, joined)
+async def _finish(meeting_id: str, lines: list[str], agent: Any, row: MeetingNote) -> None:
     transcript = '\n'.join(lines)[-meeting_notes.MAX_TRANSCRIPT_CHARS:]
     await _set(meeting_id, status=meeting_notes.WRITING, progress='writing the notes', transcript=transcript)
     try:

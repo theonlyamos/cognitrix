@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -517,6 +518,45 @@ def test_linux_reads_shortcuts_from_accessibility_key_bindings():
     assert _accelerator('<Primary><Shift>b') == 'ctrl+shift+b'
     assert _accelerator('<Alt>F4') == 'alt+f4'
     assert _accelerator('n') == '' and _accelerator('') == ''
+
+
+@pytest.mark.parametrize('profile_suffix', ['', ' - Person 1'])
+def test_linux_distinguishes_same_title_chromium_frames_without_moving_focus(profile_suffix):
+    from cognitrix.computer.linux import LinuxBackend
+
+    rect = (0, 0, 1280, 800)
+    front = WindowInfo(101, 'Meet - Chromium', 'chromium', 55, rect=rect)
+    target = WindowInfo(102, front.title, front.app, front.pid, rect=rect)
+    app = SimpleNamespace(ptr=55)
+    frames = ['front', 'target', 'unnamed']
+    backend = object.__new__(LinuxBackend)
+    backend.foreground = lambda: front.id
+    backend.window = lambda xid: front if xid == front.id else target
+    backend.atspi = SimpleNamespace(
+        desktop='desktop', pump=lambda: None, lib=SimpleNamespace(atspi_accessible_get_process_id=lambda pid, _: pid),
+        children=lambda obj, limit: [app] if obj == 'desktop' else frames,
+        role=lambda frame: 'frame', name=lambda frame: '' if frame == 'unnamed' else front.title + profile_suffix,
+        extents=lambda frame: rect,
+        states=lambda frame: {1, 25} if frame == 'front' else {25},  # ACTIVE, SHOWING
+    )
+    assert backend._frame(target) == 'target'
+    assert backend._frame(front) == 'front'
+    frames.append('third')
+    assert backend._frame(target) is None
+
+
+def test_linux_reads_chromium_entry_with_text_but_no_editable_text_interface():
+    from cognitrix.computer.linux import LinuxBackend, _Ref
+
+    backend = object.__new__(LinuxBackend)
+    backend.atspi = SimpleNamespace(
+        role=lambda acc: 'entry', name=lambda acc: 'Address and search bar',
+        states=lambda acc: {8, 25}, has=lambda acc, iface: iface == 'text',
+        text=lambda acc: 'meet.google.com/abc-defg-hij',
+    )
+    entry = backend._describe(_Ref(None, 1))
+    assert entry.value == 'meet.google.com/abc-defg-hij'
+    assert 'set_value' not in entry.actions
 
 
 def test_mac_backend_is_off_until_switched_on(monkeypatch):

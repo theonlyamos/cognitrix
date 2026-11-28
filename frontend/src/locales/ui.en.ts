@@ -2857,7 +2857,7 @@ const uiEn = {
   "ui.meetings.noMeetingsYet": "No meetings yet",
   "ui.meetings.noNotesYetTheTranscript": "No notes yet. The transcript is saved, so they can be written again.",
   "ui.meetings.notesWrittenBy": "Notes written by",
-  "ui.meetings.nothingHeardYet": "Nothing heard yet.",
+  "ui.meetings.nothingHeardYet": "Transcription starts once the agent confirms it is in the call. If you took over to sign in or join, select Hand back.",
   "ui.meetings.progressYouCanLeaveThis": "{progress}… You can leave this page; it keeps going.",
   "ui.meetings.roundSec": "{round} sec",
   "ui.meetings.sayInTheCall": "Say in the call",
