@@ -535,6 +535,16 @@ async def deliver(desk: _Desk, row: MeetingNote, text: str, mode: str) -> str:
 SIGN_IN_PROGRESS = 'waiting for you to sign in to Google on its computer'
 
 
+async def _back_to_call(desk: _Desk, url: str) -> None:
+    """After signing in, open the call again if Google sent the browser elsewhere."""
+    view = await desk.do(desk.screen.look)
+    where = view.url()
+    host = urlsplit(where if '://' in where else f'https://{where}').hostname or ''
+    if where and host != (urlsplit(url).hostname or ''):
+        await desk.do(desk.screen.close)
+        await desk.do(desk.screen.open, url)
+
+
 async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
     from cognitrix.computer import HumanControl
 
@@ -592,14 +602,12 @@ async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
                 deadline = time.monotonic() + JOIN_TIMEOUT_S
                 await _set(item.meeting_id, status=JOINING, progress='signed in; joining')
                 if seen == 'working':
-                    view = await desk.do(desk.screen.look)
-                    where = view.url()
-                    host = urlsplit(where if '://' in where else f'https://{where}').hostname or ''
-                    if where and host != (urlsplit(row.url).hostname or ''):
-                        await desk.do(desk.screen.close)
-                        await desk.do(desk.screen.open, row.url)
+                    try:
+                        await _back_to_call(desk, row.url)
                         typed.clear()
                         clicks.clear()
+                    except Exception as exc:  # taken over, or a look failed: the next steps carry on
+                        logger.info('Meeting %s: going back to the call after sign-in: %s', row.id, exc)
         if seen == 'lobby':
             if not lobby_until:
                 lobby_until = time.monotonic() + LOBBY_WAIT_S

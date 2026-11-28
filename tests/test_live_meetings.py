@@ -556,3 +556,53 @@ async def test_it_waits_for_the_person_to_sign_in_then_joins(monkeypatch):
     assert {'status': live.WAITING, 'progress': live.SIGN_IN_PROGRESS} in updates
     assert any(u.get('progress') == 'signed in; joining' for u in updates)
     assert clicked == ['Join now']
+
+
+
+async def test_taking_over_while_it_goes_back_to_the_call_does_not_end_the_meeting(monkeypatch):
+    from cognitrix.computer import HumanControl
+    from cognitrix.meetings import live
+
+    # sign-in page (twice: the step, then opening it), three looks at a page it
+    # doesn't know, then the person takes
+    # over just as it checks where the browser went, then Meet's join screen.
+    script = ['google', 'google', 'blank', 'blank', 'blank', 'held', 'prejoin', 'call']
+    pages = {'google': [_el('page tab', 'Sign in - Google Accounts')], 'blank': [_el('heading', 'Welcome')],
+             'prejoin': [_el('push button', 'Join now')], 'call': [_el('push button', 'Leave call')]}
+    clicked = []
+
+    class Screen:
+        def open(self, url):
+            pass
+
+        def close(self):
+            pass
+
+        def look(self):
+            page = script.pop(0) if len(script) > 1 else script[0]
+            if page == 'held':
+                raise HumanControl('Ama has taken over this computer.')
+            return live.View(1, 's', pages[page])
+
+        def click(self, view, index):
+            clicked.append(view.elements[index].name)
+
+        def type_into(self, view, index, text, submit=False):
+            pass
+
+    class Desk:
+        screen = Screen()
+
+        async def do(self, fn, *args):
+            return fn(*args)
+
+    async def nothing(*_a, **_k):
+        pass
+
+    monkeypatch.setattr(live, '_set', nothing)
+    monkeypatch.setattr(live, '_alert', nothing)
+    monkeypatch.setattr(live, 'JOIN_POLL_S', 0)
+    row = SimpleNamespace(id='m2', url='https://meet.google.com/abc-defg-hij', bot_name='Ada', title='Standup',
+                          platform='meet')
+    await asyncio.wait_for(live._join(live.Live('m2'), Desk(), row), 5)
+    assert clicked == ['Join now']
