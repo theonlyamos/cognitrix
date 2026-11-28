@@ -44,7 +44,7 @@ describe('CredentialsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(lib.addCredential).toHaveBeenCalledWith({
       name: 'stripe', kind: 'token', description: '', header: 'X-Api-Key',
-      allowed_hosts: ['api.stripe.com', 'files.stripe.com'], value: 'sk_test_123',
+      allowed_hosts: ['api.stripe.com', 'files.stripe.com'], value: 'sk_test_123', use_in_browser: false,
     }));
   });
 
@@ -54,7 +54,18 @@ describe('CredentialsCard', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(lib.updateCredential).toHaveBeenCalledWith('c1', {
-      description: 'GitHub API', allowed_hosts: ['api.github.com'], header: '',
+      description: 'GitHub API', allowed_hosts: ['api.github.com'], header: '', use_in_browser: false,
+    }));
+  });
+
+  it('typing into sign-in pages is a choice the person makes', async () => {
+    lib.updateCredential.mockResolvedValue(github);
+    render(<CredentialsCard />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Agents may type it into sign-in pages/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(lib.updateCredential).toHaveBeenCalledWith('c1', {
+      description: 'GitHub API', allowed_hosts: ['api.github.com'], header: '', use_in_browser: true,
     }));
   });
 });
