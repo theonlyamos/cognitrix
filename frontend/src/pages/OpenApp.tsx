@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, ExternalLink, X } from 'lucide-react';
 import { AppBridgeDialogs, useAppBridge } from '@/components/hosted-apps/AppBridge';
 import { AppStatusBadge } from '@/components/hosted-apps/parts';
+import { TailnetGuest } from '@/components/hosted-apps/TailnetGuest';
 import { api, errorMessage } from '@/lib/api';
 import { desktop, isDesktop, windowAction } from '@/lib/desktop';
 import { installedChanged, useInstalledApp } from '@/lib/installedApps';
@@ -15,7 +16,7 @@ import { tr } from '@/lib/i18n';
  *  With ?bare=1 the app fills the page with nothing around it: where the app's own link
  *  lands when it is opened by itself (a new tab, a pasted address), so that it still has
  *  Cognitrix to ask for notifications and connected apps. */
-export default function OpenApp() {
+export default function OpenApp({ goTo }: { goTo?: (url: string) => void } = {}) {
   const { slug = '' } = useParams();
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -73,7 +74,7 @@ export default function OpenApp() {
   }, [bare, leave]);
 
   if (error) {
-    return (
+    const didNotOpen = (
       <div className="grid min-h-dvh place-items-center bg-bg px-4 text-fg">
         <div className="max-w-sm text-center">
           <h1 className="text-[17px] font-semibold">{tr('ui.openApp.thisAppDidnTOpen')}</h1>
@@ -87,6 +88,9 @@ export default function OpenApp() {
         </div>
       </div>
     );
+    // Not theirs by account: its owner may still have shared it with their tailnet, and
+    // being signed in here shouldn't take that way in away.
+    return isDesktop() ? didNotOpen : <TailnetGuest otherwise={didNotOpen} goTo={goTo} />;
   }
 
   return (

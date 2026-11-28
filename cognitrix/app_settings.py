@@ -250,6 +250,10 @@ def _registry() -> list[Setting]:
     add(Setting('COGNITRIX_TAILSCALE_FUNNEL_ALLOW', 'tailscale', g, 'What the public address lets through',
                 'webhooks, links (public links to agents and pages) or app (everything, behind sign-in). '
                 'One per line.', kind='list', placeholder='webhooks'))
+    add(Setting('COGNITRIX_TAILSCALE_SIGNIN', 'tailscale', g, 'Sign in from the tailnet',
+                'People can link their Tailscale login to their account in Settings > Sign-ins. After that, '
+                'opening the private address from their tailnet signs them in without a password.',
+                kind=ON_OFF, default='0'))
     add(Setting('COGNITRIX_LISTEN_LOCAL', 'tailscale', g, 'Only reachable through Tailscale',
                 "The server stops listening on the local network, so the Tailscale addresses are the only "
                 "way in. Leave off where a hosting platform checks the server's own port (Fly).",

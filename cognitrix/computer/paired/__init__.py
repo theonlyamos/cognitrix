@@ -17,6 +17,7 @@ Approvals still happen in the chat, before the call is sent.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from typing import Any
 
@@ -75,6 +76,14 @@ def new_token() -> str:
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(str(token).encode('utf-8')).hexdigest()
+
+
+def proof_of(token_hash: str, device_id: str, nonce: str, address: str) -> str:
+    """What a server answers to show a paired PC it is the server that PC paired
+    with: only the two of them can work it out (the server keeps the token's
+    hash, the PC the token), and it is good for one question at one address."""
+    message = '|'.join(('cognitrix-same-server', str(device_id), str(nonce), str(address)))
+    return hmac.new(str(token_hash).encode('utf-8'), message.encode('utf-8'), hashlib.sha256).hexdigest()
 
 
 def new_code() -> str:

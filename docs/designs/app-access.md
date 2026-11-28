@@ -69,3 +69,7 @@ the audit log under the owner.
 - Secrets are visible to the app's code and sit in the runner's start file, as
   the app's API key always has. They are not scrubbed from agent tool output
   the way saved sign-ins are.
+
+## Visitors from the owner's tailnet
+
+An App can also be shared with people on the owner's Tailscale network who have no account here (the Share dialog's "Your tailnet" section; `store.set_sharing(tailnet=...)`). Nothing in this document changes for them: what the App's own server code may use is still decided by its owner on the Access tab, and a guest has no connected apps or saved sign-ins of their own to offer. The page bridge (`hosted_apps/bridge.py`) marks them (`window.cognitrix.guest`) and rejects every call that would ask a person for something. The App's server sees `X-Cognitrix-User-Source: tailscale`. See [Tailscale](../tailscale.md#apps-for-people-on-your-tailnet).

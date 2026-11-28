@@ -130,6 +130,7 @@ def public_config(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         'linked': bool(cfg.get('token')),
         'server': cfg.get('server') or '',
+        'servers': servers_of(cfg),
         'account': cfg.get('account') or '',
         'device_id': cfg.get('device_id') or '',
         'name': cfg.get('name') or '',
@@ -162,16 +163,92 @@ def normalize_server(value: str) -> str:
     if '://' not in raw:
         raw = 'https://' + raw
     parsed = urlparse(raw)
-    if parsed.scheme not in ('https', 'http') or not parsed.netloc:
-        raise LinkError('bad_server', f"{value} isn't a web address.")
     host = (parsed.hostname or '').lower()
+    if parsed.scheme not in ('https', 'http') or not host or any(c.isspace() for c in parsed.netloc):
+        raise LinkError('bad_server', f"{value} isn't a web address.")
     if parsed.scheme == 'http' and host not in ('localhost', '127.0.0.1', '::1') \
-            and os.environ.get('COGNITRIX_PAIRED_ALLOW_HTTP') != '1':
-        raise LinkError('insecure', 'The server has to use https, so your token and files are encrypted on the way.')
+            and os.environ.get('COGNITRIX_PAIRED_ALLOW_HTTP') != '1' and not _on_my_tailnet(host):
+        raise LinkError('insecure', 'The server has to use https, so your token and files are encrypted on the way. '
+                        'Plain http only works for a machine on your tailnet, where Tailscale encrypts the path, '
+                        "and Tailscale on this PC doesn't list this address.")
     path = parsed.path.rstrip('/')
     if path.endswith('/api/v1'):
         path = path[:-len('/api/v1')]
     return f'{parsed.scheme}://{parsed.netloc}{path}'
+
+
+def _on_my_tailnet(host: str) -> bool:
+    try:
+        from cognitrix.computer.paired import tailnet
+
+        return tailnet.confirms(host)
+    except Exception:  # noqa: BLE001 - no Tailscale here: the address is not confirmed
+        return False
+
+
+MAX_SERVERS = 4
+
+
+def servers_of(cfg: dict[str, Any]) -> list[str]:
+    """Where this PC's server answers, best first (its tailnet address, then the
+    rest). A link made before there were several has only ``server``."""
+    out: list[str] = []
+    saved = cfg.get('servers')
+    for value in [*(saved if isinstance(saved, list) else []), cfg.get('server')]:
+        value = str(value or '').strip().rstrip('/')
+        if value and value not in out:
+            out.append(value)
+    return out[:MAX_SERVERS]
+
+
+def _servers_after_pairing(server: str, told: Any) -> list[str]:
+    """The address that just worked plus the ones the server says it also answers
+    at: its Tailscale address first, so the link stays inside the tailnet when it can."""
+    extra: list[str] = []
+    for value in (told if isinstance(told, list) else [])[:MAX_SERVERS]:
+        if not isinstance(value, str) or '://' not in value:
+            continue
+        try:
+            extra.append(normalize_server(value))
+        except LinkError:
+            continue   # not https and not on this PC's tailnet: never dialed
+    on_tailnet = [u for u in extra if (urlparse(u).hostname or '').endswith('.ts.net')]
+    out: list[str] = []
+    for value in [*on_tailnet, server, *extra]:
+        if value not in out:
+            out.append(value)
+    return out[:MAX_SERVERS]
+
+
+def is_paired_address(server: str, cfg: dict[str, Any]) -> bool:
+    """The address this PC's owner paired at (the others were named by the server)."""
+    return str(server or '').strip().rstrip('/').lower() == str(cfg.get('server') or '').strip().rstrip('/').lower()
+
+
+async def same_server(server: str, cfg: dict[str, Any]) -> bool:
+    """Before this PC's token goes to an address the server named: does that
+    address show it is the server this PC paired with? It gets a fresh question
+    only the two of them can answer (see ``proof_of``). https proves a name, not
+    that two names are the same Cognitrix, and whoever answers at an address
+    gets to send this PC work."""
+    import hmac
+    import secrets
+
+    from cognitrix.computer.paired import hash_token, proof_of
+
+    device_id, token = str(cfg.get('device_id') or ''), str(cfg.get('token') or '')
+    if not device_id or not token:
+        return False
+    nonce = secrets.token_urlsafe(24)
+    try:
+        address = normalize_server(server)
+        out = await _post(address, '/prove', {'device_id': device_id, 'nonce': nonce, 'address': address}, timeout=15)
+    except LinkError:
+        return False
+    return hmac.compare_digest(str(out.get('proof') or ''), proof_of(hash_token(token), device_id, nonce, address))
+
+
+NOT_THE_SAME = "{server} didn't show it is the server this PC is linked to, so this PC didn't use it."
 
 
 def check_folders(folders: Any) -> list[dict[str, Any]]:
@@ -208,33 +285,41 @@ async def remote(method: str, path: str, body: dict[str, Any] | None = None) -> 
     cfg = load_config()
     if not cfg.get('token'):
         raise LinkError('unpaired', 'This PC is not linked to a web account.')
-    url = normalize_server(cfg['server']) + API_PREFIX + path
-    try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http, http.request(
-                method, url, json=body, headers={'Authorization': f"Bearer {cfg['token']}"}) as resp:
-            try:
-                data = await resp.json(content_type=None)
-            except Exception:
-                data = {}
-            if resp.status >= 400:
-                detail = data.get('detail') if isinstance(data, dict) else None
-                raise LinkError('failed', str(detail or f'The server answered {resp.status}.'))
-            return data if isinstance(data, dict) else {}
-    except LinkError:
-        raise
-    except Exception as exc:
-        raise LinkError('unreachable', f"Couldn't reach {cfg.get('server')}: {exc}") from None
+    last: LinkError | None = None
+    for server in servers_of(cfg):
+        try:
+            if not is_paired_address(server, cfg) and not await same_server(server, cfg):
+                last = LinkError('unreachable', NOT_THE_SAME.format(server=server))
+                continue
+            url = normalize_server(server) + API_PREFIX + path
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http, http.request(
+                    method, url, json=body, headers={'Authorization': f"Bearer {cfg['token']}"}) as resp:
+                try:
+                    data = await resp.json(content_type=None)
+                except Exception:
+                    data = {}
+                if resp.status >= 400:
+                    detail = data.get('detail') if isinstance(data, dict) else None
+                    raise LinkError('failed', str(detail or f'The server answered {resp.status}.'))
+                return data if isinstance(data, dict) else {}
+        except LinkError as exc:
+            if exc.code not in ('insecure', 'bad_server'):
+                raise
+            last = exc      # this address can't be used right now: the next one may
+        except Exception as exc:
+            last = LinkError('unreachable', f"Couldn't reach {server}: {exc}")
+    raise last or LinkError('unreachable', "This PC's link has no server address.")
 
 
 # ---------------------------------------------------------------------------
 # Pairing (HTTP, before there is a token)
 # ---------------------------------------------------------------------------
 
-async def _post(server: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+async def _post(server: str, path: str, body: dict[str, Any], *, timeout: float = 30) -> dict[str, Any]:
     import aiohttp
     url = normalize_server(server) + API_PREFIX + path
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as http:
             async with http.post(url, json=body) as resp:
                 try:
                     data = await resp.json(content_type=None)
@@ -276,15 +361,59 @@ async def link(server: str, code: str, *, name: str, folders: Any, powers: Any, 
         'code': code, 'name': (name or default_name())[:80], 'platform': platform_label(),
         'folders': shared, 'powers': chosen, 'version': VERSION, 'client': client,
     })
+    return _save_link(server, out, account=str(info.get('account') or ''), name=name, folders=shared, powers=chosen)
+
+
+def _save_link(server: str, out: dict[str, Any], *, account: str, name: str, folders: list[dict[str, Any]],
+               powers: list[str]) -> dict[str, Any]:
     if not out.get('token'):
         raise LinkError('failed', "The server didn't send a token back.")
     cfg = {
-        'server': server, 'token': out['token'], 'device_id': str(out.get('device_id') or ''),
-        'account': str(info.get('account') or ''), 'name': (name or default_name())[:80],
-        'folders': shared, 'powers': chosen, 'paused': False, 'paired_at': time.time(),
+        'server': server, 'servers': _servers_after_pairing(server, out.get('addresses')),
+        'token': out['token'], 'device_id': str(out.get('device_id') or ''),
+        'account': account, 'name': (name or default_name())[:80],
+        'folders': folders, 'powers': powers, 'paused': False, 'paired_at': time.time(),
     }
     save_config(cfg)
     return public_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Pairing without a code, over the tailnet: ask, wait for a yes on the web, pair
+# ---------------------------------------------------------------------------
+
+async def ask(server: str, *, name: str = '', client: str = 'cli') -> dict[str, Any]:
+    """Ask the server to pair this PC with the account its Tailscale login is
+    linked to. Returns {server, request_id, secret, account, expires_in}; the
+    account's owner approves it on the web (Settings, Computers)."""
+    server = normalize_server(server)
+    out = await _post(server, '/pair-requests', {'name': (name or default_name())[:80],
+                                                 'platform': platform_label(), 'client': client})
+    if not out.get('request_id') or not out.get('secret'):
+        raise LinkError('failed', "The server didn't take the request.")
+    return {'server': server, 'request_id': str(out['request_id']), 'secret': str(out['secret']),
+            'account': str(out.get('account') or ''), 'expires_in': int(out.get('expires_in') or 0)}
+
+
+async def ask_status(asked: dict[str, Any]) -> dict[str, Any]:
+    """{status: pending | approved | denied | expired | used, account}."""
+    out = await _post(asked['server'], f"/pair-requests/{asked['request_id']}/status", {'secret': asked['secret']})
+    return {'status': str(out.get('status') or 'pending'), 'account': str(out.get('account') or asked.get('account') or '')}
+
+
+async def link_approved(asked: dict[str, Any], *, name: str, folders: Any, powers: Any,
+                        client: str = 'cli') -> dict[str, Any]:
+    """Finish an approved request: send what this PC shares, save the link."""
+    from cognitrix.config import VERSION
+
+    shared = check_folders(folders)
+    chosen = clean_powers(powers)
+    out = await _post(asked['server'], f"/pair-requests/{asked['request_id']}/pair", {
+        'secret': asked['secret'], 'name': (name or default_name())[:80], 'platform': platform_label(),
+        'folders': shared, 'powers': chosen, 'version': VERSION, 'client': client,
+    })
+    return _save_link(asked['server'], out, account=str(asked.get('account') or ''), name=name, folders=shared,
+                      powers=chosen)
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +652,7 @@ class Connector:
 
     def __init__(self) -> None:
         self.status = 'stopped'  # stopped | connecting | connected | offline | unpaired
+        self.server = ''  # the address the connection is on (the link may have several)
         self.last_error = ''
         self.connected_since: float | None = None
         self._ws: Any = None
@@ -576,7 +706,8 @@ class Connector:
         self.status = 'unpaired'
 
     def view(self) -> dict[str, Any]:
-        return {'status': self.status, 'error': self.last_error, 'connected_since': self.connected_since}
+        return {'status': self.status, 'error': self.last_error, 'connected_since': self.connected_since,
+                'connected_to': self.server if self.status == 'connected' else ''}
 
     # -- loop ------------------------------------------------------------------
     async def run_forever(self) -> None:
@@ -587,23 +718,37 @@ class Connector:
                 self.status = 'unpaired'
                 return
             self.status = 'connecting'
-            try:
-                await self._session(cfg)
-                backoff = 1.0
-            except asyncio.CancelledError:
-                raise
-            except LinkError as exc:
-                self.last_error = exc.message
-                if exc.code in ('revoked', 'unpaired'):
-                    forget_config()
-                    self.status = 'unpaired'
-                    return
-            except Exception as exc:
-                self.last_error = str(exc) or exc.__class__.__name__
-                logger.info('Paired PC connection dropped: %s', self.last_error)
-            finally:
-                self._ws = None
-                self.connected_since = None
+            # The server's addresses, its tailnet one first. One that can't be reached
+            # hands over to the next; after a connection drops, start from the top again.
+            for server in servers_of(cfg):
+                was_up = False
+                try:
+                    if not is_paired_address(server, cfg) and not await same_server(server, cfg):
+                        # Never the token, and never work, for an address that can't show this.
+                        self.last_error = NOT_THE_SAME.format(server=server)
+                        logger.info('Paired PC: skipped an address that did not show it is the linked server')
+                        continue
+                    await self._session(cfg, server)
+                    backoff = 1.0
+                    was_up = True
+                except asyncio.CancelledError:
+                    raise
+                except LinkError as exc:
+                    self.last_error = exc.message
+                    if exc.code in ('revoked', 'unpaired'):
+                        forget_config()
+                        self.status = 'unpaired'
+                        return
+                    was_up = self.connected_since is not None
+                except Exception as exc:
+                    self.last_error = str(exc) or exc.__class__.__name__
+                    was_up = self.connected_since is not None
+                    logger.info('Paired PC connection to %s dropped: %s', server, self.last_error)
+                finally:
+                    self._ws = None
+                    self.connected_since = None
+                if was_up or self._stop.is_set():
+                    break
             if self._stop.is_set():
                 break
             self.status = 'offline'
@@ -615,14 +760,16 @@ class Connector:
                 pass
         self.status = 'stopped'
 
-    async def _session(self, cfg: dict[str, Any]) -> None:
+    async def _session(self, cfg: dict[str, Any], server: str = '') -> None:
         import aiohttp
 
         from cognitrix.config import VERSION
 
-        server = normalize_server(cfg['server'])
+        server = normalize_server(server or cfg['server'])
+        self.server = server
         ws_url = server.replace('https://', 'wss://', 1).replace('http://', 'ws://', 1) + API_PREFIX + '/connect'
-        async with aiohttp.ClientSession() as http:
+        # An address that doesn't answer (the tailnet one, away from the tailnet) gives way quickly.
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300, sock_connect=15)) as http:
             async with http.ws_connect(ws_url, heartbeat=PING_S, max_msg_size=64 * 1024 * 1024) as ws:
                 self._ws = ws
                 await ws.send_json({

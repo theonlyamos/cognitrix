@@ -371,6 +371,11 @@ export function TailscaleSettings() {
                 />
               </SettingRow>
             )}
+            {status.private.active && (
+              <SettingRow label={tr('ui.tailscale.signInFromTheTailnet')} detail={tr('ui.tailscale.signInFromTheTailnetDetail')}>
+                <Toggle label={tr('ui.tailscale.signInFromTheTailnet')} checked={status.signin} disabled={locked} onChange={(v) => void save({ signin: v })} />
+              </SettingRow>
+            )}
             {!isDesktop() && status.private.active && (
               <SettingRow label={tr('ui.tailscale.onlyThroughTailscale')} detail={tr('ui.tailscale.onlyThroughTailscaleDetail')}>
                 <Toggle label={tr('ui.tailscale.onlyThroughTailscale')} checked={status.listen_local} disabled={locked} onChange={(v) => void save({ listen_local: v })} />

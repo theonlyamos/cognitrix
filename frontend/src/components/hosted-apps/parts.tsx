@@ -32,7 +32,8 @@ export function AppStatusBadge({ app, className }: { app: Pick<AppSummary, 'stat
 
 export function AccessLabel({ access }: { access: AppAccess }) {
   const Icon = access === 'private' ? Lock : Users;
-  const label = access === 'workspace' ? 'Everyone on this server' : access === 'people' ? 'Shared with people' : 'Only you';
+  const label = access === 'workspace' ? 'Everyone on this server' : access === 'people' ? 'Shared with people'
+    : access === 'tailnet' ? tr('ui.hostedApps.parts.sharedWithYourTailnet') : 'Only you';
   return <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[12px] text-fg-dim"><Icon size={13} aria-hidden />{label}</span>;
 }
 

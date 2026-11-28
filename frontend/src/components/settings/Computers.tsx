@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { errorMessage } from '@/lib/api';
 import {
-  listDevices, makePairCode, pairCodeStatus, platformLabel, renameDevice, unpairDevice,
-  type PairCode, type PairedDevice,
+  answerPairRequest, listDevices, makePairCode, pairCodeStatus, pairRequests, platformLabel, renameDevice, unpairDevice,
+  type PairCode, type PairedDevice, type PairRequest,
 } from '@/lib/devices';
 import { Group, SettingRow, StatusPill, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { tr, trn } from '@/lib/i18n';
@@ -77,7 +77,8 @@ function DeviceRow({ device, onChange, onRemove }: { device: PairedDevice; onCha
                 : <StatusPill tone="off">{tr('ui.computers.offline')}</StatusPill>}
           </div>
           <div className="mt-0.5 text-[12px] leading-snug text-fg-dim">
-            {[kind, powersText(device), trn(device.folders.length, 'ui.computers.oneFolder', 'ui.computers.nFolders')].filter(Boolean).join(' · ')}
+            {[kind, powersText(device), trn(device.folders.length, 'ui.computers.oneFolder', 'ui.computers.nFolders'),
+              device.tailnet_node && tr('ui.computers.onYourTailnetAs', { node: device.tailnet_node })].filter(Boolean).join(' · ')}
           </div>
         </div>
         <div className="flex flex-none items-center gap-2">
@@ -139,6 +140,60 @@ function DeviceRow({ device, onChange, onRemove }: { device: PairedDevice; onCha
           {error && <p role="alert" className="text-[12px] text-danger-ink">{error}</p>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** PCs on my tailnet that asked to pair without a code: say yes or no. */
+function PairRequests({ onApproved }: { onApproved: (name: string) => void }) {
+  const [requests, setRequests] = useState<PairRequest[]>([]);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => { pairRequests().then((r) => { if (alive) setRequests(r); }).catch(() => {}); };
+    load();
+    const t = setInterval(load, 5000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  const answer = async (request: PairRequest, approve: boolean) => {
+    setBusy(request.id);
+    setError('');
+    try {
+      setRequests(await answerPairRequest(request.id, approve));
+      if (approve) onApproved(request.name);
+    } catch (err) {
+      setError(errorMessage(err, tr('ui.computers.couldNotAnswerThatPc')));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  if (!requests.length && !error) return null;
+  return (
+    <div className="mb-3 space-y-2">
+      {requests.map((r) => (
+        <div key={r.id} role="group" aria-label={tr('ui.computers.nameWantsToPair', { name: r.name })} className="rounded-[12px] border border-accent/40 bg-panel px-3.5 py-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <PcIcon />
+            <div className="min-w-0 flex-1 basis-[200px]">
+              <div className="text-[13.5px] font-medium">{tr('ui.computers.nameWantsToPair', { name: r.name })}</div>
+              <div className="mt-0.5 text-[12px] leading-snug text-fg-dim">
+                {[r.node ? tr('ui.computers.seenOnYourTailnetAs', { node: r.node, login: r.login }) : tr('ui.computers.signedInToTailscaleAs', { login: r.login }),
+                  platformLabel(r.platform), r.address].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+            <div className="flex flex-none items-center gap-2">
+              <button type="button" disabled={busy === r.id} onClick={() => void answer(r, false)} className={quietButtonClass}>{tr('ui.computers.decline')}</button>
+              <button type="button" disabled={busy === r.id} onClick={() => void answer(r, true)} className={primaryButtonClass}>{tr('ui.computers.approve')}</button>
+            </div>
+          </div>
+          <p className="mt-2 text-[12px] leading-snug text-fg-dim">{tr('ui.computers.approveOnlyIfYouAsked')}</p>
+        </div>
+      ))}
+      {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
     </div>
   );
 }
@@ -275,6 +330,15 @@ export function ComputersSettings({ sandboxHref = '/settings/access#computer-san
     load();
   }, [load]);
 
+  // A PC approved from the tailnet picks its folders next: look for it more often for a while.
+  const [approved, setApproved] = useState('');
+  useEffect(() => {
+    if (!approved) return;
+    const t = setInterval(load, 3000);
+    const stop = setTimeout(() => setApproved(''), 120000);
+    return () => { clearInterval(t); clearTimeout(stop); };
+  }, [approved, load]);
+
   return (
     <>
       <Group>
@@ -290,6 +354,12 @@ export function ComputersSettings({ sandboxHref = '/settings/access#computer-san
         <h3 className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-fg-dim">{tr('ui.computers.yourPcs')}</h3>
         <button type="button" onClick={() => setPairing(true)} className={primaryButtonClass}>{tr('ui.computers.pairAComputer')}</button>
       </div>
+      <PairRequests onApproved={setApproved} />
+      {approved && (
+        <p role="status" className="mb-2 rounded-lg border border-ok/30 bg-ok/10 px-3 py-2 text-[12.5px]">
+          {tr('ui.computers.approvedFinishOnThePc', { name: approved })}
+        </p>
+      )}
       {justPaired && (
         <p role="status" className="mb-2 rounded-lg border border-ok/30 bg-ok/10 px-3 py-2 text-[12.5px]">
           {tr('ui.computers.nameIsPairedPickIt', { name: justPaired })}

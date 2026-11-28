@@ -91,9 +91,15 @@ def _set(**values):
 
 
 @pytest.fixture
+def private_on():
+    """The private address is on in Settings (its door lets nothing through otherwise)."""
+    _set(COGNITRIX_TAILSCALE=True, COGNITRIX_TAILSCALE_SERVE=True)
+
+
+@pytest.fixture
 def public_on():
-    """The public address is on in Settings (its door lets nothing through otherwise)."""
-    _set(COGNITRIX_TAILSCALE=True, COGNITRIX_TAILSCALE_FUNNEL=True)
+    """Both addresses are on in Settings (a door lets nothing through otherwise)."""
+    _set(COGNITRIX_TAILSCALE=True, COGNITRIX_TAILSCALE_SERVE=True, COGNITRIX_TAILSCALE_FUNNEL=True)
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +224,7 @@ TAILSCALE_HEADERS = {
 }
 
 
-async def test_tailnet_door_keeps_who_the_visitor_is():
+async def test_tailnet_door_keeps_who_the_visitor_is(private_on):
     app = doors.DoorGuard(_echo)
     seen = (await _through(doors.door_app(app, doors.TAILNET), 'GET', '/api/v1/agents', TAILSCALE_HEADERS)).json()
     assert seen['door'] == 'tailnet' and seen['scheme'] == 'https'
@@ -328,6 +334,37 @@ async def test_public_door_lets_nothing_through_while_the_public_address_is_off(
     assert (await _through(public, 'POST', '/api/v1/hooks/a/b')).status_code == 200 and reached == ['/api/v1/hooks/a/b']
 
 
+async def test_private_door_lets_nothing_through_while_the_private_address_is_off():
+    """The same for the private address: switched off in Settings, its door refuses
+    even when Tailscale still forwards to it."""
+    reached = []
+
+    async def app(scope, receive, send):
+        reached.append(scope['path'])
+        await _echo(scope, receive, send)
+
+    private = doors.door_app(app, doors.TAILNET)
+    for on, wanted in ((False, False), (True, False), (False, True)):
+        settings = {'COGNITRIX_TAILSCALE': on, 'COGNITRIX_TAILSCALE_SERVE': wanted, 'COGNITRIX_TAILSCALE_FUNNEL': True}
+        _set(**settings)
+        assert (await _through(private, 'GET', '/api/v1/agents', TAILSCALE_HEADERS)).status_code == 404, settings
+        sent: list[dict] = []
+
+        async def receive():
+            return {'type': 'websocket.connect'}
+
+        async def send(message, sent=sent):
+            sent.append(message)
+
+        await private({'type': 'websocket', 'path': '/ws', 'headers': [], 'client': ('127.0.0.1', 1), 'scheme': 'ws'},
+                      receive, send)
+        assert sent == [{'type': 'websocket.close', 'code': 1008}]
+    assert reached == []
+    _set(COGNITRIX_TAILSCALE=True, COGNITRIX_TAILSCALE_SERVE=True)
+    assert (await _through(private, 'GET', '/api/v1/agents', TAILSCALE_HEADERS)).status_code == 200
+    assert reached == ['/api/v1/agents']
+
+
 async def test_the_real_app_says_which_door(public_on, monkeypatch):
     from cognitrix.api.main import app
 
@@ -339,7 +376,7 @@ async def test_the_real_app_says_which_door(public_on, monkeypatch):
     assert (await _through(doors.door_app(app, doors.PUBLIC), 'GET', '/api/v1/tailscale')).status_code == 404
 
 
-async def test_doors_listen_on_this_machine_only_and_remember_their_ports():
+async def test_doors_listen_on_this_machine_only_and_remember_their_ports(public_on):
     try:
         ports = await doors.ensure_open(_echo)
         assert set(ports) == {'tailnet', 'public'} and doors.is_open()
@@ -645,7 +682,7 @@ def test_passkeys_belong_to_the_tailscale_name_never_the_address(fake):
         passkeys.site_for(_page('https://evil.ts.net', 'internal:8000'))
 
 
-async def test_passkey_browser_step_is_not_reachable_through_a_door(monkeypatch):
+async def test_passkey_browser_step_is_not_reachable_through_a_door(private_on, monkeypatch):
     """The desktop app trusts requests from its own machine for that step.
     A door request must never look like one."""
     from cognitrix import passkeys

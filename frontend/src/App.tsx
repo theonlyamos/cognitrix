@@ -7,6 +7,7 @@ import AppLayout from '@/components/AppLayout';
 import DesktopFrame from '@/components/DesktopFrame';
 import { isDesktop } from '@/lib/desktop';
 import { rememberAfterSignIn } from '@/lib/afterSignIn';
+import { TailnetGuest } from '@/components/hosted-apps/TailnetGuest';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import ServerSetup from '@/pages/ServerSetup';
@@ -74,6 +75,16 @@ function SignInFirst() {
   return <Navigate to="/" replace />;
 }
 
+/** An app's link: signed in, the app (OpenApp tries the tailnet way in when the account
+ *  has none); signed out, the way in for someone on the owner's tailnet when the app was
+ *  shared with them, and the sign-in page for everyone else. */
+function AppLinkRoute({ children }: { children: React.ReactNode }) {
+  const { user, isLoading, waitingForServer } = useUser();
+  if (isLoading) return <DesktopFrame><LoadingScreen waitingForServer={waitingForServer} /></DesktopFrame>;
+  if (!user) return isDesktop() ? <SignInFirst /> : <TailnetGuest otherwise={<SignInFirst />} />;
+  return <>{children}</>;
+}
+
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading, waitingForServer } = useUser();
   if (isLoading) return <DesktopFrame><LoadingScreen waitingForServer={waitingForServer} /></DesktopFrame>;
@@ -103,7 +114,7 @@ function AppRoutes() {
         {/* The desktop app's Alt+Space window: no app shell around it. */}
         <Route path="/quick" element={<ProtectedRoute><QuickAsk /></ProtectedRoute>} />
         {/* An app's stable link: signs you in, then goes to the running app. */}
-        <Route path="/apps/open/:slug" element={<ProtectedRoute><OpenApp /></ProtectedRoute>} />
+        <Route path="/apps/open/:slug" element={<AppLinkRoute><OpenApp /></AppLinkRoute>} />
 
         {/* Persistent shell: Sidebar mounts once, pages render in the Outlet. */}
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>

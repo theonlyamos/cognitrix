@@ -8,6 +8,12 @@ Who may do what (same roles as artifact pages):
 
 Apps are never public: everyone who opens one is signed in to this Cognitrix,
 and the app is told who they are (``X-Cognitrix-User-*`` headers).
+
+One more kind of visitor: someone on the owner's tailnet with no account
+here. Tailscale says who they are (``cognitrix.tailscale.identity``), and the
+owner may share an app with one Tailscale login or with everyone on the
+tailnet. They may only look (``view``), and only through the Tailscale
+private address.
 """
 from __future__ import annotations
 
@@ -22,8 +28,9 @@ from typing import Any
 
 import jwt
 
-from cognitrix.artifact_pages.models import EVERYONE, SHARE_ROLES
-from cognitrix.artifact_pages.store import ROLE_OWNER, can_edit, names, role_of, shares, task_info  # noqa: F401
+from cognitrix.artifact_pages.models import EVERYONE, ROLE_VIEW, SHARE_ROLES
+from cognitrix.artifact_pages.store import ROLE_OWNER, can_edit, names, shares, task_info  # noqa: F401
+from cognitrix.artifact_pages.store import role_of as _account_role
 from cognitrix.computer.sandbox.apps import AppHostError, pack_folder, unpack
 from cognitrix.hosted_apps import access, icons
 from cognitrix.hosted_apps.models import POWERS, HostedApp, HostedAppGrant, HostedAppVersion
@@ -32,6 +39,10 @@ from cognitrix.hosted_apps.runner import RunnerError, default_runtime, runner_fo
 logger = logging.getLogger('cognitrix.apps')
 
 MAX_APPS_PER_USER = 100
+MAX_TAILNET_LOGINS = 50
+# In ``shared_with``: everyone on the owner's tailnet, and one Tailscale login.
+TAILNET = '@tailnet'
+GUEST = 'ts:'
 MAX_TITLE = 80
 MAX_NOTE = 300
 VISIT_DAYS = 30
@@ -59,6 +70,34 @@ def today() -> str:
 
 
 # ------------------------------------------------------------------ lookups
+
+def guests_allowed() -> bool:
+    """Visitors from the tailnet only exist while the private address is on."""
+    from cognitrix import tailscale
+
+    return tailscale.serve_wanted()
+
+
+def is_guest(key: Any) -> bool:
+    return str(key or '').startswith(GUEST)
+
+
+def role_of(app: HostedApp, user_key: str | None) -> str | None:
+    """'owner', 'edit', 'view' or None. A visitor from the tailnet (``ts:<login>``)
+    can only ever view, and "everyone on this server" never means them."""
+    if not is_guest(user_key):
+        return _account_role(app, user_key)
+    if not guests_allowed():
+        return None
+    given = shares(app)
+    return ROLE_VIEW if TAILNET in given or str(user_key).lower() in given else None
+
+
+def tailnet_shares(app: HostedApp) -> dict[str, Any]:
+    given = shares(app)
+    return {'everyone': TAILNET in given,
+            'logins': sorted(k[len(GUEST):] for k in given if k.startswith(GUEST))}
+
 
 async def get_app(app_id: str) -> HostedApp | None:
     if not app_id:
@@ -564,16 +603,42 @@ async def logs(app: HostedApp, lines: int = 200, version: int = 0) -> str:
         return f'(logs unavailable: {exc.message})'
 
 
+def _tailnet_key(key: str) -> bool:
+    return key == TAILNET or key.startswith(GUEST)
+
+
 async def set_sharing(app: HostedApp, *, people: dict[str, str] | None = None,
-                      everyone: str | None = None) -> HostedApp:
+                      everyone: str | None = None, tailnet: list[str] | None = None) -> HostedApp:
+    """``tailnet``: Tailscale logins that may open the app with no account, or
+    ``'*'`` for everyone on the tailnet. They can only view."""
     given = dict(shares(app))
     if people is not None:
-        given = {k: v for k, v in given.items() if k == EVERYONE}
+        given = {k: v for k, v in given.items() if k == EVERYONE or _tailnet_key(k)}
         for key, role in people.items():
             if role not in SHARE_ROLES:
                 raise AppError('bad_role', "A role is 'view' or 'edit'")
-            if key and key != app.owner_id:
+            # Accounts only: the tailnet entries have their own list.
+            if key and key != app.owner_id and key != EVERYONE and not _tailnet_key(key):
                 given[key] = role
+    if tailnet is not None:
+        from cognitrix.tailscale.identity import clean_login
+
+        given = {k: v for k, v in given.items() if not _tailnet_key(k)}
+        logins = []
+        for entry in tailnet:
+            if str(entry).strip() == '*':
+                given[TAILNET] = ROLE_VIEW
+                continue
+            login = clean_login(entry)
+            if not login:
+                raise AppError('bad_login', f'"{str(entry)[:60]}" is not a Tailscale login. They look like '
+                                            'an email address.')
+            logins.append(login)
+        if len(set(logins)) > MAX_TAILNET_LOGINS:
+            raise AppError('too_many', f'An app can be shared with {MAX_TAILNET_LOGINS} Tailscale logins. '
+                                       'Share it with everyone on the tailnet instead.')
+        for login in logins:
+            given[GUEST + login] = ROLE_VIEW
     if everyone is not None:
         given.pop(EVERYONE, None)
         if everyone:
@@ -587,7 +652,9 @@ def access_label(app: HostedApp) -> str:
     given = shares(app)
     if EVERYONE in given:
         return 'workspace'
-    return 'people' if given else 'private'
+    if any(not _tailnet_key(k) for k in given):
+        return 'people'
+    return 'tailnet' if given else 'private'
 
 
 # ------------------------------------------------------------------ waking and sleeping
@@ -931,7 +998,9 @@ def project(app: HostedApp, role: str | None, *, people: dict[str, str], agents:
         'session_id': app.session_id if owner else '',
         'task_id': app.task_id if can_edit(role) else '',
         'access': access_label(app),
-        'shared_with': shares(app) if owner else {},
+        'shared_with': {k: v for k, v in shares(app).items() if not _tailnet_key(k)} if owner else {},
+        # People on the owner's tailnet who may open it with no account (they use it, they can't change it).
+        'tailnet': tailnet_shares(app) if owner else {'everyone': False, 'logins': []},
         'pinned': bool(app.pinned) if owner else False,
         'sleep_after': app.sleep_after,
         'visits_7d': visits_last(app, 7),

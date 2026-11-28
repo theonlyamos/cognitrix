@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { KeyRound } from 'lucide-react';
+import { KeyRound, Network } from 'lucide-react';
+import { signInFromTailnet } from '@/lib/tailscale';
 import { Link, useNavigate } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { api, errorMessage } from '@/lib/api';
@@ -43,6 +44,7 @@ export default function Login() {
   const t = useT();
   const [options, setOptions] = useState({
     signup_open: true, password_reset_by_email: false, code_sign_in: true, passkeys: false, passkey_handoff: false, passkey_address: '',
+    tailscale_login: '',
   });
   const [initialCode] = useState(codeFromAddress);
   const [mode, setMode] = useState<'password' | 'code'>(initialCode ? 'code' : 'password');
@@ -179,6 +181,30 @@ export default function Login() {
       {passkeyBusy ? tr('ui.login.waitingForYourPasskey') : tr('ui.login.signInWithAPasskey')}
     </button>
   ) : null;
+  // ---- Tailscale: this browser's Tailscale login is linked to an account ------
+  const [tailnetBusy, setTailnetBusy] = useState(false);
+  const handleTailnet = async () => {
+    setError('');
+    setTailnetBusy(true);
+    try {
+      signedIn(await signInFromTailnet());
+    } catch (err) {
+      setError(errorMessage(err, tr('ui.login.couldNotSignInFromTailnet')));
+    } finally {
+      setTailnetBusy(false);
+    }
+  };
+  const tailnetButton = options.tailscale_login ? (
+    <button
+      type="button"
+      onClick={() => void handleTailnet()}
+      disabled={tailnetBusy}
+      className="flex h-11 w-full items-center justify-center gap-2.5 rounded-md border border-line bg-panel px-3 text-[14px] font-medium transition-colors hover:bg-panel-2 disabled:opacity-60"
+    >
+      <Network size={16} aria-hidden className="flex-none" />
+      <span className="min-w-0 truncate">{tailnetBusy ? tr('ui.login.signingInFromTailnet') : tr('ui.login.continueAsLogin', { login: options.tailscale_login })}</span>
+    </button>
+  ) : null;
   const atLocalhost = options.passkeys && !isDesktop() && !passkeyHere ? localhostAddress() : '';
   // Opened at an IP address or over plain http: passkeys work at the server's secure address.
   const secureAddress = options.passkeys && !isDesktop() && !passkeyHere && !atLocalhost ? otherAddress(options.passkey_address) : '';
@@ -269,7 +295,7 @@ export default function Login() {
             <h1 className="mt-2 text-3xl font-bold tracking-tight">{t('login.title')}</h1>
             <p className="mt-2 text-fg-dim">{t('login.subtitle')}</p>
 
-            <OAuthButtons mode="signin" first={passkeyButton} />
+            <OAuthButtons mode="signin" first={tailnetButton || passkeyButton ? <>{tailnetButton}{passkeyButton}</> : null} />
             {browserStep && (
               <div role="status" className="mt-3 rounded-lg border border-line bg-panel-2 px-3.5 py-3 text-[13px] leading-snug">
                 <p className="font-medium">{tr('ui.login.finishInYourBrowser')}</p>

@@ -33,7 +33,7 @@ It runs as a **desktop app** (Windows, macOS, Linux), a **self-hosted web app**,
 - **Computer and browser use.** Agents click, type and read the screen through accessibility APIs, on their sandbox or (with permission) in background windows on your own PC.
 - **Code in the sandbox.** Coding work runs in the sandbox by default, with your project copied in, and the coding agent CLIs are installed there.
 - **Teach a task.** Show a task once on the sandbox desktop and Cognitrix turns the recording into a reusable skill.
-- **Reach it over Tailscale.** A private https address only your own devices can open, and a public one that only lets webhooks through, both from Settings. See [docs/tailscale.md](docs/tailscale.md).
+- **Reach it over Tailscale.** A private https address only your own devices can open, and a public one that only lets webhooks through, both from Settings. On the tailnet you can also sign in with your Tailscale login, share an App with people who have no account, and pair a PC without a code. See [docs/tailscale.md](docs/tailscale.md).
 - **Pair your own PC.** Let agents on a Cognitrix web server work in chosen folders, run commands and use apps on your computer with `cognitrix connect`. See [docs/pair-your-pc.md](docs/pair-your-pc.md).
 - **Working folders and a shell tool**, with per-folder read-only or read-write access.
 

@@ -3,8 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import { errorMessage } from '@/lib/api';
 import { pickFolder } from '@/lib/folders';
 import {
-  changePcLink, getPcLink, makePcLink, previewPcLink, removePcLink,
-  type DeviceFolder, type DevicePower, type PcLink,
+  askServer, askedPairing, changePcLink, findServers, finishAskedPairing, forgetAskedPairing, getPcLink, makePcLink,
+  previewPcLink, removePcLink,
+  type DeviceFolder, type DevicePower, type FoundServer, type PcLink,
 } from '@/lib/devices';
 import { Group, SettingRow, StatusPill, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { Toggle } from '@/pages/Notifications';
@@ -81,6 +82,76 @@ function LinkForm({ defaults, onLinked }: { defaults: PcLink; onLinked: (l: PcLi
   const [powers, setPowers] = useState<DevicePower[]>(['files', 'commands']);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Tailscale: servers found on this PC's tailnet, and a request to pair without a code.
+  const [found, setFound] = useState<FoundServer[] | null>(null);
+  const [finding, setFinding] = useState(false);
+  const [asked, setAsked] = useState<'' | 'pending' | 'approved'>('');
+  const [askedAccount, setAskedAccount] = useState('');
+
+  const find = async () => {
+    setFinding(true);
+    setError('');
+    try {
+      setFound(await findServers());
+    } catch (err) {
+      setFound(null);
+      setError(errorMessage(err, tr('ui.thisPc.couldNotLookOnYourTailnet')));
+    } finally {
+      setFinding(false);
+    }
+  };
+
+  const ask = async (address: string) => {
+    setBusy(true);
+    setError('');
+    try {
+      const view = await askServer(address, name.trim());
+      setServer(view.server);
+      setAskedAccount(view.account);
+      setAsked('pending');
+    } catch (err) {
+      setError(errorMessage(err, tr('ui.thisPc.couldNotAskThatServer')));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // A request made before this screen was opened is still waiting in the engine.
+  useEffect(() => {
+    let alive = true;
+    askedPairing().then((view) => {
+      if (!alive || (view.status !== 'pending' && view.status !== 'approved')) return;
+      setServer(view.server);
+      setAskedAccount(view.account);
+      setAsked(view.status);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  // Waiting for the yes on the web.
+  useEffect(() => {
+    if (asked !== 'pending') return;
+    let alive = true;
+    const t = setInterval(() => {
+      askedPairing().then((view) => {
+        if (!alive) return;
+        if (view.status === 'approved') {
+          setAskedAccount(view.account);
+          setAsked('approved');
+        } else if (view.status !== 'pending') {
+          setAsked('');
+          setError(view.status === 'denied' ? tr('ui.thisPc.itWasDeclinedOnTheWeb') : tr('ui.thisPc.nobodyApprovedItInTime'));
+        }
+      }).catch(() => {});
+    }, 3000);
+    return () => { alive = false; clearInterval(t); };
+  }, [asked]);
+
+  const cancelAsk = () => {
+    void forgetAskedPairing().catch(() => {});
+    setAsked('');
+    setAskedAccount('');
+  };
 
   const check = async () => {
     setBusy(true);
@@ -98,7 +169,9 @@ function LinkForm({ defaults, onLinked }: { defaults: PcLink; onLinked: (l: PcLi
     setBusy(true);
     setError('');
     try {
-      onLinked(await makePcLink({ server: server.trim(), code: code.trim(), name: name.trim(), folders, powers }));
+      onLinked(asked === 'approved'
+        ? await finishAskedPairing({ name: name.trim(), folders, powers })
+        : await makePcLink({ server: server.trim(), code: code.trim(), name: name.trim(), folders, powers }));
     } catch (err) {
       setError(errorMessage(err, tr('ui.thisPc.couldNotLinkThisPc')));
     } finally {
@@ -106,13 +179,45 @@ function LinkForm({ defaults, onLinked }: { defaults: PcLink; onLinked: (l: PcLi
     }
   };
 
-  if (!account) {
+  if (asked === 'pending') {
+    return (
+      <div role="status" className="space-y-3 rounded-[12px] border border-accent/40 bg-panel p-3.5">
+        <div className="text-[14px] font-semibold">{tr('ui.thisPc.approveThisPcOnTheWeb')}</div>
+        <p className="text-[12.5px] leading-snug text-fg-dim">{tr('ui.thisPc.approveThisPcDetail', { account: askedAccount, server })}</p>
+        <button type="button" onClick={cancelAsk} className={quietButtonClass}>{tr('ui.thisPc.cancel')}</button>
+      </div>
+    );
+  }
+
+  const shownAccount = asked === 'approved' ? askedAccount : account;
+  if (!shownAccount) {
     return (
       <div className="space-y-3 rounded-[12px] border border-line bg-panel p-3.5">
         <p className="text-[12.5px] leading-snug text-fg-dim">{tr('ui.thisPc.onTheWebGetACode')}</p>
         <div>
           <label htmlFor="link-server" className="mb-1 block text-[12px] text-fg-dim">{tr('ui.thisPc.webAddress')}</label>
           <input id="link-server" value={server} onChange={(e) => setServer(e.target.value)} placeholder="https://cognitrix.example.com" className={inputClass} />
+          <button type="button" onClick={() => void find()} disabled={finding || busy} className={cn(quietButtonClass, 'mt-1.5 -ml-2.5')}>
+            {finding ? tr('ui.thisPc.lookingOnYourTailnet') : tr('ui.thisPc.findItOnMyTailnet')}
+          </button>
+          {found && (found.length ? (
+            <ul aria-label={tr('ui.thisPc.serversOnYourTailnet')} className="mt-1 divide-y divide-line rounded-lg border border-line">
+              {found.map((f) => (
+                <li key={f.server} className="flex flex-wrap items-center gap-2 px-2.5 py-2">
+                  <span className="min-w-0 flex-1 basis-[160px]">
+                    <span className="block truncate text-[13px] font-medium">{f.name}</span>
+                    <span className="block break-all font-mono text-[11.5px] text-fg-dim">{f.server}</span>
+                  </span>
+                  <button type="button" disabled={busy} onClick={() => setServer(f.server)} className={buttonClass}>{tr('ui.thisPc.useThisAddress')}</button>
+                  {f.ask_to_pair && (
+                    <button type="button" disabled={busy} onClick={() => void ask(f.server)} className={primaryButtonClass}>{tr('ui.thisPc.pairWithoutACode')}</button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p role="status" className="mt-1 text-[12.5px] leading-snug text-fg-dim">{tr('ui.thisPc.noServerOnYourTailnet')}</p>
+          ))}
         </div>
         <div>
           <label htmlFor="link-code" className="mb-1 block text-[12px] text-fg-dim">{tr('ui.thisPc.code')}</label>
@@ -127,7 +232,7 @@ function LinkForm({ defaults, onLinked }: { defaults: PcLink; onLinked: (l: PcLi
   return (
     <div className="space-y-4 rounded-[12px] border border-accent/40 bg-panel p-3.5">
       <div>
-        <div className="text-[14px] font-semibold">{tr('ui.thisPc.letAccountUseThisPc', { account })}</div>
+        <div className="text-[14px] font-semibold">{tr('ui.thisPc.letAccountUseThisPc', { account: shownAccount })}</div>
         <p className="mt-1 text-[12.5px] leading-snug text-fg-dim">{tr('ui.thisPc.agentsInThatAccountWill')}</p>
       </div>
       <div>
@@ -141,7 +246,7 @@ function LinkForm({ defaults, onLinked }: { defaults: PcLink; onLinked: (l: PcLi
       <PowerToggles powers={powers} onChange={setPowers} disabled={busy} />
       {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
       <div className="flex flex-wrap justify-end gap-2">
-        <button type="button" onClick={() => { setAccount(''); setCode(''); }} disabled={busy} className={quietButtonClass}>{tr('ui.thisPc.cancel')}</button>
+        <button type="button" onClick={() => { setAccount(''); setCode(''); if (asked) cancelAsk(); }} disabled={busy} className={quietButtonClass}>{tr('ui.thisPc.cancel')}</button>
         <button type="button" onClick={() => void allow()} disabled={busy || folders.length === 0} className={primaryButtonClass}>{tr('ui.thisPc.allow')}</button>
       </div>
     </div>
@@ -202,7 +307,7 @@ export function ThisPcLink() {
       <Group>
         <SettingRow
           label={<span className="flex flex-wrap items-center gap-2">{link.name}{status}</span>}
-          detail={<>{tr('ui.thisPc.linkedToAccountOnServer', { account: link.account, server: link.server })}{link.token_kept_in ? <span className="block text-fg-dim">{tr('ui.thisPc.tokenKeptIn', { place: link.token_kept_in })}</span> : null}{link.error && link.status !== 'connected' ? <span className="block text-warn-ink">{link.error}</span> : null}</>}
+          detail={<>{tr('ui.thisPc.linkedToAccountOnServer', { account: link.account, server: link.server })}{link.token_kept_in ? <span className="block text-fg-dim">{tr('ui.thisPc.tokenKeptIn', { place: link.token_kept_in })}</span> : null}{link.status === 'connected' && link.connected_to && (link.servers?.length ?? 0) > 1 ? <span className="block text-fg-dim">{tr('ui.thisPc.connectedThrough', { address: link.connected_to })}</span> : null}{link.error && link.status !== 'connected' ? <span className="block text-warn-ink">{link.error}</span> : null}</>}
         >
           <button type="button" onClick={() => void change({ paused: !link.paused })} disabled={busy} className={buttonClass}>
             {link.paused ? tr('ui.thisPc.resumeAgents') : tr('ui.thisPc.pauseAgents')}

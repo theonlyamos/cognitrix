@@ -4,7 +4,7 @@ import { api } from '@/lib/api';
 
 export type AppStatus = 'building' | 'online' | 'asleep' | 'failed' | 'stopped';
 export type AppRole = 'owner' | 'edit' | 'view';
-export type AppAccess = 'private' | 'people' | 'workspace';
+export type AppAccess = 'private' | 'people' | 'workspace' | 'tailnet';
 
 export interface AppSummary {
   id: string;
@@ -24,6 +24,8 @@ export interface AppSummary {
   task_id: string;
   access: AppAccess;
   shared_with: Record<string, 'view' | 'edit'>;
+  /** People on the owner's tailnet who may open it with no account (they can use it, not change it). */
+  tailnet?: { everyone: boolean; logins: string[] };
   pinned: boolean;
   sleep_after: number;
   visits_7d: number[];

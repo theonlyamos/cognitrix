@@ -41,6 +41,8 @@ export interface TailscaleStatus {
   /** How this page reached the server: direct | tailnet | public. */
   door: string;
   listen_local: boolean;
+  /** People may link their Tailscale login to their account and sign in with it. */
+  signin: boolean;
 }
 
 export interface TailscaleChange {
@@ -52,6 +54,7 @@ export interface TailscaleChange {
   public_port?: number;
   allow?: TailscaleAllow[];
   listen_local?: boolean;
+  signin?: boolean;
 }
 
 export type TailscaleCheck = Partial<Record<'private' | 'public', { ok: boolean; detail: string }>>;
@@ -82,6 +85,44 @@ export function tailscalePending(s: TailscaleStatus | null): boolean {
   if (s.state === 'needs_login' || s.state === 'needs_approval' || s.state === 'starting') return true;
   if (s.private.problem === 'not_removed' || s.public.problem === 'not_removed') return true;
   return (s.private.wanted && !s.private.active) || (s.public.wanted && !s.public.active);
+}
+
+// ---- Who a visitor from the tailnet is --------------------------------------------
+
+/** GET /tailscale/link: the Tailscale login this page is seen as, and the one linked to my account. */
+export interface TailnetLink {
+  /** Signing in from the tailnet is turned on for this server. */
+  enabled: boolean;
+  /** Who Tailscale says this browser is; '' unless the page is open at the private address. */
+  login: string;
+  name: string;
+  picture: string;
+  can_sign_in: boolean;
+  /** The login linked to my account, '' when none. */
+  linked: string;
+  linked_at: string;
+}
+
+export async function tailnetLink(): Promise<TailnetLink> {
+  return (await api.get('/tailscale/link')).data;
+}
+
+export async function linkTailnet(): Promise<TailnetLink> {
+  return (await api.put('/tailscale/link')).data;
+}
+
+export async function unlinkTailnet(): Promise<TailnetLink> {
+  return (await api.delete('/tailscale/link')).data;
+}
+
+/** Sign this browser in as the account linked to its Tailscale login. */
+export async function signInFromTailnet(): Promise<{ user: Record<string, unknown> & { email: string }; access_token: string }> {
+  return (await api.post('/tailscale/sign-in', {})).data;
+}
+
+/** A way in to an App shared with the tailnet, for a visitor with no account here. */
+export async function tailnetAppUrl(slug: string): Promise<string> {
+  return (await api.get(`/tailscale/apps/${encodeURIComponent(slug)}`)).data.url;
 }
 
 // ---- Which address to show for what ------------------------------------------------

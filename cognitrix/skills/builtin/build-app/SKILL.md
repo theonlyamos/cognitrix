@@ -48,6 +48,10 @@ a second one: edit its folder and publish again with its `app_id`.
      Everything else is replaced on each publish.
    - No cookies or localStorage. Who is viewing comes from the `X-Cognitrix-User-Name`, `-Email` and
      `-Id` request headers (percent-encoded UTF-8; decode them).
+     A visitor may have no Cognitrix account: the owner can share an app with people on their Tailscale
+     network. Then `X-Cognitrix-User-Source` is `tailscale`, `-Id` and `-Email` are their Tailscale login,
+     the role is `view`, and in the page `window.cognitrix.guest` is true (notifications and connected
+     apps reject for them). Don't assume `-Id` is an account id.
    - No websockets: poll instead.
    - People can install an app on their computer (desktop app). In the browser code, `window.cognitrix`
      can then ask them for more; each call asks the person the first time and rejects if they say no,

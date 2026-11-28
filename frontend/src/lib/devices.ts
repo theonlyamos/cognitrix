@@ -20,6 +20,32 @@ export interface PairedDevice {
   version?: string;
   paired_at?: string;
   last_seen_at?: string;
+  /** Its machine name on the tailnet, when it paired through the Tailscale private address. */
+  tailnet_node?: string;
+}
+
+/** A PC on my tailnet asking to pair without a code, waiting for my yes. */
+export interface PairRequest {
+  id: string;
+  name: string;
+  platform: string;
+  /** The Tailscale login the PC is signed in as (linked to my account). */
+  login: string;
+  /** Its machine name on the tailnet, '' when unknown. */
+  node: string;
+  address: string;
+  client: 'desktop' | 'cli';
+  expires_in: number;
+}
+
+export async function pairRequests(): Promise<PairRequest[]> {
+  return (await api.get<{ requests: PairRequest[] }>('/computer/devices/pair-requests')).data.requests || [];
+}
+
+export async function answerPairRequest(id: string, approve: boolean): Promise<PairRequest[]> {
+  const { data } = await api.post<{ requests: PairRequest[] }>(
+    `/computer/devices/pair-requests/${encodeURIComponent(id)}/${approve ? 'approve' : 'deny'}`);
+  return data.requests || [];
 }
 
 export interface PairCode {
@@ -95,6 +121,46 @@ export interface PcLink {
   platform: string;
   /** Where this PC's sign-in is kept: Credential Manager, Keychain, Secret Service or a file path. */
   token_kept_in?: string;
+  /** Every address of the server this link keeps, the tailnet one first. */
+  servers?: string[];
+  /** The address the connection is on right now. */
+  connected_to?: string;
+}
+
+/** A Cognitrix server found on this PC's tailnet. */
+export interface FoundServer {
+  name: string;
+  server: string;
+  version: string;
+  /** This PC's Tailscale login is linked to an account there: it can pair without a code. */
+  ask_to_pair: boolean;
+}
+
+export async function findServers(): Promise<FoundServer[]> {
+  return (await api.get<{ servers: FoundServer[] }>('/computer/link/find')).data.servers || [];
+}
+
+/** This PC's request to pair without a code: none, pending, approved, denied or expired. */
+export interface AskedPairing {
+  status: 'none' | 'pending' | 'approved' | 'denied' | 'expired' | 'used';
+  server: string;
+  account: string;
+}
+
+export async function askServer(server: string, name: string): Promise<AskedPairing> {
+  return (await api.post<AskedPairing>('/computer/link/ask', { server, name })).data;
+}
+
+export async function askedPairing(): Promise<AskedPairing> {
+  return (await api.get<AskedPairing>('/computer/link/ask')).data;
+}
+
+export async function forgetAskedPairing(): Promise<void> {
+  await api.delete('/computer/link/ask');
+}
+
+export async function finishAskedPairing(body: { name: string; folders: DeviceFolder[]; powers: DevicePower[] }): Promise<PcLink> {
+  return (await api.post<PcLink>('/computer/link/ask/finish', body)).data;
 }
 
 export async function getPcLink(): Promise<PcLink> {

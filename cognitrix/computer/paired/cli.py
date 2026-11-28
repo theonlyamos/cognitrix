@@ -2,6 +2,9 @@
 connected, for machines without the desktop app.
 
     cognitrix connect cognitrix.example.com --code K7QF-29XM --folder ~/code/app
+    cognitrix connect --find      # Cognitrix servers on this PC's tailnet
+    cognitrix connect studio.tail1234.ts.net --ask --folder ~/code/app
+                                  # no code: approve this PC on the web instead
     cognitrix connect             # reconnect with the saved link
     cognitrix connect --status    # show the saved link
     cognitrix connect --unpair    # forget this PC on the server and here
@@ -21,6 +24,10 @@ def add_parser(subparsers) -> None:
     p.add_argument('server', nargs='?', default='', help='The web server, like cognitrix.example.com')
     p.add_argument('--code', default='', help='A code from the web: Settings, Sign-ins, Get a code (signs this PC in and links it), '
                    'or Settings, Computers, Pair a computer')
+    p.add_argument('--find', action='store_true', help="List the Cognitrix servers on this PC's tailnet and exit")
+    p.add_argument('--ask', action='store_true',
+                   help='Pair without a code: this PC asks over the tailnet and you approve it on the web '
+                        '(Settings, Computers). Needs your Tailscale login linked to your account there')
     p.add_argument('--folder', action='append', default=[], help='A folder agents may use (repeat for more)')
     p.add_argument('--read-only', action='store_true', help='Agents may read the folders but not change them')
     p.add_argument('--no-commands', action='store_true', help="Don't let agents run commands here")
@@ -64,6 +71,21 @@ async def command(args) -> None:
         _print_link(view)
         return
 
+    if args.find:
+        from cognitrix.computer.paired import tailnet
+        try:
+            found = await tailnet.find_servers()
+        except LookupError as exc:
+            sys.exit(str(exc))
+        if not found:
+            print('No Cognitrix server answered on your tailnet. Is its Tailscale private address on '
+                  '(Settings, Tailscale)?')
+            return
+        for item in found:
+            print(f"{item['name']}: {item['server']} (Cognitrix {item['version']})"
+                  + ('  can pair without a code: add --ask' if item['ask_to_pair'] else ''))
+        return
+
     connector = get_connector()
     if args.unpair:
         if not load_config().get('token'):
@@ -78,12 +100,38 @@ async def command(args) -> None:
         print('Unpaired. The server and this PC have both forgotten the link.')
         return
 
-    if args.code:
+    asked = None
+    if args.ask and not args.code:
+        if not args.server:
+            sys.exit('Give the server too: cognitrix connect <server> --ask (find it with cognitrix connect --find)')
+        from cognitrix.computer.paired.connector import ask, ask_status, link_approved
+        try:
+            folders = check_folders([{'path': f, 'writable': not args.read_only} for f in args.folder])
+            if not folders:
+                sys.exit('Share at least one folder with --folder, like --folder ~/code/my-app')
+            asked = await ask(args.server, name=args.pc_name or default_name())
+        except LinkError as exc:
+            sys.exit(exc.message)
+        print(f"Asked {asked['server']}. Now approve this PC on the web: Settings, Computers "
+              f"(account {asked['account']}). Waiting up to 10 minutes...")
+        status = 'pending'
+        while status == 'pending':
+            await asyncio.sleep(3)
+            try:
+                status = (await ask_status(asked))['status']
+            except LinkError as exc:
+                sys.exit(exc.message)
+        if status != 'approved':
+            sys.exit('It was declined on the web.' if status == 'denied' else 'Nobody approved it in time. Ask again.')
+        info = {'account': asked['account'], 'server': asked['server'], 'code': ''}
+
+    if args.code or asked:
         if not args.server:
             sys.exit('Give the server too: cognitrix connect <server> --code <code>')
         try:
             folders = check_folders([{'path': f, 'writable': not args.read_only} for f in args.folder])
-            info = await preview(args.server, args.code)
+            if not asked:
+                info = await preview(args.server, args.code)
         except LinkError as exc:
             sys.exit(exc.message)
         if not folders:
@@ -102,7 +150,10 @@ async def command(args) -> None:
                 print('Nothing was shared.')
                 return
         try:
-            view = await link(info['server'], info['code'], name=name, folders=folders, powers=powers)
+            if asked:
+                view = await link_approved(asked, name=name, folders=folders, powers=powers)
+            else:
+                view = await link(info['server'], info['code'], name=name, folders=folders, powers=powers)
         except LinkError as exc:
             sys.exit(exc.message)
         print('Paired.')
