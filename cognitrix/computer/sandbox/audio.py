@@ -116,11 +116,16 @@ class DesktopAudio:
             self.recorder.start()
         return {'ok': True, 'listening': True}
 
-    def stop(self) -> dict:
-        if self.recorder is not None:
-            self.recorder.stop()
+    def stop(self, after: int | None = None) -> dict:
+        """Stop capture, optionally collecting unread speech including the final utterance."""
+        result = {'ok': True, 'listening': False}
+        rec = self.recorder
+        if rec is not None:
+            rec.stop()
             self.recorder = None
-        return {'ok': True, 'listening': False}
+        if after is not None:
+            result['pieces'] = rec.pieces_after(after) if rec is not None else []
+        return result
 
     def read(self, after: int) -> dict:
         rec = self.recorder
@@ -264,6 +269,8 @@ class Recorder:
                 self._proc.wait(5)
             except subprocess.TimeoutExpired:
                 self._proc.kill()
+        if self._thread is not None:
+            self._thread.join(timeout=2)  # _loop flushes speech that has not reached a pause yet
 
     def _loop(self) -> None:
         seg = Segmenter()

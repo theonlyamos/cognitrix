@@ -2858,7 +2858,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.meetings.noMeetingsYet": "Aún no hay reuniones",
   "ui.meetings.noNotesYetTheTranscript": "Aún no hay notas. La transcripción está guardada, así que se pueden volver a redactar.",
   "ui.meetings.notesWrittenBy": "Notas redactadas por",
-  "ui.meetings.nothingHeardYet": "Aún no se ha oído nada.",
+  "ui.meetings.nothingHeardYet": "La transcripción empieza cuando el agente confirma que está en la llamada. Si tomaste el control para iniciar sesión o unirte, selecciona «Devolver el control».",
   "ui.meetings.progressYouCanLeaveThis": "{progress}… Puedes salir de esta página; el proceso continúa.",
   "ui.meetings.roundSec": "{round} s",
   "ui.meetings.sayInTheCall": "Decir en la llamada",

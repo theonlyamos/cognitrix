@@ -33,7 +33,7 @@ export interface MeetingSummary {
   bot_name?: string;
   reply_mode?: ReplyMode;
   answers?: number;
-  /** The agent is in the call right now. */
+  /** The live meeting worker is running, including while it writes notes after the call. */
   in_call?: boolean;
 }
 interface Meeting extends MeetingSummary { transcript: string; notes: string }
@@ -122,19 +122,16 @@ function LiveCall({ meeting, agents, onChanged, onReload }: {
     }
   };
   const where = PLATFORM[meeting.platform ?? ''] ?? 'the call';
-  // The engine waits for the person to sign in to Google on the agent's computer.
-  const signIn = meeting.status === 'waiting' && meeting.progress.includes('sign in');
   const state = meeting.status === 'live' ? `In ${where} as ${meeting.bot_name}`
-    : signIn ? `${where} wants a signed-in Google account: watch, take over and sign in on the agent's computer`
-      : meeting.status === 'waiting' ? `Waiting for someone in ${where} to let ${meeting.bot_name} in`
-        : `Joining ${where}`;
+    : meeting.status === 'waiting' ? `Waiting for someone in ${where} to let ${meeting.bot_name} in`
+      : `Joining ${where}`;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <p className="flex min-w-0 flex-1 items-center gap-2 text-[13px]" aria-live="polite">
           <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-accent" aria-hidden />
-          <span className="truncate">{state}{meeting.progress && meeting.status !== 'live' && !signIn ? ` · ${meeting.progress}` : ''}</span>
+          <span className="truncate">{state}{meeting.progress && meeting.status !== 'live' ? ` · ${meeting.progress}` : ''}</span>
         </p>
         <Button type="button" size="sm" variant="ghost" aria-pressed={watching} onClick={() => setWatching((v) => !v)}>
           {watching ? tr('ui.meetings.hideScreen') : tr('ui.meetings.watch')}
@@ -244,7 +241,7 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
     }
   };
 
-  if (meeting.in_call || IN_CALL.includes(meeting.status)) {
+  if (IN_CALL.includes(meeting.status)) {
     return (
       <div className="border-t border-line px-4 py-3">
         <LiveCall meeting={meeting} agents={agents} onChanged={onChanged} onReload={load} />

@@ -43,8 +43,9 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import SplitResult, parse_qs, quote, urlsplit
 
+from cognitrix.computer import Stale
 from cognitrix.meetings import notes as meeting_notes
 from cognitrix.meetings.notes import MeetingError, MeetingNote
 
@@ -121,14 +122,14 @@ JOIN_BUTTONS = (
     # the join buttons themselves
     'ask to join', 'join now', 'join anyway', 'join meeting', 'join',
 )
+TIP_BUTTONS = ('got it', 'dismiss')
 ENTER_BUTTONS = ('ask to join', 'join now', 'join anyway', 'join meeting')
+GUEST_BUTTONS = ('continue as guest',)
 AUDIO_BUTTONS = ('join audio by computer', 'join with computer audio', 'join audio')
 NAME_FIELDS = ('your name', 'type your name', 'enter your name', 'enter name', 'name')
 LEAVE_BUTTONS = ('leave call', 'leave meeting', 'leave', 'hang up', 'end call')
-# Signs of being in the call besides a Leave button (which a long page can
-# push past what one look reads): Meet's and Teams' call controls.
-IN_CALL = ("you're the only one here", 'raise hand', 'chat with everyone', 'meeting details', 'call controls',
-           'turn on captions', 'turn off captions', 'show everyone', 'meeting chat')
+MEET_LEAVE_BUTTONS = ('leave call', 'leave meeting', 'hang up', 'end call')
+MEET_CODE = re.compile(r'\b[a-z]{3}-[a-z]{4}-[a-z]{3}\b')
 LOBBY = ('asking to be let in', 'asking to join', 'waiting for the host', 'someone in the meeting should let you in',
          'when someone lets you in', 'waiting for someone to let you in', 'when the meeting starts',
          'let you in soon', 'please wait', 'waiting to be admitted', 'host will let you in', 'lobby')
@@ -141,10 +142,11 @@ REFUSED = ("you can't join this video call", 'denied your request', 'no one resp
 SIGN_IN_BUTTONS = ('sign in with google', 'sign in')
 GOOGLE_SIGN_IN = 'https://accounts.google.com/ServiceLogin?continue='
 SIGN_IN_PAGES = ('sign in - google accounts', 'to continue to google meet', 'to continue to meet', 'email or phone',
-                 'enter your password',
-                 'choose an account', 'verify it’s you', "verify it's you", '2-step verification')
+                 'enter your password', 'choose an account', "verify it's you", '2-step verification')
 ENDED = ('you left the meeting', 'you left the call', 'the call has ended', 'the meeting has ended',
-         'meeting has ended', 'call ended', 'return to home screen', 'rejoin', 'this meeting has been ended')
+         'meeting has ended', 'call ended', 'return to home screen', 'this meeting has been ended')
+MEET_ROOM_CONTROLS = (('show everyone',), ('chat with everyone', 'in-call messages'),
+                      ('raise hand', 'lower hand'), ('meeting details',))
 CHAT_BUTTONS = ('chat with everyone', 'open chat', 'show conversation', 'chat')
 CHAT_FIELDS = ('send a message', 'type a message', 'type message here', 'send a message to everyone', 'message')
 TEXT_ROLES = ('entry', 'text', 'password text', 'combo box', 'editbar', 'textbox')
@@ -152,7 +154,7 @@ BUTTON_ROLES = ('push button', 'button', 'link', 'toggle button', 'menu item', '
 
 
 def _norm(text: Any) -> str:
-    return re.sub(r'\s+', ' ', str(text or '')).strip().lower()
+    return re.sub(r'\s+', ' ', str(text or '')).strip().lower().replace('’', "'")
 
 
 @dataclass
@@ -176,10 +178,13 @@ class View:
         body = self.text()
         return next((p for p in phrases if p in body), '')
 
-    def find(self, labels: tuple[str, ...], roles: tuple[str, ...] = BUTTON_ROLES) -> int | None:
+    def find(self, labels: tuple[str, ...], roles: tuple[str, ...] = BUTTON_ROLES,
+             greyed: bool = False) -> int | None:
+        """The first control named like one of ``labels``. ``greyed`` also
+        counts one that can't be pressed yet."""
         for label in labels:
             for index, el in enumerate(self.elements):
-                if not el.enabled or (roles and el.role.lower() not in roles):
+                if (not el.enabled and not greyed) or (roles and el.role.lower() not in roles):
                     continue
                 name = _norm(el.name)
                 if name and (name == label or name.startswith(label + ' ') or name.startswith(label + ',')
@@ -194,12 +199,34 @@ class View:
                     return index
         return None
 
-    def url(self) -> str:
-        """The address bar's text, when the browser shows one."""
-        for el in self.elements:
-            if el.role.lower() in TEXT_ROLES and 'address' in _norm(el.name):
-                return str(el.value or '').strip()
-        return ''
+    def address(self) -> SplitResult:
+        bar = self.field(('address and search bar',))
+        raw = str(self.elements[bar].value or '').strip() if bar is not None else ''
+        try:
+            return urlsplit(raw if '://' in raw else '//' + raw)
+        except ValueError:
+            return urlsplit('')
+
+    def offers_join(self, platform: str) -> bool:
+        """This is still a join screen. Meet greys out "Ask to join" until a
+        guest has typed a name, so a greyed button counts too."""
+        labels = ('ask to join', 'join') if platform == 'meet' else ('ask to join', 'join now')
+        return self.find(labels + GUEST_BUTTONS, greyed=True) is not None
+
+    def in_call(self, platform: str) -> bool:
+        meet = platform == 'meet'
+        if self.offers_join(platform):
+            return False
+        if not meet:
+            return self.find(LEAVE_BUTTONS) is not None
+        if self.find(MEET_LEAVE_BUTTONS) is not None:
+            return True
+        # Mic and camera are present even before admission. These controls
+        # belong to the in-call toolbar; require two independent controls.
+        return sum(self.find(labels) is not None for labels in MEET_ROOM_CONTROLS) >= 2
+
+    def ended(self) -> str:
+        return 'rejoin' if self.find(('rejoin',)) is not None else self.says(ENDED)
 
     def point(self, index: int) -> tuple[float, float]:
         """Where a control is, in the screenshot's pixels (what type_text takes)."""
@@ -215,22 +242,92 @@ class Screen:
         self.driver = driver
         self.viewer = viewer
         self.window_id: int | None = None
+        self.platform = 'other'
+        self.url = ''
+        self._room_code = ''
+        self._previous_windows: set[int] = set()
 
-    def open(self, url: str) -> int:
-        win = self.driver.open('chromium', args=f'--new-window {url}', timeout_s=20)
-        if win is None:
-            windows = [w for w in self.driver.list_windows() if 'chrom' in (w.app or '').lower()]
-            if not windows:
-                raise MeetingError("The browser on the agent's computer didn't open.")
-            win = windows[-1]
-        self.window_id = int(win.id)
-        return self.window_id
+    def open(self, url: str) -> None:
+        self.platform = platform_of(url)
+        self.url = url
+        self.launch(url)
 
-    def look(self) -> View:
-        if self.window_id is None:
+    def launch(self, address: str) -> None:
+        """A new browser window on ``address``: the call, or Google's sign-in
+        page on its way back to it. For Meet, ``look`` then finds the window."""
+        self.window_id = None
+        if self.platform == 'meet':
+            self._previous_windows = {w.id for w in self.driver.list_windows()}
+        win = self.driver.open('chromium', args=f'--new-window {address}', timeout_s=20)
+        if self.platform != 'meet':
+            if win is None:
+                windows = [w for w in self.driver.list_windows() if 'chrom' in (w.app or '').lower()]
+                if not windows:
+                    raise MeetingError("The browser on the agent's computer didn't open.")
+                win = windows[-1]
+            self.window_id = int(win.id)
+
+    def _new_windows(self):
+        return [w for w in self.driver.list_windows()
+                if w.id not in self._previous_windows and 'chrom' in (w.app or '').lower()]
+
+    def _matches_meet(self, view: View, title: str, only_window: bool) -> bool:
+        target = urlsplit(self.url)
+        path = target.path.strip('/')
+        address = view.address()
+        if address.hostname == 'accounts.google.com':
+            resume = parse_qs(address.query).get('continue')
+            if not resume:
+                return only_window
+            address = urlsplit(resume[0])
+        if address.hostname:
+            if address.hostname != target.hostname:
+                return False
+            # A nickname (/lookup/...) can resolve to the meeting's canonical code.
+            shown = address.path.strip('/')
+            if MEET_CODE.fullmatch(shown):
+                if self._room_code:
+                    return shown == self._room_code
+                if shown != path and (not only_window or MEET_CODE.fullmatch(path)):
+                    return False
+                self._room_code = shown
+                return True
+            return shown == path
+        # Older workers don't expose the omnibox value. Use the room code in
+        # the title, or an unambiguous new Meet window for named meetings.
+        title_code = MEET_CODE.search(title.lower())
+        if title_code and MEET_CODE.fullmatch(path):
+            return title_code.group() == path
+        return only_window and ('meet' in title.lower() or view.in_call('meet') or bool(view.says(SIGN_IN_PAGES))
+                                or view.find(('ask to join', 'join now')) is not None)
+
+    def _read(self, window_id: int) -> View:
+        _image, snap, _shown, _note = self.driver.look(window_id, None, 1, viewer=self.viewer)
+        return View(window_id, snap.id, list(snap.elements), tuple(snap.origin), float(snap.scale or 1.0))
+
+    def look(self, *, for_close: bool = False) -> View:
+        if self.window_id is not None:
+            view = self._read(self.window_id)
+            address = view.address()
+            if self.platform == 'meet' and address.hostname and not self._matches_meet(view, '', True):
+                if (not for_close and address.hostname == urlsplit(self.url).hostname
+                        and not MEET_CODE.fullmatch(address.path.strip('/')) and view.ended()):
+                    return view
+                # The person can open or switch tabs when taking over. An X11
+                # window ID then still points to Chromium, but to a different page.
+                raise Stale('The Google Meet tab is no longer the selected tab in its window.')
+            return view
+        if self.platform != 'meet':
             raise MeetingError('The call is not open.')
-        _image, snap, _shown, _note = self.driver.look(self.window_id, None, 1, viewer=self.viewer)
-        return View(self.window_id, snap.id, list(snap.elements), tuple(snap.origin), float(snap.scale or 1.0))
+        # Chromium can restore several windows when it starts a signed-in
+        # profile. Driver.open may return any of them before Meet has loaded.
+        windows = self._new_windows()
+        for win in windows:
+            view = self._read(int(win.id))
+            if self._matches_meet(view, win.title or '', len(windows) == 1 and not for_close):
+                self.window_id = view.window_id
+                return view
+        raise Stale('Waiting for the requested Google Meet window to open.')
 
     def click(self, view: View, index: int) -> None:
         self.driver.act_on_element(view.window_id, index, 'click', snapshot_id=view.snapshot_id, viewer=self.viewer)
@@ -241,62 +338,75 @@ class Screen:
                               use_screen=True)
 
     def close(self) -> None:
-        if self.window_id is not None:
-            try:
+        try:
+            if self.platform == 'meet':
+                self.look(for_close=True)  # Ctrl+W closes the active tab in this window.
+            if self.window_id is not None:
                 self.driver.press_key(self.window_id, 'ctrl+w', use_screen=True)
-            except Exception:
-                logger.debug('Could not close the call window', exc_info=True)
+        except Exception:
+            logger.debug('Could not close the call window', exc_info=True)
 
 
 def needs_sign_in(view: View) -> bool:
-    """Google wants a signed-in browser before it lets the agent in."""
-    host = (urlsplit(view.url() if '://' in view.url() else f'https://{view.url()}').hostname or '').lower()
-    if host == 'accounts.google.com' or host.endswith('.accounts.google.com'):
-        return True
-    if view.says(SIGN_IN_PAGES) and view.find(ENTER_BUTTONS + ('continue as guest',)) is None:
+    """Google Meet wants a signed-in browser before it lets the agent in:
+    Google's own sign-in pages, or Meet's "You can't join this video call"
+    shown to a signed-out browser when the host doesn't let guests in
+    (signed in, Google's pages show the account)."""
+    if view.says(SIGN_IN_PAGES) and view.find(ENTER_BUTTONS + GUEST_BUTTONS, greyed=True) is None:
         return True
     if not view.says(("you can't join this video call",)):
         return False
-    # Meet turns away a signed-out browser with this page when the host
-    # doesn't let guests in; signed in, Google's pages show the account.
     signed_in = any(_norm(el.name).startswith('google account:') for el in view.elements)
     return not signed_in or view.find(SIGN_IN_BUTTONS) is not None
-
-
-def in_call(view: View) -> bool:
-    if view.find(ENTER_BUTTONS + ('continue as guest',)) is not None:
-        return False
-    return view.find(LEAVE_BUTTONS) is not None or len([p for p in IN_CALL if p in view.text()]) >= 2
 
 
 def join_step(screen: Screen, name: str, typed: set[int], clicks: dict[str, int] | None = None,
               act: bool = True) -> str:
     """One look at the join screen and one action (none when ``act`` is off,
     while the person signs in). Returns what it saw: 'live', 'lobby',
-    'sign in', 'refused: <why>', 'ended', or 'working'."""
+    'sign_in', 'refused: <why>', 'ended', or 'working'."""
     view = screen.look()
-    if needs_sign_in(view):
-        return 'sign in'
-    refused = view.says(REFUSED)
-    if refused:
-        return f'refused: {refused}'
-    if in_call(view):
+    meet = screen.platform == 'meet'
+    if meet and view.address().hostname == 'accounts.google.com':
+        return 'sign_in'
+    if view.in_call(screen.platform):
         audio = view.find(AUDIO_BUTTONS)
         if audio is not None:  # Zoom asks how to join the sound
             screen.click(view, audio)
         return 'live'
+    if meet and needs_sign_in(view):
+        return 'sign_in'
+    refused = view.says(REFUSED)
+    if refused:
+        return f'refused: {refused}'
+    # Meet's join screen has a "Return to home screen" link of its own, so a
+    # page that still offers to join has not ended.
+    offers_join = view.offers_join(screen.platform)
+    if view.ended() and not offers_join:
+        return 'ended'
     if view.says(LOBBY):
         return 'lobby'
-    if view.says(ENDED) and view.find(ENTER_BUTTONS) is None:
-        return 'ended'
+    if view.says(('sign in to join',)):
+        if not meet:
+            return 'refused: sign in to join'
+        if not offers_join:
+            return 'sign_in'
     if not act:
         return 'working'
+    clicks = {} if clicks is None else clicks
     name_field = view.field(NAME_FIELDS)
     if name_field is not None and name_field not in typed and not _norm(view.elements[name_field].value):
+        # A tip over the page (Meet's "Sign in with your Google account" for a
+        # guest) is closed first, so the name lands in its field.
+        tip = next((label for label in TIP_BUTTONS if label in JOIN_BUTTONS and view.find((label,)) is not None
+                    and clicks.get(label, 0) < MAX_SAME_CLICKS), None)
+        if tip is not None:
+            clicks[tip] = clicks.get(tip, 0) + 1
+            screen.click(view, view.find((tip,)))
+            return 'working'
         typed.add(name_field)
         screen.type_into(view, name_field, name)
         return 'working'
-    clicks = {} if clicks is None else clicks
     for label in JOIN_BUTTONS:
         # A button that didn't move things on after a few presses (a tip that
         # comes back, a greyed-out choice) is left alone, so the real join
@@ -311,19 +421,29 @@ def join_step(screen: Screen, name: str, typed: set[int], clicks: dict[str, int]
     return 'working'
 
 
-def open_sign_in(screen: Screen, url: str) -> None:
+def open_sign_in(screen: Screen) -> None:
     """Put Google's sign-in page in front of the person: Meet's own Sign in
     button when its page has one, else Google's page, which comes back to
     the call once they are signed in."""
     view = screen.look()
-    if needs_sign_in(view) and view.says(SIGN_IN_PAGES):
+    if view.address().hostname == 'accounts.google.com' or view.says(SIGN_IN_PAGES):
         return  # already there
     button = view.find(SIGN_IN_BUTTONS)
     if button is not None:
         screen.click(view, button)
         return
     screen.close()
-    screen.open(GOOGLE_SIGN_IN + quote(url, safe=''))
+    screen.launch(GOOGLE_SIGN_IN + quote(screen.url, safe=''))
+
+
+def back_to_call(screen: Screen) -> None:
+    """After signing in, open the call again if Google sent the browser
+    somewhere else (the tab it left there is the person's to close)."""
+    try:
+        screen.look()
+    except Stale:
+        if screen.window_id is not None:
+            screen.launch(screen.url)
 
 
 def post_chat(screen: Screen, text: str) -> bool:
@@ -345,7 +465,7 @@ def post_chat(screen: Screen, text: str) -> bool:
 def leave(screen: Screen) -> None:
     try:
         view = screen.look()
-        button = view.find(LEAVE_BUTTONS)
+        button = view.find(MEET_LEAVE_BUTTONS if screen.platform == 'meet' else LEAVE_BUTTONS)
         if button is not None:
             screen.click(view, button)
             time.sleep(UI_WAIT_S)
@@ -532,17 +652,7 @@ async def deliver(desk: _Desk, row: MeetingNote, text: str, mode: str) -> str:
     return ''
 
 
-SIGN_IN_PROGRESS = 'waiting for you to sign in to Google on its computer'
-
-
-async def _back_to_call(desk: _Desk, url: str) -> None:
-    """After signing in, open the call again if Google sent the browser elsewhere."""
-    view = await desk.do(desk.screen.look)
-    where = view.url()
-    host = urlsplit(where if '://' in where else f'https://{where}').hostname or ''
-    if where and host != (urlsplit(url).hostname or ''):
-        await desk.do(desk.screen.close)
-        await desk.do(desk.screen.open, url)
+SIGN_IN_PROGRESS = 'open Watch and take over to sign in to Google, then select Hand back'
 
 
 async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
@@ -553,14 +663,18 @@ async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
     typed: set[int] = set()
     clicks: dict[str, int] = {}
     deadline = time.monotonic() + JOIN_TIMEOUT_S
-    lobby_until = 0.0
-    sign_in_until = 0.0
-    signed_out_looks = 0
+    extended_for: set[str] = set()
+    previous = ''
+    signing_in = False  # the person is signing in: nothing on the page is pressed
+    asked = False
+    away = 0  # looks in a row away from the sign-in pages
+    returning = False  # signed in: the call is opened again if Google sent the browser elsewhere
     while True:
         if item.leave.is_set():
-            raise MeetingError('Stopped before it got in.')
+            raise MeetingError('You stopped the attempt before the agent confirmed it had joined. '
+                               'Transcription had not started.')
         try:
-            seen = await desk.do(join_step, desk.screen, row.bot_name, typed, clicks, not sign_in_until)
+            seen = await desk.do(join_step, desk.screen, row.bot_name, typed, clicks, not signing_in)
         except HumanControl:
             seen = 'held'
         except MeetingError:
@@ -568,62 +682,69 @@ async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
         except Exception as exc:  # a page still loading, a stale look: try again
             logger.info('Meeting %s join step: %s', row.id, exc)
             seen = 'working'
-        if seen != 'working':
+        if seen != previous:
             logger.info('Meeting %s join step: %s', row.id, seen)
         if seen == 'live':
             return
         if seen.startswith('refused'):
             raise MeetingError(f"It couldn't join: the call says {seen.split(': ', 1)[-1]!r}.")
         if seen == 'ended':
-            raise MeetingError('The call had ended before it got in.')
-        if seen == 'sign in':
-            signed_out_looks = 0
-            if not sign_in_until:
-                sign_in_until = time.monotonic() + SIGN_IN_WAIT_S
-                await _set(item.meeting_id, status=WAITING, progress=SIGN_IN_PROGRESS)
+            raise MeetingError('The call ended before the agent could confirm it had joined.')
+
+        if seen == 'sign_in':
+            away = 0
+            signing_in = True
+            if not asked:
+                asked = True
                 await _alert(row, f'Sign in to Google for {row.title}',
                              f"{PLATFORM_LABELS.get(row.platform, 'The call')} wants a signed-in Google account. "
-                             "Open the agent's computer, take over, and sign in in its browser. It keeps the "
-                             'sign-in for later calls, and joins as soon as you hand the computer back.')
+                             "Open Watch on the meeting, take over, and sign in in the agent's browser. It keeps "
+                             'the sign-in for later calls, and joins as soon as you hand the computer back.')
                 try:
-                    await desk.do(open_sign_in, desk.screen, row.url)
-                except Exception:
-                    logger.info('Meeting %s: could not open the sign-in page', row.id, exc_info=True)
-            if time.monotonic() > sign_in_until:
-                raise MeetingError("Google wanted a signed-in account and nobody signed in. Open the agent's "
-                                   'computer, sign in to Google in its browser, then send it again.')
-        elif sign_in_until and seen in ('working', 'lobby'):
+                    await desk.do(open_sign_in, desk.screen)
+                except Exception as exc:  # taken over already, or a look failed: the page it is on will do
+                    logger.info('Meeting %s: could not open the sign-in page: %s', row.id, exc)
+        elif signing_in and seen != 'held':
             # A few looks in a row away from Google's sign-in pages (not one
             # page loading in between): signed in, and Google has sent the
             # browser on, normally back to the call.
-            signed_out_looks += 1
-            if signed_out_looks >= SIGNED_IN_LOOKS or seen == 'lobby':
-                sign_in_until = 0.0
+            away += 1
+            if away >= SIGNED_IN_LOOKS or seen == 'lobby':
+                signing_in = False
+                returning = True
+                typed.clear()
+                clicks.clear()
                 deadline = time.monotonic() + JOIN_TIMEOUT_S
-                await _set(item.meeting_id, status=JOINING, progress='signed in; joining')
-                if seen == 'working':
-                    try:
-                        await _back_to_call(desk, row.url)
-                        typed.clear()
-                        clicks.clear()
-                    except Exception as exc:  # taken over, or a look failed: the next steps carry on
-                        logger.info('Meeting %s: going back to the call after sign-in: %s', row.id, exc)
-        if seen == 'lobby':
-            if not lobby_until:
-                lobby_until = time.monotonic() + LOBBY_WAIT_S
-                await _set(item.meeting_id, status=WAITING, progress='waiting for someone to let it in')
-            if time.monotonic() > lobby_until:
+        if returning and seen != 'held':
+            try:
+                await desk.do(back_to_call, desk.screen)
+                returning = False
+            except Exception as exc:  # taken over, or a look failed: tried again on the next step
+                logger.info('Meeting %s: going back to the call after sign-in: %s', row.id, exc)
+
+        now = time.monotonic()
+        if seen == 'held':
+            deadline = max(deadline, now + JOIN_TIMEOUT_S)
+        elif seen in ('sign_in', 'lobby') and seen not in extended_for:
+            deadline = now + (SIGN_IN_WAIT_S if seen == 'sign_in' else LOBBY_WAIT_S)
+            extended_for.add(seen)
+        elif now >= deadline:
+            if seen == 'lobby':
                 raise MeetingError('Nobody let it in.')
-            # Let in, it gets the usual time to find its way past what comes next.
-            deadline = time.monotonic() + JOIN_TIMEOUT_S
-        elif seen == 'held':
-            await _set(item.meeting_id, progress='you have control of its computer; it carries on when you hand it back')
-            deadline = time.monotonic() + JOIN_TIMEOUT_S
-            if sign_in_until:
-                sign_in_until = max(sign_in_until, time.monotonic() + SIGN_IN_WAIT_S)
-        elif seen == 'working' and not sign_in_until and time.monotonic() > deadline:
-            raise MeetingError("It couldn't find its way into the call. Open the agent's computer to see the "
-                               'page, or take over and join it yourself, then hand it back.')
+            if seen == 'sign_in':
+                raise MeetingError("Google Meet is waiting for sign-in. Sign in on this agent's computer and try again.")
+            raise MeetingError("The agent couldn't confirm it was in the call. Open Watch on the next attempt. "
+                               "If you join manually, select Hand back.")
+
+        if seen != previous:
+            progress = {
+                'lobby': 'waiting for someone to let it in',
+                'sign_in': SIGN_IN_PROGRESS,
+                'held': 'select Hand back when you are ready for the agent to check the call',
+                'working': 'checking the meeting window',
+            }[seen]
+            await _set(item.meeting_id, status=WAITING if seen == 'lobby' else JOINING, progress=progress)
+            previous = seen
         await asyncio.sleep(JOIN_POLL_S)
 
 
@@ -661,15 +782,14 @@ async def run(item: Live) -> None:
         last_screen = time.monotonic()
         last_answer = 0.0
         pending_question = False
-        while True:
-            if item.leave.is_set():
-                break
-            now = time.monotonic()
-            if now - started > MAX_MEETING_S:
-                break
-            heard = await desk.audio('GET', after=after)
-            for piece in heard.get('pieces') or []:
-                after = max(after, int(piece.get('seq') or 0))
+
+        async def append_speech(pieces: list[dict]) -> None:
+            nonlocal after, last_heard, pending_question
+            for piece in pieces:
+                seq = int(piece.get('seq') or 0)
+                if seq <= after:
+                    continue
+                after = seq
                 try:
                     text = await meeting_notes.transcribe(
                         base64.b64decode(piece.get('audio') or ''), mime='audio/wav', provider=provider,
@@ -684,9 +804,15 @@ async def run(item: Live) -> None:
                 lines.append(f'[{_clock(time.monotonic() - started)}] {text}')
                 if addressed(text, names):
                     pending_question = True
-            if heard.get('pieces'):
+            if pieces:
                 transcript = '\n'.join(lines)[-meeting_notes.MAX_TRANSCRIPT_CHARS:]
                 await _set(meeting_id, transcript=transcript, seconds=round(time.monotonic() - started, 1))
+
+        while True:
+            if item.leave.is_set() or time.monotonic() - started > MAX_MEETING_S:
+                break
+            heard = await desk.audio('GET', after=after)
+            await append_speech(heard.get('pieces') or [])
             # Things the agent was asked to say (Say In Meeting).
             while not item.say.empty():
                 text, mode = item.say.get_nowait()
@@ -712,21 +838,27 @@ async def run(item: Live) -> None:
                 last_screen = time.monotonic()
                 try:
                     view = await desk.do(desk.screen.look)
-                    gone = view.says(ENDED) or view.says(REFUSED)
-                    if gone and view.find(LEAVE_BUTTONS) is None:
+                    gone = view.ended() or view.says(REFUSED)
+                    if gone and not view.in_call(row.platform):
                         lines.append(f'[{_clock(time.monotonic() - started)}] (the call ended: {gone})')
                         joined = False  # nothing to leave
                         break
                 except Exception:
                     logger.debug('Meeting %s: screen check failed', meeting_id, exc_info=True)
             if heard.get('error') and not heard.get('listening'):
-                await desk.audio('POST', 'start')
+                if (await desk.audio('POST', 'start')).get('ok'):
+                    after = 0  # the new recorder starts its own sequence at one
             try:
                 await asyncio.wait_for(item.leave.wait(), POLL_S)
             except TimeoutError:
                 pass
 
-        await _finish(meeting_id, desk, joined, lines, agent, row)
+        tail = await _cleanup(desk, joined, after=after)
+        desk = None  # already left, including if final transcription is cancelled
+        if tail:
+            await _set(meeting_id, status=meeting_notes.TRANSCRIBING, progress='transcribing the end of the call')
+            await append_speech(tail)
+        await _finish(meeting_id, lines, agent, row)
     except asyncio.CancelledError:
         await _cleanup(desk, joined)
         await _set(meeting_id, status=meeting_notes.FAILED, progress='', error='Stopped.',
@@ -749,11 +881,16 @@ async def run(item: Live) -> None:
         _live.pop(meeting_id, None)
 
 
-async def _cleanup(desk: _Desk | None, joined: bool) -> None:
+async def _cleanup(desk: _Desk | None, joined: bool, *, after: int | None = None) -> list[dict]:
+    pieces = []
     if desk is None:
-        return
+        return pieces
     try:
-        await desk.audio('POST', 'stop')
+        if after is None:
+            await desk.audio('POST', 'stop')
+        else:
+            stopped = await desk.audio('POST', 'stop', {'after': after})
+            pieces = stopped.get('pieces') or []  # older images just acknowledge the stop
     except Exception:
         logger.debug('Could not stop listening', exc_info=True)
     try:
@@ -765,11 +902,10 @@ async def _cleanup(desk: _Desk | None, joined: bool) -> None:
             await desk.do(desk.screen.close)
     except Exception:
         logger.debug('Could not leave the call', exc_info=True)
+    return pieces
 
 
-async def _finish(meeting_id: str, desk: _Desk, joined: bool, lines: list[str], agent: Any,
-                  row: MeetingNote) -> None:
-    await _cleanup(desk, joined)
+async def _finish(meeting_id: str, lines: list[str], agent: Any, row: MeetingNote) -> None:
     transcript = '\n'.join(lines)[-meeting_notes.MAX_TRANSCRIPT_CHARS:]
     await _set(meeting_id, status=meeting_notes.WRITING, progress='writing the notes', transcript=transcript)
     try:

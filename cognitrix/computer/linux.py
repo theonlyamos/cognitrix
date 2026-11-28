@@ -55,6 +55,7 @@ _MAX_DEPTH = 40
 _TEXT_LIMIT = 2000
 
 # AtspiStateType
+_ST_ACTIVE = 1
 _ST_CHECKED, _ST_DEFUNCT, _ST_EDITABLE, _ST_ENABLED, _ST_EXPANDABLE, _ST_EXPANDED = 4, 6, 7, 8, 9, 10
 _ST_FOCUSABLE, _ST_FOCUSED, _ST_HORIZONTAL, _ST_PRESSED, _ST_SELECTABLE, _ST_SELECTED = 11, 12, 14, 20, 22, 23
 _ST_SENSITIVE, _ST_SHOWING, _ST_VISIBLE = 24, 25, 30
@@ -427,9 +428,9 @@ class _Atspi:
         if not ptr:
             return {_ST_DEFUNCT}
         try:
-            return {s for s in (_ST_CHECKED, _ST_DEFUNCT, _ST_EDITABLE, _ST_ENABLED, _ST_EXPANDABLE, _ST_EXPANDED,
-                                _ST_FOCUSABLE, _ST_FOCUSED, _ST_HORIZONTAL, _ST_PRESSED, _ST_SELECTABLE,
-                                _ST_SELECTED, _ST_SENSITIVE, _ST_SHOWING, _ST_VISIBLE)
+            return {s for s in (_ST_ACTIVE, _ST_CHECKED, _ST_DEFUNCT, _ST_EDITABLE, _ST_ENABLED, _ST_EXPANDABLE,
+                                _ST_EXPANDED, _ST_FOCUSABLE, _ST_FOCUSED, _ST_HORIZONTAL, _ST_PRESSED,
+                                _ST_SELECTABLE, _ST_SELECTED, _ST_SENSITIVE, _ST_SHOWING, _ST_VISIBLE)
                     if self.lib.atspi_state_set_contains(ptr, s)}
         finally:
             self.gobject.g_object_unref(ptr)
@@ -501,6 +502,9 @@ def title_key(name: str) -> str:
     while previous != name:
         previous, name = name, _NAME_ADDITIONS.sub('', name)
     return name.strip().lower()
+
+
+_CHROMIUM_APPS = frozenset({'chrome', 'chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable'})
 
 
 class LinuxBackend:
@@ -705,11 +709,13 @@ class LinuxBackend:
         """The accessibility object of an X window: same process, same title.
 
         Chromium names its frames for screen readers, so a frame's name can
-        carry more than the window's title ("Meet - Microphone recording -
-        Chromium" for the window "Meet - Chromium"), and one process owns all
-        its windows, often with the same title (two Meet windows). Names are
-        compared without those additions, and windows that still look alike
-        are matched in the order they were made."""
+        carry more than the window's title: what the page is doing ("Meet -
+        Microphone recording - Chromium" for the window "Meet - Chromium")
+        and, with several profiles, the profile's name after it. One process
+        also owns all its windows, often with the same title (two Meet
+        windows). Names are compared without those additions; windows that
+        still look alike are told apart by where they are, by which one is
+        in front, and last by the order they were made in."""
         a = self.atspi
         if a is None or not info.pid:
             return None
@@ -726,21 +732,45 @@ class LinuxBackend:
         if len(frames) == 1:
             return frames[0][0]
         key = title_key(info.title)
-        alike = [f for f, name in frames if key and title_key(name) == key]
+        chromium = info.app in _CHROMIUM_APPS
+
+        def same(name: str) -> bool:
+            other = title_key(name)
+            return bool(key) and (other == key or (chromium and other.startswith(key + ' - ')))
+
+        alike = [f for f, name in frames if same(name)]
         if len(alike) == 1:
             return alike[0]
         if len(alike) > 1:
-            # Windows of one process are made, and listed by AT-SPI, in the
-            # same order as their X ids grow.
-            twins = sorted(w for w in self._client_windows() if (other := self._info(w)) is not None
-                           and other.pid == info.pid and title_key(other.title) == key)
-            if len(twins) == len(alike) and info.id in twins:
-                return alike[twins.index(info.id)]
+            return self._twin_frame(info, key, alike)
         exact = [f for f, name in frames if name == info.title]
         if len(exact) == 1:
             return exact[0]
         showing = [f for f, name in frames if name and _ST_SHOWING in a.states(f)]
         return showing[0] if len(showing) == 1 else None
+
+    def _twin_frame(self, info: WindowInfo, key: str, alike: list[_Acc]) -> _Acc | None:
+        """Which of several frames with one title belongs to this window."""
+        a = self.atspi
+        positioned = [f for f in alike if a.extents(f) == tuple(info.rect)]
+        if len(positioned) == 1:
+            return positioned[0]
+        twins = sorted(w for w in self._client_windows() if (other := self._info(w)) is not None
+                       and other.pid == info.pid and title_key(other.title) == key)
+        # Windows of one process are made, and listed by AT-SPI, in the same
+        # order as their X ids grow.
+        by_order = alike[twins.index(info.id)] if len(twins) == len(alike) and info.id in twins else None
+        # The window in front is the one frame that is active: that settles
+        # it for that window, and rules its frame out for the others.
+        active = [f for f in alike if _ST_ACTIVE in a.states(f)]
+        if len(active) == 1 and self.foreground() in twins:
+            if info.id == self.foreground():
+                return active[0]
+            others = [f for f in alike if f is not active[0]]
+            if len(others) == 1:
+                return others[0]
+            return by_order if by_order is not active[0] else None
+        return by_order
 
     def _describe(self, ref: _Ref, rects: bool = True) -> Element | None:
         a = self.atspi
@@ -793,7 +823,7 @@ class LinuxBackend:
                 value = _number(current)
                 if role != 'progress bar' and role != 'level bar':
                     actions.append('set_value')
-        elif role in ('text', 'terminal', 'paragraph', 'document text') and a.has(acc, 'text'):
+        elif role in ('entry', 'text', 'terminal', 'paragraph', 'document text') and a.has(acc, 'text'):
             value = a.text(acc)
         if 'set_value' in actions and 'invoke' in actions:
             # A field's own action is "activate" (like pressing Enter), not a click.

@@ -22,7 +22,11 @@ dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus \
 if command -v pulseaudio >/dev/null 2>&1; then
     mkdir -p /tmp/cognitrix-pulse && chmod 755 /tmp/cognitrix-pulse
     export PULSE_SERVER=unix:/tmp/cognitrix-pulse/native
-    pulseaudio --daemonize=yes --exit-idle-time=-1 --disallow-exit -n \
+    # No pid file: after a restart of the container the one left behind
+    # names the process id the new server gets again, so it took itself for
+    # an already running server and quit, and no desktop had sound.
+    rm -f /tmp/cognitrix-pulse/native
+    pulseaudio --daemonize=yes --use-pid-file=no --exit-idle-time=-1 --disallow-exit -n \
         --load="module-native-protocol-unix auth-anonymous=1 socket=/tmp/cognitrix-pulse/native" \
         --load=module-always-sink >/dev/null 2>&1 || true
 fi
