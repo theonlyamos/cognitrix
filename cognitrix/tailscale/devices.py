@@ -127,6 +127,16 @@ def _ipv4(row: dict[str, Any]) -> str:
     return ''
 
 
+_NOT_NAME = re.compile(r'[^A-Za-z0-9._-]+')
+
+
+def _plain(text: Any, limit: int) -> str:
+    """A machine's own name or system as Tailscale passes it on: it is the
+    machine's to choose (and another tailnet's, for a shared machine), and
+    agents read it, so it is kept to the characters of a name."""
+    return _NOT_NAME.sub('-', str(text or '')).strip('-')[:limit]
+
+
 def machines() -> list[dict[str, Any]]:
     """Every other machine this one's Tailscale lists:
     [{node, name, dns, ip, os, online, tags, tailscale_ssh}]. Empty when
@@ -142,10 +152,10 @@ def machines() -> list[dict[str, Any]]:
         node, ip = str(row.get('ID') or ''), _ipv4(row)
         if not node or not ip:
             continue
-        dns = str(row.get('DNSName') or '').rstrip('.').lower()
+        dns = _plain(str(row.get('DNSName') or '').rstrip('.').lower(), 253)
         out.append({
-            'node': node, 'name': str(row.get('HostName') or dns.split('.')[0] or ip), 'dns': dns, 'ip': ip,
-            'os': str(row.get('OS') or ''), 'online': bool(row.get('Online')),
+            'node': node, 'name': _plain(row.get('HostName'), 63) or dns.split('.')[0] or ip, 'dns': dns, 'ip': ip,
+            'os': _plain(row.get('OS'), 20), 'online': bool(row.get('Online')),
             'tags': [str(t) for t in (row.get('Tags') or [])],
             # A machine that accepts Tailscale SSH advertises its host keys.
             'tailscale_ssh': bool(row.get('sshHostKeys') or row.get('SSH_HostKeys')),
@@ -562,6 +572,8 @@ async def via_web(op: str, payload: dict[str, Any], timeout: float = 30.0) -> di
 
 async def serve(op: str, data: dict[str, Any]) -> dict[str, Any]:
     """The web process answering a worker (the relay route checks the signature)."""
+    if tailscale.devices_scope() == tailscale.OFF:
+        return _fail('tailnet_off', "Agents can't use tailnet devices on this server.", denied=True)
     if op == 'tailnet_list':
         return {'ok': True, 'code': '', 'text': describe(await listing()), 'denied': False}
     return await perform(str(data.get('device') or ''), str(data.get('user') or ''), str(data.get('command') or ''),

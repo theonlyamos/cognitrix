@@ -22,9 +22,16 @@ set -e
 start_tailscale() {
     state=/home/agent/.cognitrix-tailscale
     sock=/run/tailscale/tailscaled.sock
-    mkdir -p "$state" /run/tailscale
-    chown root:root "$state"
-    chmod 700 "$state"
+    # The folder sits in the agents' home, which they can rearrange between
+    # starts. Anything there that isn't root's own real folder is thrown away,
+    # so Tailscale never writes its identity into something an agent set up.
+    if [ -L "$state" ] || { [ -e "$state" ] && { [ ! -d "$state" ] || [ "$(stat -c %u "$state")" != "0" ]; }; }; then
+        rm -rf "$state"
+    fi
+    keys=/run/cognitrix-tailnet
+    mkdir -p "$state" /run/tailscale "$keys"
+    chown root:root "$state" "$keys"
+    chmod 700 "$state" "$keys"
     tun=
     [ -c /dev/net/tun ] || tun=--tun=userspace-networking
     # shellcheck disable=SC2086
@@ -43,12 +50,14 @@ start_tailscale() {
         i=$((i + 1))
     done
     if [ "$backend" != "Running" ] && [ -n "${COGNITRIX_TAILNET_AUTHKEY:-}" ]; then
-        (umask 077 && printf '%s' "$COGNITRIX_TAILNET_AUTHKEY" > "$state/join-key")
-        tailscale --socket="$sock" up --auth-key="file:$state/join-key" \
+        # The key is read from a file only root can reach, outside the agents' home.
+        rm -f "$keys/join-key"
+        (umask 077 && printf '%s' "$COGNITRIX_TAILNET_AUTHKEY" > "$keys/join-key")
+        tailscale --socket="$sock" up --auth-key="file:$keys/join-key" \
             --hostname="${COGNITRIX_TAILNET_NAME:-cognitrix-sandbox}" --accept-dns=false --accept-routes=false \
             --timeout=30s >>/var/log/tailscaled.log 2>&1 \
             || echo "cognitrix-sandbox: could not join the tailnet (see /var/log/tailscaled.log)" >&2
-        rm -f "$state/join-key"
+        rm -f "$keys/join-key"
     fi
 }
 
