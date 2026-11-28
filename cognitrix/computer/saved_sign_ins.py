@@ -18,18 +18,22 @@ Where a value may go:
   one), on a page whose address (the browser's address bar, read just before
   typing) is exactly one of the sign-in's hosts, the same rule Http Request
   and the key proxy use (``*.example.com`` for subdomains). Plain http
-  addresses get nothing. A field whose control number or position changed
+  pages (an ``http://`` address or the browser's "Not secure" mark) get
+  nothing. A field whose control number or position changed
   meaning since the agent looked is refused.
-- any other window on the agent's computer: only a sign-in saved for
+- any other window on the agent's computer: only a sign-in saved just for
   commands in the sandbox (Ask For Sign-in without sites), which commands
-  there can already read.
+  there can already read. One that also has sites is not typed there.
 - never the person's own computer.
 
 Limits: a typed value is in the sandbox's browser, so other code on the
 agent's computer could read it; this guards against sending it to the wrong
 place and against showing it to the model by accident, not against an agent
 set on reading it there. The address is read from the browser's address bar,
-so an address typed there and not yet opened could pass for the page's.
+so an address typed there and not yet opened could pass for the page's;
+the page's own origin isn't readable without a browser debugging port. A
+field inside a frame from another site counts as the top page's. The field
+is checked right before typing, not at the instant each key lands.
 
 All driver calls block: run these off the event loop.
 """
@@ -43,7 +47,8 @@ from cognitrix.credentials import PLACEHOLDER_RE, Resolver, SecretUseError, host
 
 # Hosts for a sign-in saved only for commands in the sandbox (sandbox_work.SANDBOX_ONLY_HOST).
 SANDBOX_ONLY_HOST = 'sandbox.invalid'
-BROWSER_APPS = ('chrom', 'firefox')
+BROWSER_APPS = ('chrom', 'firefox', 'brave', 'msedge', 'microsoft-edge', 'opera', 'vivaldi', 'epiphany',
+                'web browser', 'qutebrowser', 'midori', 'falkon', 'librewolf', 'waterfox')
 
 
 class SignInRefused(Exception):
@@ -118,18 +123,46 @@ def _inside(el: Any, box: Any) -> bool:
     return b[2] > b[0] and b[3] > b[1] and r[0] >= b[0] and r[1] >= b[1] and r[2] <= b[2] and r[3] <= b[3]
 
 
+def _overlaps(el: Any, box: Any) -> bool:
+    r, b = el.rect, box.rect
+    return b[2] > b[0] and b[3] > b[1] and r[0] < b[2] and r[2] > b[0] and r[1] < b[3] and r[3] > b[1]
+
+
+PAGE_ROLES = ('document web', 'document frame')
+
+
 def browser_address(elements: list[Any]) -> str:
     """The browser's own address bar value: a text control labelled like an
-    address bar that isn't inside the page, so a page field called
-    "Location" can't stand in for it."""
+    address bar that isn't on the page, so a page field called "Location"
+    can't stand in for it. Without a page in the look there is nothing to
+    tell them apart by, so no address."""
     from cognitrix.payments.checkout import ADDRESS_BAR
-    pages = [e for e in elements if str(e.role).lower() in ('document web', 'document frame')]
+    pages = [e for e in elements if str(e.role).lower() in PAGE_ROLES]
+    if not pages:
+        return ''
     for el in elements:
-        if str(el.role).lower() not in TEXT_ROLES or any(_inside(el, page) for page in pages):
+        if str(el.role).lower() not in TEXT_ROLES or any(_overlaps(el, page) for page in pages):
             continue
         if any(label in _norm(el.name) for label in ADDRESS_BAR):
             return str(el.value or '').strip()
     return ''
+
+
+# Chromium hides "http://" in the address bar and shows a "Not secure" chip
+# next to it instead.
+_NOT_SECURE = ('not secure', 'nicht sicher', 'non sécurisé', 'no es seguro')
+
+
+def not_secure(elements: list[Any]) -> bool:
+    """Whether the browser (outside the page) says the page is not secure."""
+    pages = [e for e in elements if str(e.role).lower() in PAGE_ROLES]
+    for el in elements:
+        if str(el.role).lower() in PAGE_ROLES or any(_overlaps(el, page) for page in pages):
+            continue
+        text = _norm(getattr(el, 'name', '')) + ' ' + _norm(getattr(el, 'description', ''))
+        if any(word in text for word in _NOT_SECURE):
+            return True
+    return False
 
 
 def check_page(driver: Any, window_id: int, viewer: Any, *, element: int | None = None,
@@ -173,7 +206,7 @@ def check_page(driver: Any, window_id: int, viewer: Any, *, element: int | None 
     if str(getattr(target, 'role', '')).lower() not in TEXT_ROLES:
         raise SignInRefused('That control is not a text field. Pick the sign-in field.')
     address = browser_address(page.elements)
-    if address.lower().startswith('http://'):
+    if address.lower().startswith('http://') or not_secure(page.elements):
         raise SignInRefused('This page is on plain http, so a saved sign-in is not typed on it. Use the https '
                             'address of the site.')
     return Target(host=site_of(address), role=str(target.role).lower(), name=_norm(target.name), element=target)
@@ -207,10 +240,13 @@ def fill(resolver: Resolver, text: str, *, browser: bool, host: str = '', field_
             if not getattr(row, 'use_in_browser', False):
                 raise SignInRefused(
                     f"{row.name} isn't allowed in the browser. Ask for it with ask_for_sign_in, name='{row.name}', "
-                    f"allowed_hosts=['{host}'], for_browser=True (the person types it once more), or ask the person "
-                    'to turn on "Agents may type it into sign-in pages" for it in Settings, Saved sign-ins.')
+                    f"kind='{row.kind}', allowed_hosts=['{host}'], for_browser=True (the person types it once "
+                    'more), or ask the person to turn on "Agents may type it into sign-in pages" for it in Settings, Saved sign-ins.')
             if field_role:
                 is_password_field = field_role in PASSWORD_ROLES
+                # A sign-in's plain value is its password.
+                if part in (None, 'value') and getattr(row, 'kind', '') == 'basic':
+                    part = 'password'
                 if part == 'password' and not is_password_field:
                     raise SignInRefused('A password only goes into a password field. Pick the password field.')
                 if part == 'username' and is_password_field:
@@ -224,14 +260,18 @@ def fill(resolver: Resolver, text: str, *, browser: bool, host: str = '', field_
                              else 'without any sites')
                     raise SignInRefused(
                         f'{row.name} was saved {where}, not for a website. Ask for it again with ask_for_sign_in, '
-                        f"name='{row.name}', allowed_hosts=['{host}'] (the person types it once more), then type it.")
+                        f"name='{row.name}', kind='{row.kind}', allowed_hosts=['{host}'] (the person types it once "
+                        'more), then type it.')
                 raise SignInRefused(
                     f'{row.name} is saved for {sites}, but this page is on {host}, so it wasn\'t typed. If this '
                     'really is the right site (a sign-in page on another subdomain, say), ask the person with '
-                    f"ask_for_sign_in, name='{row.name}', allowed_hosts=['{host}']; never type it on a site it is "
-                    'not saved for.')
+                    f"ask_for_sign_in, name='{row.name}', kind='{row.kind}', allowed_hosts=['{host}']; never type it "
+                    'on a site it is not saved for.')
         else:
-            if SANDBOX_ONLY_HOST not in (getattr(row, 'allowed_hosts', None) or []):
+            # Only a sign-in saved just for commands here: one that also has
+            # sites is the person's sign-in for those sites, and a terminal or
+            # an editor would show it in plain text.
+            if SANDBOX_ONLY_HOST not in (getattr(row, 'allowed_hosts', None) or []) or _site_hosts(row):
                 raise SignInRefused(
                     f'{row.name} is saved for websites ({", ".join(_site_hosts(row)) or "no sites"}), so it can '
                     'only be typed into the browser on one of those sites.')

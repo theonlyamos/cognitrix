@@ -147,6 +147,19 @@ def _with_saved_sign_ins(driver, window_id: int, text: str, parent: Any, *, elem
 # after a saved sign-in, the agent gets this instead.
 _SIGN_IN_TYPED = ('{status}: Typed the saved sign-in. Its value stays hidden from you; look at the window to '
                   'check it worked.')
+_SIGN_IN_NOT_TYPED = ('{status}: The saved sign-in may not have gone in. Its value stays hidden from you; look at '
+                      'the window, then try again or use the other typing tool.')
+
+
+def _sign_in_result(result) -> str:
+    """What the agent hears after typing a saved sign-in: never the driver's
+    own message, which can quote the field back."""
+    from cognitrix.computer import CONFIRMED, UNVERIFIED
+
+    status = getattr(result, 'status', '') or ''
+    if status in (CONFIRMED, UNVERIFIED):
+        return _SIGN_IN_TYPED.format(status=status)
+    return _SIGN_IN_NOT_TYPED.format(status=status or 'failed')
 
 
 def _filled_fields(driver) -> dict[int, set[tuple[str, str]]]:
@@ -179,14 +192,16 @@ def _secret_overlap(value: str, secrets: list[str]) -> bool:
 
 def _hidden_controls(driver, window_id: int, elements, secrets: list[str]) -> set[int]:
     """Controls whose value must not reach the model: fields a saved sign-in
-    was typed into, and any showing a saved value."""
+    was typed into, and any showing a saved value in its value or its name
+    (some fields take their accessible name from what they hold)."""
     from cognitrix.computer.saved_sign_ins import _norm
 
     filled = _filled_fields(driver).get(int(window_id)) or set()
     hidden = set()
     for index, el in enumerate(elements or []):
         key = (str(getattr(el, 'role', '')).lower(), _norm(getattr(el, 'name', '')))
-        if key in filled or _secret_overlap(str(getattr(el, 'value', '') or ''), secrets):
+        if key in filled or _secret_overlap(str(getattr(el, 'value', '') or ''), secrets) \
+                or _secret_overlap(str(getattr(el, 'name', '') or ''), secrets):
             hidden.add(index)
     return hidden
 
@@ -311,8 +326,17 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
         computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
     def go(driver):
-        image, snap, shown, note = driver.look(window_id, find, max_elements, viewer=_viewer(parent))
-        hidden = _hidden_controls(driver, window_id, snap.elements, _saved_values())
+        # Filtered here, not by the driver: a hidden value must not decide
+        # what matches, or searching for its pieces would give it away.
+        image, snap, shown, note = driver.look(window_id, None, 1_000_000, viewer=_viewer(parent))
+        secrets = _saved_values()
+        hidden = _hidden_controls(driver, window_id, snap.elements, secrets)
+        if find:
+            q = find.lower()
+            shown = [(i, e) for i, e in shown
+                     if (q in (e.name or '').lower() and not _secret_overlap(e.name or '', secrets))
+                     or (i not in hidden and q in (e.value or '').lower())]
+        shown = shown[:max(1, int(max_elements))]
         image = _mask_image(image, snap, snap.elements, hidden)
         win = driver.backend.window(int(window_id))
         title = win.title if win else ''
@@ -342,7 +366,9 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
                     px, py = px * 1000 / (snap.size[0] / snap.scale), py * 1000 / (snap.size[1] / snap.scale)
                 at = f' at ({round(px)},{round(py)})'
             if index in hidden:
-                el = dataclasses.replace(el, value='[saved sign-in hidden]' if el.value is not None else None)
+                el = dataclasses.replace(el, value='[saved sign-in hidden]' if el.value is not None else None,
+                                         name='[saved sign-in hidden]'
+                                         if _secret_overlap(el.name or '', secrets) else el.name)
             lines.append(f'[{index}] {el.describe()}{at}')
         if total and not shown:
             lines.append('(none match; try without find)')
@@ -473,7 +499,7 @@ def set_text(window_id: int, text: str, element: int | None = None, computer: st
             return filled
         result = driver.set_text(window_id, filled, element, viewer=_viewer(parent))
         if filled != text:
-            return _SIGN_IN_TYPED.format(status=result.status)
+            return _sign_in_result(result)
         return _done(result)
     return _run(go, parent, computer)
 
@@ -529,7 +555,7 @@ def type_in_window(window_id: int, text: str, x: int | None = None, y: int | Non
             return filled
         result = driver.type_text(window_id, filled, ix, iy, viewer=_viewer(parent), use_screen=use_screen)
         if filled != text:
-            return _SIGN_IN_TYPED.format(status=result.status)
+            return _sign_in_result(result)
         return _done(result)
     return _run(go, parent, computer)
 

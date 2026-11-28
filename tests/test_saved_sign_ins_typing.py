@@ -25,6 +25,7 @@ def resolver(monkeypatch):
         _row('BARE', hosts=('example.org',), username='u@example.org', password='bare-secret-1'),
         _row('API_KEY', kind='token', hosts=('gitlab.com',), browser=False, value='glpat-not-for-browsers'),
         _row('BOX_TOKEN', kind='token', hosts=('sandbox.invalid',), browser=False, value='tok-123456'),
+        _row('BOTH', kind='token', hosts=('sandbox.invalid', 'gitlab.com'), browser=False, value='both-123456'),
     ]
     return Resolver(owner='u1', rows={r.name: r for r in rows})
 
@@ -57,6 +58,9 @@ def test_only_sign_ins_allowed_in_the_browser(resolver):
     # ...and a website's sign-in can't be typed outside the browser.
     with pytest.raises(ssi.SignInRefused, match='only be typed into the browser'):
         ssi.fill(resolver, '{{secret:GITHUB.password}}', browser=False)
+    # One saved for sites as well as commands is that site's sign-in: not typed into a terminal.
+    with pytest.raises(ssi.SignInRefused, match='only be typed into the browser'):
+        ssi.fill(resolver, '{{secret:BOTH}}', browser=False)
 
 
 def test_the_part_must_fit_the_field(resolver):
@@ -67,6 +71,12 @@ def test_the_part_must_fit_the_field(resolver):
                  field_role='password text')
     assert ssi.fill(resolver, '{{secret:GITHUB.username}}', browser=True, host='github.com',
                     field_role='entry') == 'amos@example.com'
+    # A username-and-password sign-in's plain value is its password.
+    for plain in ('{{secret:GITHUB}}', '{{secret:GITHUB.value}}'):
+        with pytest.raises(ssi.SignInRefused, match='only goes into a password field'):
+            ssi.fill(resolver, plain, browser=True, host='github.com', field_role='entry')
+        assert ssi.fill(resolver, plain, browser=True, host='github.com',
+                        field_role='password text') == 'hunter2-pass'
 
 
 def test_unknown_name(resolver):
@@ -88,12 +98,29 @@ def test_the_address_comes_from_the_browser_not_the_page():
     bar = _el('entry', 'Address and search bar', (0, 0, 800, 30), value='evil.example/login')
     assert ssi.browser_address([page, fake, bar]) == 'evil.example/login'
     assert ssi.browser_address([page, fake]) == ''
+    # Without the page in the look there is no telling them apart.
+    assert ssi.browser_address([fake, bar]) == ''
+    # A page field poking out above the page is still the page's.
+    poking = _el('entry', 'Address and search bar', (100, 20, 400, 50), value='github.com')
+    assert ssi.browser_address([page, poking, bar]) == 'evil.example/login'
+    assert ssi.browser_address([page, poking]) == ''
+
+
+def test_not_secure_mark_counts_as_http():
+    page = _el('document web', 'Jobs', (0, 30, 800, 600))
+    chip = _el('push button', 'Not secure', (0, 0, 60, 30))
+    assert ssi.not_secure([page, chip])
+    assert not ssi.not_secure([page, _el('push button', 'View site information', (0, 0, 60, 30))])
+    # The page saying it doesn't count.
+    assert not ssi.not_secure([page, _el('label', 'Not secure', (100, 100, 200, 130))])
 
 
 def test_is_browser():
     assert ssi.is_browser(SimpleNamespace(kind='chromium', app='chromium'))
     assert ssi.is_browser(SimpleNamespace(kind='win32', app='firefox-esr'))
     assert not ssi.is_browser(SimpleNamespace(kind='win32', app='xterm'))
+    for app in ('brave-browser', 'microsoft-edge', 'vivaldi-stable', 'epiphany'):
+        assert ssi.is_browser(SimpleNamespace(kind='win32', app=app)), app
 
 
 def _el(role, name, rect, value=None):
@@ -101,10 +128,11 @@ def _el(role, name, rect, value=None):
     return Element(role=role, name=name, value=value, rect=rect)
 
 
-def _snap(sid, address, fields, origin=(0, 0)):
+def _snap(sid, address, fields, origin=(0, 0), chrome=()):
     from cognitrix.computer import Snapshot
     bar = _el('entry', 'Address and search bar', (0, 0, 800, 30), value=address)
-    return Snapshot(sid, 7, [bar, *fields], origin, (800, 600), 1.0)
+    page = _el('document web', 'Sign in', (0, 30, 800, 600))
+    return Snapshot(sid, 7, [bar, *fields, *chrome, page], origin, (800, 600), 1.0)
 
 
 EMAIL = _el('entry', 'Email', (100, 100, 400, 130))
@@ -127,9 +155,11 @@ class _Driver:
         self._snapshots[7] = self._after
         return None, self._after, [], ''
 
+    status = CONFIRMED
+
     def type_text(self, window_id, text, x=None, y=None, viewer=None, use_screen=False):
         self.typed.append(text)
-        return ActionResult(CONFIRMED, 'Typed.')
+        return ActionResult(self.status, f'Typed; the field reads {text[:6]!r}.')
 
     def set_text(self, window_id, text, index=None, snapshot_id=None, viewer=None):
         self.set.append((index, text))
@@ -364,6 +394,22 @@ async def test_plain_http_pages_get_nothing(monkeypatch, tools):
     driver = _use(monkeypatch, tools, _Driver(address='http://github.com/login'))
     out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=200, y=160)).content
     assert 'plain http' in out and driver.typed == []
+    # Chromium hides "http://" and shows "Not secure" instead.
+    chip = _el('push button', 'Not secure', (0, 0, 60, 30))
+    after = _snap('s2', 'github.com/login', [EMAIL, PASSWORD], chrome=[chip])
+    driver = _use(monkeypatch, tools, _Driver(address='github.com/login', after=after))
+    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=200, y=160)).content
+    assert 'plain http' in out and driver.typed == []
+
+
+async def test_typing_that_failed_says_so_without_the_value(monkeypatch, tools):
+    from cognitrix.computer import FAILED
+
+    driver = _Driver()
+    driver.status = FAILED
+    _use(monkeypatch, tools, driver)
+    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=200, y=160)).content
+    assert 'may not have gone in' in out and 'Typed the saved' not in out and 'hunter' not in out, out
 
 
 async def test_looks_hide_filled_fields_and_saved_values(monkeypatch, tools):
@@ -390,6 +436,11 @@ async def test_looks_hide_filled_fields_and_saved_values(monkeypatch, tools):
     # The email field got a saved sign-in; the key field shows the start of a saved value.
     assert 'amos@example.com' not in out and 'glpat' not in out, out
     assert out.count('[saved sign-in hidden]') == 2
+    # Searching for a piece of a hidden value finds nothing; its label still finds it.
+    found = (await tools.look_at_window.run(window_id=7, find='glpat')).content
+    assert '(none match' in found and 'glpat-' not in found.split('Controls', 1)[1].replace("'glpat'", ''), found
+    found = (await tools.look_at_window.run(window_id=7, find='API key')).content
+    assert "'API key'" in found and '[saved sign-in hidden]' in found
     import base64
     import io
     png = Image.open(io.BytesIO(base64.b64decode(shown[0].split(',', 1)[1])))
@@ -402,9 +453,17 @@ def test_redact_hides_cut_off_values():
 
     secrets = {'ghp_0123456789abcdefghijklmnop': 'GH'}
     assert redact("value='ghp_0123456789abcdefg'", secrets) == "value='[GH hidden]'"
-    assert redact('reads ghp_0123456789ab and more', secrets) == 'reads [GH hidden] and more'
+    assert redact('reads ghp_0123456789abcdef', secrets) == 'reads [GH hidden]'
+    assert redact('reads ghp_0123456789abcdef\u2026 more', secrets) == 'reads [GH hidden]\u2026 more'
     assert redact('ghp_012 is too short to count', secrets) == 'ghp_012 is too short to count'
     assert redact('a ghp_0123456789abcdefghijklmnop b', secrets) == 'a [GH hidden] b'
+    # A shared start in the middle of other text is another value, left alone.
+    jwt = {'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.saved.sig': 'JWT'}
+    other = 'token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.other.sig ok'
+    assert redact(other, jwt) == other
+    # Two values with the same start: the copy is matched to the one it follows.
+    two = {'sk-ant-api03-AAAAAAAAAAAAAAAA': 'A', 'sk-ant-api03-AAAABBBBBBBBBBBB': 'B'}
+    assert redact("'sk-ant-api03-AAAABBBB'", two) == "'[B hidden]'"
 
 
 def test_page_body_is_not_a_field():
@@ -489,3 +548,41 @@ async def test_ask_for_sign_in_says_when_it_goes_into_the_browser(monkeypatch):
     asked.clear()
     await sandbox_work.ask_for_sign_in.run(name='gh_token', reason='Call the API', allowed_hosts=['api.github.com'])
     assert asked[0].secret['browser'] is False and 'sign-in page' not in asked[0].details
+
+
+def test_a_name_showing_a_saved_value_is_hidden_too():
+    from cognitrix.tools import computer as tools_mod
+
+    driver = SimpleNamespace()
+    named = _el('entry', 'ghp_0123456789abcdefghij', (0, 0, 10, 10))
+    plain = _el('entry', 'Search', (0, 0, 10, 10))
+    assert tools_mod._hidden_controls(driver, 7, [plain, named], ['ghp_0123456789abcdefghijklmnop']) == {1}
+
+
+async def test_asking_again_keeps_the_saved_kind(monkeypatch):
+    from cognitrix.tools import sandbox_work
+
+    asked = []
+
+    async def ask_question(spec):
+        asked.append(spec)
+        return SimpleNamespace(option_id='saved')
+
+    async def find_row(owner, name):
+        return SimpleNamespace(name=name, kind='basic', allowed_hosts=['github.com'])
+
+    async def let(agent, name):
+        return None
+
+    monkeypatch.setattr('cognitrix.questions.broker.ask_question', ask_question)
+    monkeypatch.setattr('cognitrix.credentials.find_row', find_row)
+    monkeypatch.setattr(sandbox_work, '_let_agent_use', let)
+    monkeypatch.setattr('cognitrix.tools.utils.current_execution_context',
+                        lambda: SimpleNamespace(user_id='u1', agent_id=None, session_id='s1'))
+    await sandbox_work.ask_for_sign_in.run(name='github', reason='Sign in on the new site',
+                                           allowed_hosts=['gist.github.com'])
+    assert asked[0].secret['kind'] == 'basic' and asked[0].secret['browser'] is True
+    asked.clear()
+    await sandbox_work.ask_for_sign_in.run(name='github', reason='Just the token', kind='token',
+                                           allowed_hosts=['api.github.com'])
+    assert asked[0].secret['kind'] == 'token'

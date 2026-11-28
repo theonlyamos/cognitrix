@@ -279,34 +279,58 @@ class Resolver:
                 logger.debug('Could not stamp last_used_at for %s', name, exc_info=True)
 
 
-# A run this long at the start of a saved value counts as the value: output
-# that cut a value short (a control list shows 120 characters, a field kept
-# only part of what was typed) must not show its beginning either.
-PREFIX_REDACT_LENGTH = 12
+# A cut-off copy of a saved value: at least this many of its first
+# characters, running to where the text was cut (the end, a closing quote,
+# an ellipsis or a line break). A control list shows 120 characters of a
+# value and a field may keep only part of what was typed; neither may show
+# its beginning. Requiring the cut point keeps a shared format prefix in the
+# middle of other text (a JWT header, "sk-ant-api03-") from counting.
+PREFIX_REDACT_LENGTH = 16
+_CUT_MARKS = ("'", '"', '\u2026', '\n', '\r', '...')
+
+
+def _redact_cut_copies(text: str, secrets_map: dict[str, str]) -> str:
+    heads: dict[str, list[str]] = {}
+    for value in secrets_map:
+        if len(value) > PREFIX_REDACT_LENGTH:
+            heads.setdefault(value[:PREFIX_REDACT_LENGTH], []).append(value)
+    if not heads:
+        return text
+    pattern = re.compile('|'.join(re.escape(h) for h in sorted(heads, key=len, reverse=True)))
+    pos = 0
+    while True:
+        match = pattern.search(text, pos)
+        if match is None:
+            return text
+        start = match.start()
+        best_end, best_value = -1, None
+        # Values sharing a head: the one the copy follows longest wins, so a
+        # copy of one isn't cut short by another's matching start.
+        for value in heads[match.group()]:
+            end = start + PREFIX_REDACT_LENGTH
+            while end < len(text) and end - start < len(value) and text[end] == value[end - start]:
+                end += 1
+            if end > best_end:
+                best_end, best_value = end, value
+        cut = best_end == len(text) or text.startswith(_CUT_MARKS, best_end)
+        if best_value is not None and cut:
+            marker = f'[{secrets_map[best_value]} hidden]'
+            text = text[:start] + marker + text[best_end:]
+            pos = start + len(marker)
+        else:
+            pos = start + 1
 
 
 def redact(text: str, secrets_map: dict[str, str]) -> str:
-    """Replace every saved value in ``text`` with a short marker, and any cut
-    off start of one (``PREFIX_REDACT_LENGTH`` characters or more)."""
+    """Replace every saved value in ``text`` with a short marker, and any
+    cut-off copy of one (see ``PREFIX_REDACT_LENGTH``)."""
     if not text or not secrets_map:
         return text
     # Longest first, so a value that contains another is replaced whole.
     for value in sorted(secrets_map, key=len, reverse=True):
         if value in text:
             text = text.replace(value, f'[{secrets_map[value]} hidden]')
-    for value in sorted(secrets_map, key=len, reverse=True):
-        if len(value) <= PREFIX_REDACT_LENGTH:
-            continue
-        head = value[:PREFIX_REDACT_LENGTH]
-        start = text.find(head)
-        while start != -1:
-            end = start + PREFIX_REDACT_LENGTH
-            while end < len(text) and end - start < len(value) and text[end] == value[end - start]:
-                end += 1
-            marker = f'[{secrets_map[value]} hidden]'
-            text = text[:start] + marker + text[end:]
-            start = text.find(head, start + len(marker))
-    return text
+    return _redact_cut_copies(text, secrets_map)
 
 
 async def redaction_map_for(owner: str | None) -> dict[str, str]:

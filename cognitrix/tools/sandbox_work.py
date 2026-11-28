@@ -558,7 +558,7 @@ SANDBOX_ONLY_HOST = sw.SANDBOX_ONLY_HOST
 
 @tool(category='system', retryable=False, max_attempts=1, supported_interfaces=['web'],
       occupies_execution_slot=False, approval_mode='assigned_only')
-async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_hosts: list[str] | None = None,
+async def ask_for_sign_in(name: str, reason: str, kind: str | None = None, allowed_hosts: list[str] | None = None,
                           for_browser: bool | None = None, *, parent: Any | None = None):
     """Ask the person for a token, API key or username and password you need (to sign in to a website in
     the browser on your computer, to run tests against a real service in the sandbox, or to call an API). They
@@ -573,7 +573,8 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
     Args:
         name (str): A name like GITHUB_TOKEN or STAGING_DB (letters, numbers, _).
         reason (str): One sentence on what it's for, shown to the person.
-        kind (str, optional): 'token' (one secret value, default) or 'basic' (username and password).
+        kind (str, optional): 'token' (one secret value) or 'basic' (username and password). Default: the
+            kind of the saved sign-in with this name, else 'token'.
         allowed_hosts (list[str], optional): The exact hosts it may be used on: the sign-in page's host as the
             browser's address bar shows it (like github.com, or accounts.google.com; add '*.google.com' too when
             the site signs in on several subdomains) and hosts Http Request may send it to (like
@@ -593,7 +594,6 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
         clean = normalize_name(name)
     except ValueError as exc:
         return ToolOutcome.failure('bad_name', str(exc))
-    kind = 'basic' if str(kind or '').lower() in ('basic', 'password', 'username_password', 'login') else 'token'
     hosts: list[str] = []
     for raw in allowed_hosts or []:
         try:
@@ -605,6 +605,9 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
     hosts = hosts[:10] or [SANDBOX_ONLY_HOST]
     owner = current_execution_context().user_id
     existing = await find_row(str(owner) if owner else None, clean)
+    if kind is None and existing is not None and getattr(existing, 'kind', '') in ('basic', 'token'):
+        kind = existing.kind
+    kind = 'basic' if str(kind or '').lower() in ('basic', 'password', 'username_password', 'login') else 'token'
     what = 'a username and password' if kind == 'basic' else 'a token or key'
     sites = hosts != [SANDBOX_ONLY_HOST]
     browser = bool(sites and (kind == 'basic' if for_browser is None else for_browser))
