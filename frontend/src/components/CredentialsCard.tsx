@@ -23,11 +23,15 @@ interface Draft {
   username: string;
   password: string;
   useInBrowser: boolean;
+  /** As it was when the form opened: an edit sends it only when it changed,
+   *  so saving a new password doesn't widen where it may be typed. */
+  wasInBrowser: boolean;
 }
 
 const EMPTY: Draft = {
   id: null, name: '', kind: 'token', description: '', hosts: '', header: '', value: '', username: '', password: '',
   useInBrowser: false,
+  wasInBrowser: false,
 };
 
 function draftFrom(c: Credential): Draft {
@@ -42,6 +46,7 @@ function draftFrom(c: Credential): Draft {
     username: c.username,
     password: '',
     useInBrowser: Boolean(c.use_in_browser),
+    wasInBrowser: Boolean(c.use_in_browser),
   };
 }
 
@@ -74,12 +79,12 @@ export function CredentialsCard() {
       description: draft.description,
       allowed_hosts: splitHosts(draft.hosts),
       header: draft.kind === 'token' ? draft.header.trim() : '',
-      use_in_browser: draft.useInBrowser,
     };
     try {
       if (draft.id) {
         await updateCredential(draft.id, {
           ...common,
+          ...(draft.useInBrowser !== draft.wasInBrowser ? { use_in_browser: draft.useInBrowser } : {}),
           ...(draft.kind === 'token'
             ? (draft.value ? { value: draft.value } : {})
             : { username: draft.username, ...(draft.password ? { password: draft.password } : {}) }),
@@ -89,6 +94,7 @@ export function CredentialsCard() {
           name: draft.name.trim(),
           kind: draft.kind,
           ...common,
+          use_in_browser: draft.useInBrowser,
           ...(draft.kind === 'token' ? { value: draft.value } : { username: draft.username, password: draft.password }),
         });
       }

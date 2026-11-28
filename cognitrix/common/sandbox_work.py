@@ -399,10 +399,17 @@ def credential_vars(name: str, kind: str, values: dict[str, str], hosts: list[st
     return {name: hidden_if_hosts(value, sites, name)} if value else {}
 
 
-async def _load_credentials(owner: Any, agent_id: Any, names: list[str]) -> dict[str, str]:
+# credential_env without the running agent: read its sign-in list as stored.
+_STORED = object()
+
+
+async def _load_credentials(owner: Any, agent_id: Any, names: list[str], allowed: Any = _STORED) -> dict[str, str]:
     from cognitrix.credentials import agent_allowed_credentials, load_rows, only_allowed, open_secret
-    allowed = None
-    if agent_id:
+    if allowed is not _STORED:
+        pass  # the running agent's own list, with what this chat allowed it
+    elif not agent_id:
+        allowed = None
+    else:
         try:
             from cognitrix.agents import Agent
             agent = await Agent.find_one({'id': str(agent_id)})
@@ -424,10 +431,14 @@ async def _load_credentials(owner: Any, agent_id: Any, names: list[str]) -> dict
     return env
 
 
-def credential_env(names: list[str]) -> dict[str, str]:
+def credential_env(names: list[str], agent: Any = None) -> dict[str, str]:
     """The values of saved sign-ins (Settings, Saved sign-ins) as variables for
     one sandbox command. The model never sees them, and they're hidden in the
-    command's output."""
+    command's output.
+
+    ``agent`` is the running agent (the tool's ``parent``): its sign-in list
+    includes the ones shared with it in this chat (Ask For Sign-in), like Http
+    Request uses. Without it, the agent's list as stored."""
     if not names:
         return {}
     from cognitrix.tools.tool import run_on_calling_loop
@@ -435,6 +446,10 @@ def credential_env(names: list[str]) -> dict[str, str]:
     ctx = current_execution_context()
     if not ctx.user_id:
         raise SandboxWorkError('no_owner', 'Saved sign-ins need a signed-in person.')
+    if agent is not None:
+        from cognitrix.credentials import agent_allowed_credentials
+        return run_on_calling_loop(_load_credentials(ctx.user_id, ctx.agent_id, names,
+                                                     agent_allowed_credentials(agent)))
     return run_on_calling_loop(_load_credentials(ctx.user_id, ctx.agent_id, names))
 
 

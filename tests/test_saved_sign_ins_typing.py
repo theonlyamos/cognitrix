@@ -105,10 +105,11 @@ def _el(role, name, rect, value=None):
     return Element(role=role, name=name, value=value, rect=rect)
 
 
-def _on(field, url):
-    """``field`` as the browser reports it on the page at ``url``."""
+def _on(field, url, top=None):
+    """``field`` as the browser reports it on the page at ``url``, in a tab
+    whose own page is ``top`` (the same page unless it is in a frame)."""
     import dataclasses
-    return dataclasses.replace(field, state={**field.state, '_page_url': url})
+    return dataclasses.replace(field, state={**field.state, '_page_url': url, '_top_url': top or url})
 
 
 def _snap(sid, address, fields, origin=(0, 0), chrome=()):
@@ -363,9 +364,10 @@ async def test_agent_limited_to_some_sign_ins_may_use_the_one_it_asked_for(monke
     try:
         agent = FakeAgent()
         await sandbox_work._let_agent_use(agent, 'NOTION')
-        # The owner: merged into the list as stored now (what they took away stays away), and the chat has it.
+        # The owner: merged into the list as stored now (what they took away stays away). It is on the
+        # agent, so the chat keeps no copy that could outlive the owner taking it off again.
         assert saved == [({'id': 'a1'}, {'credentials': ['GITHUB', 'NOTION']})]
-        assert agent.credentials == ['GITHUB', 'NOTION'] and chat == [('sign_in', 'u1|NOTION')]
+        assert agent.credentials == ['GITHUB', 'NOTION'] and chat == []
         # The owner switched the agent to every sign-in meanwhile: left that way.
         stored['credentials'] = None
         agent.credentials = ['GITHUB']
@@ -380,6 +382,9 @@ async def test_agent_limited_to_some_sign_ins_may_use_the_one_it_asked_for(monke
         await sandbox_work._let_agent_use(agent, 'JIRA')
         assert len(saved) == 1 and stored['credentials'] == ['GITHUB']
         assert agent.credentials == ['GITHUB', 'JIRA'] and chat == [('sign_in', 'u2|JIRA')]
+        # A second one in the same turn keeps the first.
+        await sandbox_work._let_agent_use(agent, 'SENTRY')
+        assert agent.credentials == ['GITHUB', 'JIRA', 'SENTRY'] and stored['credentials'] == ['GITHUB']
 
         # The stored agent can't be read: the chat still gets it.
         async def broken(query):
@@ -448,15 +453,25 @@ async def test_plain_http_pages_get_nothing(monkeypatch, tools):
     assert 'not https' in out and driver.typed == []
 
 
-async def test_the_site_is_the_fields_own_page(monkeypatch, tools):
+async def test_the_site_is_the_fields_own_page(monkeypatch, tools, resolver):
     # The address bar says github.com, but the password field is in a frame
     # from another site: that site is what counts.
-    framed = _on(PASSWORD, 'https://evil.example/frame.html')
+    framed = _on(PASSWORD, 'https://evil.example/frame.html', 'https://github.com/login')
     after = _snap('s2', 'https://github.com/login', [EMAIL, framed])
     driver = _use(monkeypatch, tools, _Driver(after=after))
     driver._snapshots[7] = _snap('s1', 'https://github.com/login', [EMAIL, framed])
     out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=200, y=160)).content
     assert 'this field is on evil.example' in out and driver.typed == []
+    # And the other way round: GitHub's sign-in form framed by another site's page.
+    framed = _on(PASSWORD, 'https://github.com/login', 'https://evil.example/')
+    after = _snap('s2', 'https://evil.example/', [EMAIL, framed])
+    driver = _use(monkeypatch, tools, _Driver(after=after))
+    driver._snapshots[7] = _snap('s1', 'https://evil.example/', [EMAIL, framed])
+    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=200, y=160)).content
+    assert 'inside a page on evil.example' in out and driver.typed == []
+    # Framed by a page it is also allowed on: fine.
+    assert ssi.fill(resolver, '{{secret:GOOGLE.password}}', browser=True, host='accounts.google.com',
+                    field_role='password text', top_host='mail.google.com') == 'g-secret-1'
     # A field whose page the browser doesn't report gets nothing.
     from cognitrix.computer import Snapshot
     bare = Snapshot('s3', 7, [_el('entry', 'Address and search bar', (0, 0, 800, 30), value='https://github.com'),
@@ -626,6 +641,15 @@ async def test_browser_use_is_off_unless_the_person_turns_it_on(monkeypatch):
         await routes.answer_sign_in_request('r1', routes.SignInAnswer(username='me', password='pw-123456'), _ctx(ada))
         return await Credential.find_one({'name': name})
 
+    # Saving an edit with the switch left as it was (the form doesn't send it) keeps the sites as they were;
+    # sending it on again doesn't add the hosts saved for requests either.
+    await routes.update_credential(made['id'], routes.CredentialUpdate(allowed_hosts=['gitlab.com'],
+                                                                       use_in_browser=True), _ctx(ada))
+    await routes.update_credential(made['id'], routes.CredentialUpdate(
+        allowed_hosts=['gitlab.com', 'api.gitlab.com']), _ctx(ada))
+    again = await routes.update_credential(made['id'], routes.CredentialUpdate(use_in_browser=True,
+                                                                               description='new'), _ctx(ada))
+    assert again['browser_hosts'] == ['gitlab.com']
     assert (await answer('SITE_LOGIN', ['github.com'], True)).browser_hosts == ['github.com']
     assert (await answer('BOX_ONLY', ['sandbox.invalid'], False)).browser_hosts == []
     # Saved for the API before; the card asks for the browser on github.com only.
@@ -753,3 +777,25 @@ def test_a_filled_field_is_only_hidden_on_its_own_page():
 def test_driver_notes_stay_out_of_control_lists():
     el = _on(_el('entry', 'Email', (0, 0, 10, 10)), 'https://github.com/login')
     assert '_page_url' not in el.describe() and 'github.com' not in el.describe()
+
+
+async def test_sandbox_commands_get_what_the_chat_shared(monkeypatch):
+    """Bash and Run Tests use the running agent's list, with this chat's grants, like Http Request."""
+    from cognitrix.common import sandbox_work as sw
+
+    rows = [SimpleNamespace(name='GITHUB', kind='token', allowed_hosts=['sandbox.invalid'], values={'value': 'g'}),
+            SimpleNamespace(name='JIRA', kind='token', allowed_hosts=['sandbox.invalid'], values={'value': 'j'})]
+
+    async def load_rows(owner):
+        return rows
+
+    async def find_one(query):
+        return SimpleNamespace(id='a1', credentials=['GITHUB'])  # as stored: the owner's list
+
+    monkeypatch.setattr('cognitrix.credentials.load_rows', load_rows)
+    monkeypatch.setattr('cognitrix.credentials.open_secret', lambda row: dict(row.values))
+    monkeypatch.setattr('cognitrix.agents.Agent.find_one', find_one)
+    env = await sw._load_credentials('u2', 'a1', ['JIRA'], ['GITHUB', 'JIRA'])
+    assert env == {'JIRA': 'j'}
+    with pytest.raises(sw.SandboxWorkError):
+        await sw._load_credentials('u2', 'a1', ['JIRA'])

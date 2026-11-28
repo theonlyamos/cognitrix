@@ -54,7 +54,7 @@ describe('CredentialsCard', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(lib.updateCredential).toHaveBeenCalledWith('c1', {
-      description: 'GitHub API', allowed_hosts: ['api.github.com'], header: '', use_in_browser: false,
+      description: 'GitHub API', allowed_hosts: ['api.github.com'], header: '',
     }));
   });
 

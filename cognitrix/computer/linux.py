@@ -874,9 +874,11 @@ class LinuxBackend:
             return []
         out: list[Element] = []
         visited = 0
-        stack: list[tuple[_Acc, int, bool, str]] = [(frame, 0, False, '')]
+        # Each node carries the address of the page it is on and of the
+        # outermost page above it (the tab's own page, around any frames).
+        stack: list[tuple[_Acc, int, bool, str, str]] = [(frame, 0, False, '', '')]
         while stack and len(out) < _MAX_NODES and visited < _MAX_NODES * 6:
-            acc, depth, in_menu, page_url = stack.pop()
+            acc, depth, in_menu, page_url, top_url = stack.pop()
             visited += 1
             ref = _Ref(acc, info.id, in_menu)
             element = self._describe(ref, rects)
@@ -885,9 +887,12 @@ class LinuxBackend:
             states = ref.states
             if element.role in _PAGE_ROLES:
                 page_url = element.state.get('_page_url') or ''
-            elif page_url and '_page_url' not in element.state and (
-                    element.role in _FIELD_ROLES or 'set_value' in element.actions):
-                element.state['_page_url'] = page_url  # an app that only names the page's address
+                top_url = top_url or page_url
+            elif element.role in _FIELD_ROLES or 'set_value' in element.actions:
+                if page_url and '_page_url' not in element.state:
+                    element.state['_page_url'] = page_url  # an app that only names the page's address
+                if top_url:
+                    element.state['_top_url'] = top_url
             # Closed menus are not showing, but their items can still be run
             # (and carry the shortcuts), so menus are read all the way down.
             menu = in_menu or element.role in _MENU_ROLES
@@ -902,7 +907,7 @@ class LinuxBackend:
                 out.append(element)
             if depth < _MAX_DEPTH:
                 for child in reversed(a.children(acc, 300)):
-                    stack.append((child, depth + 1, menu, page_url))
+                    stack.append((child, depth + 1, menu, page_url, top_url))
         return out
 
     def elements(self, window_id: int) -> list[Element]:

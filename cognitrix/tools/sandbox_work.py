@@ -44,14 +44,14 @@ def _job_line(job: dict) -> str:
 
 
 def sb_bash(ws: sw.SandboxWork, command: str, timeout: Any, working_dir: str | None, background: bool,
-            credentials: Any = None) -> str:
+            credentials: Any = None, agent: Any = None) -> str:
     try:
         timeout_s = int(timeout) if timeout not in (None, '') else 120
     except (TypeError, ValueError):
         return f"Error: Invalid timeout value '{timeout}'. Must be an integer."
     timeout_s = max(1, min(timeout_s, 1800))
     try:
-        env = sw.credential_env(sw.credential_names(credentials))
+        env = sw.credential_env(sw.credential_names(credentials), agent)
         command = sw.map_command(ws, command)
         working_dir = sw.to_sandbox_path(ws, working_dir)
         out = ws.run(command, working_dir, timeout_s, background, env=env)
@@ -425,7 +425,7 @@ def copy_back_details(params: dict) -> str:
 
 @tool(category='system', retryable=False, max_attempts=1)
 def run_tests(command: str, working_dir: str | None = None, timeout: int = 600,
-              credentials: list[str] | None = None):
+              credentials: list[str] | None = None, *, parent: Any | None = None):
     """Run a project's tests in the sandbox and show the person the result as a card: passed, failed and
     skipped counts, the failing tests, and screenshots the tests saved (for example Playwright's).
     Understands pytest, unittest, Jest, Vitest, Mocha, Go, Cargo, RSpec and PHPUnit output; other runners
@@ -454,7 +454,7 @@ def run_tests(command: str, working_dir: str | None = None, timeout: int = 600,
         timeout_s = 600
     started = time.time()
     try:
-        env = sw.credential_env(sw.credential_names(credentials))
+        env = sw.credential_env(sw.credential_names(credentials), parent)
         command = sw.map_command(ws, command)
         working_dir = sw.to_sandbox_path(ws, working_dir)
         out = ws.run(command, working_dir, timeout_s, env=env, label=f'{command}  (Run Tests)')
@@ -539,8 +539,9 @@ async def _let_agent_use(agent: Any, name: str) -> None:
 
     person = access._person(agent)
     agent_id = getattr(agent, 'id', None)
-    stored_list: list[str] | None = agent_allowed_credentials(agent)
-    read = False
+    current = agent_allowed_credentials(agent)  # this turn's copy, with this chat's grants
+    stored_list: list[str] | None = current
+    read = owner = saved = False
     if agent_id:
         try:
             from cognitrix.models import Agent
@@ -550,30 +551,47 @@ async def _let_agent_use(agent: Any, name: str) -> None:
                 if stored is None:
                     break
                 stored_list, read = agent_allowed_credentials(stored), True
+                owner = access._owns(stored, person)
                 updated = merged(stored_list)
-                if updated == stored_list or not access._owns(stored, person):
+                if updated == stored_list:
+                    saved = owner
+                    break
+                if not owner:
                     break
                 await Agent.update_one({'id': str(agent_id)}, {'credentials': updated})
                 check = await Agent.find_one({'id': str(agent_id)})
                 stored_list = agent_allowed_credentials(check) if check is not None else updated
                 if merged(stored_list) == stored_list:
-                    break  # it stuck (or the owner switched to all sign-ins)
+                    saved = True  # it stuck (or the owner switched to all sign-ins)
+                    break
         except Exception:
             log.info("Could not add %s to the agent's sign-ins", name, exc_info=True)
-    if stored_list is None and (read or agent_allowed_credentials(agent) is None):
-        if read:
-            try:
-                agent.credentials = None  # the owner allowed every sign-in meanwhile
-            except Exception:
-                pass
+    if read and stored_list is None:
+        try:
+            agent.credentials = None  # every sign-in is allowed now
+        except Exception:
+            pass
+        return
+    if not read and current is None:
         return  # it may use every sign-in already
-    # This chat, this person.
-    sink = access._grant_sink.get()
-    if sink is not None and person:
-        sink('sign_in', f'{person}|{name}')
-    # This turn's copy: from the list as stored now when it could be read.
+    if read and owner:
+        # The stored list is the owner's word: this turn follows it (it now has the sign-in).
+        base = stored_list
+    elif read:
+        # Someone it is shared with: the owner's list as stored, plus what this
+        # turn already had (what this person shared in this chat earlier); the
+        # turn's copy is what every other tool uses until the turn ends.
+        have = {str(n).upper() for n in stored_list or []}
+        base = [*(stored_list or []), *[n for n in current or [] if str(n).upper() not in have]]
+    else:
+        base = current
+    if not saved and person:
+        # This chat, this person (Session.granted_access; tools/access.chat_grants).
+        sink = access._grant_sink.get()
+        if sink is not None:
+            sink('sign_in', f'{person}|{name}')
     try:
-        agent.credentials = merged(stored_list if read else agent_allowed_credentials(agent))
+        agent.credentials = merged(base)
     except Exception:
         pass
 

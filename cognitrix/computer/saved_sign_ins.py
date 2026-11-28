@@ -17,9 +17,10 @@ Where a value may go:
   (``Credential.browser_hosts``: exact hosts, ``*.example.com`` for
   subdomains, a port only where one was saved). The site is the one the
   browser itself reports for that field's own page or frame (the driver's
-  ``_page_url``, see ``computer/linux.py``), which must be https; a frame from
-  another site counts as that site. When the browser doesn't say, nothing is
-  typed. The field must still be the one the agent picked in its own last
+  ``_page_url``, see ``computer/linux.py``), which must be https. A field in
+  a frame needs the tab's own page around it (``_top_url``) allowed too: the
+  value goes in with real clicks and keys, which that page could redirect.
+  When the browser doesn't say, nothing is typed. The field must still be the one the agent picked in its own last
   look.
 - any other window on the agent's computer: only a sign-in saved just for
   commands in the sandbox (Ask For Sign-in without sites), which commands
@@ -47,8 +48,10 @@ from cognitrix.credentials import PLACEHOLDER_RE, Resolver, SecretUseError, brow
 SANDBOX_ONLY_HOST = 'sandbox.invalid'
 BROWSER_APPS = ('chrom', 'firefox', 'brave', 'msedge', 'microsoft-edge', 'opera', 'vivaldi', 'epiphany',
                 'web browser', 'qutebrowser', 'midori', 'falkon', 'librewolf', 'waterfox')
-# The page address the driver reads for a field (computer/linux.py).
+# The page address the driver reads for a field, and the tab's own page
+# around it (the same unless the field is in a frame) (computer/linux.py).
 PAGE_URL = '_page_url'
+TOP_URL = '_top_url'
 
 
 class SignInRefused(Exception):
@@ -109,10 +112,11 @@ def one_placeholder(text: str) -> bool:
     return bool(_ONE_VALUE.fullmatch(text or ''))
 
 
-def page_of(el: Any) -> str:
+def page_of(el: Any, key: str = PAGE_URL) -> str:
     """The address of the page (or frame) a field is on, as the browser
-    reports it, without the query and fragment; '' when it doesn't say."""
-    raw = str((getattr(el, 'state', None) or {}).get(PAGE_URL) or '').strip()
+    reports it, without the query and fragment; '' when it doesn't say.
+    ``key`` TOP_URL gives the tab's own page instead."""
+    raw = str((getattr(el, 'state', None) or {}).get(key) or '').strip()
     if not raw:
         return ''
     parts = urlsplit(raw)
@@ -134,12 +138,14 @@ def site_of_page(url: str) -> str:
 
 @dataclass
 class Target:
-    """The page field a saved value goes into, and the site of its page."""
+    """The page field a saved value goes into, the site of its page, and
+    the site of the tab's page around it (the same unless it is in a frame)."""
     host: str
     role: str
     name: str
     page: str
     element: Any
+    top_host: str = ''
 
 
 def _own_snapshot(driver: Any, window_id: int, viewer: Any) -> Any:
@@ -200,19 +206,26 @@ def check_page(driver: Any, window_id: int, viewer: Any, *, element: int | None 
             'sign-in page has finished loading and try again; if it still fails, your computer may need an update: '
             'ask the person to type it (ask_to_take_over).')
     host = site_of_page(page)
-    if not host:
+    top_host = site_of_page(page_of(target, TOP_URL))
+    if not host or not top_host:
         raise SignInRefused('This field is on a page that is not https, so a saved sign-in is not typed into it. '
                             'Open the https address of the site.')
-    return Target(host=host, role=str(target.role).lower(), name=_norm(target.name), page=page, element=target)
+    return Target(host=host, role=str(target.role).lower(), name=_norm(target.name), page=page, element=target,
+                  top_host=top_host)
 
 
 def _site_hosts(row: Any) -> list[str]:
     return [h for h in (getattr(row, 'allowed_hosts', None) or []) if h and h != SANDBOX_ONLY_HOST]
 
 
-def fill(resolver: Resolver, text: str, *, browser: bool, host: str = '', field_role: str = '') -> str:
+def fill(resolver: Resolver, text: str, *, browser: bool, host: str = '', field_role: str = '',
+         top_host: str | None = None) -> str:
     """``text`` with every placeholder replaced, or SignInRefused.
-    ``field_role`` is the browser field's role, to match the part to it."""
+    ``field_role`` is the browser field's role, to match the part to it.
+    ``top_host`` is the site of the tab's page around the field (``host``
+    when not given): the value is typed with real clicks and keys, which
+    that page can redirect, so it must be allowed too."""
+    top_host = host if top_host is None else top_host
     def one(match) -> str:
         name, part = match.group(1), match.group(2)
         row = resolver.rows.get(name) or resolver.rows.get(name.upper())
@@ -247,6 +260,11 @@ def fill(resolver: Resolver, text: str, *, browser: bool, host: str = '', field_
                     f'{row.name} may be typed on {", ".join(typed_on)}, but this field is on {host}, so it wasn\'t '
                     'typed. If this really is the right site (a sign-in page on another subdomain, say), ask the '
                     f'person with {ask}; never type it on a site it is not allowed on.')
+            if not host_allowed(top_host, typed_on):
+                raise SignInRefused(
+                    f'This sign-in form for {host} is inside a page on {top_host or "an unknown site"}, so '
+                    f'{row.name} wasn\'t typed. Open the sign-in page of {host} itself (in its own tab) and sign in '
+                    'there.')
             target = host
         else:
             # Only a sign-in saved just for commands here: one that also has
@@ -291,7 +309,7 @@ def prepare(driver: Any, window_id: int, text: str, *, owner: Any, allowed: list
         target = check_page(driver, window_id, viewer, element=element, point=point)
     resolver = run_on_calling_loop(Resolver.for_owner(str(owner), allowed))
     filled = fill(resolver, text, browser=target is not None, host=target.host if target else '',
-                  field_role=target.role if target else '')
+                  field_role=target.role if target else '', top_host=target.top_host if target else None)
     try:
         run_on_calling_loop(resolver.mark_used())
     except Exception:

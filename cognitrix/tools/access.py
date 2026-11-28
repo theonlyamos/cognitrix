@@ -505,11 +505,13 @@ def chat_grants(agent: Any, granted: dict | None, *, request_tool: bool) -> Any:
     update: dict[str, Any] = {'tools': tools, 'mcp_servers': refs}
     # Saved sign-ins the person answering now shared in this chat, for an
     # agent limited to some sign-ins (None means all already).
+    # The owner's own sign-ins go on the agent itself (its list is theirs to
+    # set, and taking one off there must stick), so only others' count here.
     allowed = getattr(agent, 'credentials', None)
-    if isinstance(allowed, list):
-        person = _person(agent)
+    person = _person(agent)
+    if isinstance(allowed, list) and person and not _owns(agent, person):
         mine = [str(g).split('|', 1)[1] for g in (granted or {}).get('sign_ins') or []
-                if '|' in str(g) and person and str(g).split('|', 1)[0] == person]
+                if '|' in str(g) and str(g).split('|', 1)[0] == person]
         if mine:
             have_names = {str(n).upper() for n in allowed}
             update['credentials'] = [*allowed, *[n for n in mine if n.upper() not in have_names]]

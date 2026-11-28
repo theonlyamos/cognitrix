@@ -173,11 +173,16 @@ async def update_credential(credential_id: str, body: CredentialUpdate, ctx: Aut
     if body.header is not None and row.kind == 'token':
         changes['header'] = _header(body.header)
     hosts_now = changes.get('allowed_hosts', list(row.allowed_hosts or []))
-    if body.use_in_browser is not None:
-        # The form says "only on the hosts above": every site it lists.
-        changes['browser_hosts'] = _sites(hosts_now) if body.use_in_browser else []
-    elif 'allowed_hosts' in changes:
-        changes['browser_hosts'] = [h for h in (row.browser_hosts or []) if h in hosts_now]
+    kept = [h for h in (row.browser_hosts or []) if h in hosts_now]
+    if body.use_in_browser is False:
+        changes['browser_hosts'] = []
+    elif body.use_in_browser and not kept:
+        # Turned on: the form says "only on the hosts above", every site it lists.
+        changes['browser_hosts'] = _sites(hosts_now)
+    elif 'allowed_hosts' in changes or body.use_in_browser:
+        # Already on: the sites allowed before stay the only ones (a host added
+        # for requests isn't one); a removed host stops being one.
+        changes['browser_hosts'] = kept
 
     current = open_secret(row)
     if row.kind == 'basic' and (body.username is not None or body.password is not None):
