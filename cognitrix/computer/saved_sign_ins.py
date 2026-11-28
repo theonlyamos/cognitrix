@@ -9,8 +9,11 @@ every tool result is scrubbed of saved values afterwards
 
 Where a value may go:
 
-- a browser window: only when the page's address (read from the address bar
-  just before typing) is a site the sign-in was saved for. ``github.com``
+- a browser window: only into a page's text field (never the address bar),
+  with nothing but placeholders in the text, and only when the page's address
+  (read from the address bar just before typing) is a site the sign-in was
+  saved for. A field whose control number or position changed meaning since
+  the agent looked is refused. ``github.com``
   also covers its subdomains here (``accounts.google.com`` for
   ``google.com``), the way a browser shares a sign-in across a site. A page
   that moved to another site after the agent looked gets nothing.
@@ -47,12 +50,83 @@ def is_browser(win: Any) -> bool:
                                                          for b in BROWSER_APPS)
 
 
-def page_host(driver: Any, window_id: int, viewer: Any) -> str:
-    """The site the browser window shows right now, from a fresh look."""
-    from cognitrix.payments.checkout import _look
+TEXT_ROLES = ('entry', 'text', 'password text', 'password', 'passwordbox', 'textbox', 'edit', 'combo box',
+              'spin button', 'document web')
+
+
+def _norm(text: Any) -> str:
+    return ' '.join(str(text or '').split()).lower()
+
+
+def _same(a: Any, b: Any) -> bool:
+    return (str(getattr(a, 'role', '')).lower(), _norm(getattr(a, 'name', ''))) == \
+        (str(getattr(b, 'role', '')).lower(), _norm(getattr(b, 'name', '')))
+
+
+def _is_address_bar(el: Any) -> bool:
+    from cognitrix.payments.checkout import ADDRESS_BAR
+    name = _norm(getattr(el, 'name', ''))
+    return any(label in name for label in ADDRESS_BAR)
+
+
+def _field_at(snap: Any, point: tuple[float, float]) -> Any:
+    """The smallest text field under an image point of ``snap``."""
+    sx = snap.origin[0] + point[0] * (snap.scale or 1.0)
+    sy = snap.origin[1] + point[1] * (snap.scale or 1.0)
+    hits = [e for e in snap.elements if e.rect[0] <= sx < e.rect[2] and e.rect[1] <= sy < e.rect[3]
+            and str(e.role).lower() in TEXT_ROLES]
+    return min(hits, key=lambda e: (e.rect[2] - e.rect[0]) * (e.rect[3] - e.rect[1])) if hits else None
+
+
+def only_placeholders(text: str) -> bool:
+    """Whether ``text`` is nothing but sign-in placeholders, tabs and new lines.
+
+    In a browser nothing else may travel with a saved value, so it can't be
+    built into an address or a message to another site."""
+    return not PLACEHOLDER_RE.sub('', text).strip(' \t\r\n')
+
+
+def check_page(driver: Any, window_id: int, viewer: Any, *, element: int | None = None,
+               point: tuple[float, float] | None = None) -> str:
+    """Look at the browser window again and return the page's site, after
+    checking that the field the agent meant is still the same page field.
+
+    ``element`` is a control number from the agent's last look, ``point`` an
+    image point of it. The fresh look renumbers controls, so a field whose
+    number or position now means something else is refused, as is the
+    address bar or anything that isn't a text field."""
+    from cognitrix.payments.checkout import Page, _look
     from cognitrix.payments.service import site_of
 
-    return site_of(_look(driver, int(window_id), viewer).address())
+    before = (getattr(driver, '_snapshots', None) or {}).get(int(window_id))
+    if element is None and point is None:
+        raise SignInRefused('To type a saved sign-in in the browser, say which field: pass the field\'s control '
+                            'number (set_text element) or click point (type_in_window x and y).')
+    if before is None:
+        raise SignInRefused('Look at the window first (look_at_window), then type the saved sign-in.')
+    if element is not None and not 0 <= int(element) < len(before.elements):
+        raise SignInRefused(f'There is no control {element}. Look at the window again.')
+    page: Page = _look(driver, int(window_id), viewer)
+    after = (getattr(driver, '_snapshots', None) or {}).get(int(window_id))
+    if element is not None:
+        old = before.elements[int(element)]
+        new = after.elements[int(element)] if after and int(element) < len(after.elements) else None
+        if new is None or not _same(old, new):
+            raise SignInRefused('The window changed since you looked, so nothing was typed. Look at it again and '
+                                'use the new control number.')
+        target = new
+    else:
+        old = _field_at(before, point)
+        target = _field_at(after, point) if after else None
+        if target is None or (old is not None and not _same(old, target)) or \
+                tuple(before.origin) != tuple(after.origin) or before.scale != after.scale:
+            raise SignInRefused('There is no text field at that point now, or the window moved. Look at the window '
+                                'again and pass the field\'s position.')
+    if _is_address_bar(target):
+        raise SignInRefused("Saved sign-ins can't be typed into the browser's address bar.")
+    if str(getattr(target, 'role', '')).lower() not in TEXT_ROLES:
+        raise SignInRefused('That control is not a text field. Pick the sign-in field.')
+    return site_of(page.address())
 
 
 def _site_hosts(row: Any) -> list[str]:
@@ -110,7 +184,7 @@ def fill(resolver: Resolver, text: str, *, browser: bool, host: str = '') -> str
 
 
 def prepare(driver: Any, window_id: int, text: str, *, owner: Any, allowed: list[str] | None,
-            viewer: Any) -> str:
+            viewer: Any, element: int | None = None, point: tuple[float, float] | None = None) -> str:
     """The text to type, with saved sign-ins filled in for this window.
 
     Runs in a tool's worker thread; loads the person's saved sign-ins on the
@@ -125,7 +199,12 @@ def prepare(driver: Any, window_id: int, text: str, *, owner: Any, allowed: list
     if win is None:
         raise SignInRefused(f'Window {window_id} is gone. Call list_windows.')
     browser = is_browser(win)
-    host = page_host(driver, window_id, viewer) if browser else ''
+    host = ''
+    if browser:
+        if not only_placeholders(text):
+            raise SignInRefused('In the browser, type a saved sign-in on its own: the text may hold only '
+                                '{{secret:...}} placeholders, tabs and new lines. Type anything else separately.')
+        host = check_page(driver, window_id, viewer, element=element, point=point)
     resolver = run_on_calling_loop(Resolver.for_owner(str(owner), allowed))
     filled = fill(resolver, text, browser=browser, host=host)
     try:

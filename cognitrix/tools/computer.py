@@ -48,8 +48,9 @@ COMPUTER_NOTE = (
     'you made looks), show them one with show_screenshot.\n\n'
     'Work on your own and do as much of the task as you can before involving the person. When a site or app '
     'needs an email, username, password, API key or token, never ask the person to take over or to type it: '
-    'call list_credentials and type a saved one with type_in_window or set_text, writing '
-    '{{secret:NAME.username}}, {{secret:NAME.password}} or {{secret:NAME}} as the text. It is filled in only on '
+    'call list_credentials and type a saved one into the field with set_text (pass element) or type_in_window '
+    '(pass x and y), writing only {{secret:NAME.username}}, {{secret:NAME.password}} or {{secret:NAME}} as the '
+    'text. It is filled in only on '
     "the sites it was saved for, and you never see it. If none fits, ask for it with ask_for_sign_in "
     "(kind='basic' for a username and password, allowed_hosts=[the site, e.g. 'github.com']), then type it the "
     'same way. Use ask_to_take_over only for a step you truly cannot do yourself: a CAPTCHA you cannot pass, a '
@@ -119,7 +120,8 @@ def _viewer(parent: Any) -> Any:
     return getattr(parent, 'id', None) or id(parent)
 
 
-def _with_saved_sign_ins(driver, window_id: int, text: str, parent: Any):
+def _with_saved_sign_ins(driver, window_id: int, text: str, parent: Any, *, element: int | None = None,
+                         point: tuple[float, float] | None = None):
     """``text`` with saved sign-ins filled in for this window, or a refusal
     (cognitrix/computer/saved_sign_ins.py)."""
     from cognitrix.computer import saved_sign_ins
@@ -131,7 +133,8 @@ def _with_saved_sign_ins(driver, window_id: int, text: str, parent: Any):
     owner = current_execution_context().user_id
     try:
         return saved_sign_ins.prepare(driver, window_id, text, owner=owner,
-                                      allowed=agent_allowed_credentials(parent), viewer=_viewer(parent))
+                                      allowed=agent_allowed_credentials(parent), viewer=_viewer(parent),
+                                      element=element, point=point)
     except saved_sign_ins.SignInRefused as exc:
         return ToolOutcome.failure('sign_in', str(exc))
 
@@ -195,7 +198,8 @@ def open_app(target: str, computer: str = AGENT):
 
 SIGN_IN_HINT = (
     'This window asks for a sign-in. Do it yourself: call list_credentials and type the saved one with '
-    '{{secret:NAME.username}} and {{secret:NAME.password}} (type_in_window or set_text). If none fits, ask for '
+    '{{secret:NAME.username}} and {{secret:NAME.password}} (set_text with the field\'s element, or type_in_window '
+    'with its x and y; nothing else in the text). If none fits, ask for '
     "it with ask_for_sign_in (kind='basic', allowed_hosts=[this site]). Don't ask the person to take over for "
     'this.')
 
@@ -364,7 +368,7 @@ def set_text(window_id: int, text: str, element: int | None = None, computer: st
         computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
     def go(driver):
-        filled = _with_saved_sign_ins(driver, window_id, text, parent)
+        filled = _with_saved_sign_ins(driver, window_id, text, parent, element=element)
         if isinstance(filled, ToolOutcome):
             return filled
         return _done(driver.set_text(window_id, filled, element, viewer=_viewer(parent)))
@@ -411,14 +415,15 @@ def type_in_window(window_id: int, text: str, x: int | None = None, y: int | Non
         computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
     def go(driver):
-        # Saved sign-ins first: reading the page's address looks at the
-        # window again, and the click point below uses the latest look.
-        filled = _with_saved_sign_ins(driver, window_id, text, parent)
-        if isinstance(filled, ToolOutcome):
-            return filled
         ix = iy = None
         if x is not None and y is not None:
             ix, iy = _image_point(driver, window_id, x, y)
+        # Reading the page's address looks at the window again; the field
+        # at (x, y) must still be the same one (saved_sign_ins.check_page).
+        filled = _with_saved_sign_ins(driver, window_id, text, parent,
+                                      point=(ix, iy) if ix is not None else None)
+        if isinstance(filled, ToolOutcome):
+            return filled
         return _done(driver.type_text(window_id, filled, ix, iy, viewer=_viewer(parent), use_screen=use_screen))
     return _run(go, parent, computer)
 
