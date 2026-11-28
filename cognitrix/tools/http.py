@@ -237,7 +237,10 @@ async def list_credentials(*, parent: Any | None = None):
     lines = []
     for row in sorted(rows, key=lambda r: r.name):
         info = describe(row)
-        hosts = ', '.join(info['allowed_hosts']) or 'no hosts'
+        sites = [h for h in info['allowed_hosts'] if h != 'sandbox.invalid']
+        hosts = ', '.join(sites) or 'no sites'
+        if 'sandbox.invalid' in info['allowed_hosts']:
+            hosts += ' and commands on your computer' if sites else ' (only commands on your computer)'
         desc = f" - {info['description']}" if info['description'] else ''
         lines.append(f"{info['name']} ({info['kind']}, for {hosts}){desc}")
     return '\n'.join(lines)

@@ -262,3 +262,52 @@ async def test_agent_is_sent_back_before_any_card(monkeypatch):
     result = res['result'][0]
     assert result['success'] is False and 'ask_for_sign_in' in result['data'], result
     assert Gate.calls == []
+
+
+def test_take_over_reasons_are_read_closely():
+    from cognitrix.tools.computer import _TAKEOVER_SENT_BACK, takeover_precheck
+
+    _TAKEOVER_SENT_BACK.clear()
+    # "Code" in a product name is still just a sign-in.
+    assert takeover_precheck({'reason': 'Sign in to VS Code with your GitHub account'}, 'chat-a')
+    assert takeover_precheck({'reason': 'Log in with the API key for the dashboard'}, 'chat-b')
+    for reason in ('Enter the code sent to your email to finish signing in',
+                   'Type the login code from the text message', 'Sign in and enter your credit card number'):
+        assert takeover_precheck({'reason': reason}, 'chat-c') is None, reason
+    # No chat to remember it by: the person is asked rather than looping.
+    assert takeover_precheck({'reason': 'Sign in to GitHub'}, None) is None
+
+
+async def test_agent_limited_to_some_sign_ins_may_use_the_one_it_asked_for(monkeypatch):
+    from cognitrix.tools import sandbox_work
+
+    saved = []
+
+    class FakeAgent:
+        id = 'a1'
+        credentials = ['GITHUB']
+
+    async def update_one(query, changes):
+        saved.append((query, changes))
+
+    monkeypatch.setattr('cognitrix.models.Agent.update_one', update_one)
+    agent = FakeAgent()
+    await sandbox_work._let_agent_use(agent, 'NOTION')
+    assert agent.credentials == ['GITHUB', 'NOTION']
+    assert saved == [({'id': 'a1'}, {'credentials': ['GITHUB', 'NOTION']})]
+    # Agents that may use every sign-in are left alone.
+    agent.credentials = None
+    await sandbox_work._let_agent_use(agent, 'NOTION')
+    assert len(saved) == 1
+
+
+def test_page_body_is_not_a_field():
+    page = _el('document web', 'GitHub', (0, 30, 800, 600))
+    snap = _snap('s', 'https://github.com', [page])
+    assert ssi._field_at(snap, (500, 400)) is None
+    assert ssi._field_at(_snap('s', 'https://github.com', [page, PASSWORD]), (200, 160)) is PASSWORD
+
+
+def test_only_placeholders():
+    assert ssi.only_placeholders('{{secret:AB.username}}\t{{secret:AB.password}}\n')
+    assert not ssi.only_placeholders('https://x.example/?p={{secret:AB.password}}')

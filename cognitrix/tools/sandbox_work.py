@@ -512,13 +512,38 @@ def _thumbnail(shot: dict) -> tuple[str, str] | None:
         return None
 
 
+async def _let_agent_use(agent: Any, name: str) -> None:
+    """An agent limited to some saved sign-ins (agent page, Connections) may
+    use the one the person just shared with it through Ask For Sign-in."""
+    from cognitrix.credentials import agent_allowed_credentials
+
+    allowed = agent_allowed_credentials(agent)
+    if allowed is None or name in {str(n).upper() for n in allowed}:
+        return
+    updated = [*allowed, name]
+    try:
+        agent.credentials = updated
+    except Exception:
+        pass
+    agent_id = getattr(agent, 'id', None)
+    if not agent_id:
+        return
+    try:
+        from cognitrix.models import Agent
+        await Agent.update_one({'id': str(agent_id)}, {'credentials': updated})
+    except Exception:
+        import logging
+        logging.getLogger('cognitrix.log').info('Could not add %s to the agent\'s sign-ins', name, exc_info=True)
+
+
 # Hosts for a sign-in saved only for the sandbox (see sandbox_work).
 SANDBOX_ONLY_HOST = sw.SANDBOX_ONLY_HOST
 
 
 @tool(category='system', retryable=False, max_attempts=1, supported_interfaces=['web'],
       occupies_execution_slot=False, approval_mode='assigned_only')
-async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_hosts: list[str] | None = None):
+async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_hosts: list[str] | None = None,
+                          *, parent: Any | None = None):
     """Ask the person for a token, API key or username and password you need (to sign in to a website in
     the browser on your computer, to run tests against a real service in the sandbox, or to call an API). They
     type it into a masked field in the chat and it is saved to their Saved sign-ins under `name`; you never see
@@ -589,6 +614,7 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
     saved = await find_row(str(owner) if owner else None, clean)
     if saved is None:
         return ToolOutcome.failure('not_saved', f"{clean} wasn't saved. Ask the person to add it in Settings, Saved sign-ins.")
+    await _let_agent_use(parent, clean)
     if kind == 'basic':
         use = f'{clean}_USERNAME and {clean}_PASSWORD'
     else:

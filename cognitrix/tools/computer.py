@@ -503,9 +503,11 @@ _SIGN_IN_WORDS = re.compile(
     r'api[ -]?key|access key|token|secret key)\b', re.I)
 _ONLY_THE_PERSON = re.compile(
     r'(captcha|recaptcha|hcaptcha|i.?m not a robot|robot|2fa|two[- ]factor|2[- ]step|mfa|multi[- ]factor|'
-    r'verif|one[- ]time|otp|\bcode\b|passkey|security key|yubikey|authenticator|phone|sms|text message|'
-    r'push notification|approve|face ?id|fingerprint|biometric|payment|pay\b|card|bank|identity|selfie|'
-    r'\bid\b|consent|legal|terms|agree)', re.I)
+    r'verif|one[- ]time|otp|passkey|security key|yubikey|authenticator|phone|sms|text message|'
+    r'(security|login|sign[- ]?in|access|confirmation|auth\w*|2fa|mfa|e-?mail(ed)?)\s+codes?\b|'
+    r'\bcodes?\s+(sent|from|in|on|to)\b|enter the code|'
+    r'push notification|approve|face ?id|fingerprint|biometric|payment|\bpay\b|credit card|card (details|number)|'
+    r'bank|identity|selfie|photo id|id card|consent|legal|terms|agree)', re.I)
 _TAKEOVER_SENT_BACK: dict[str, float] = {}
 _SENT_BACK_KEEP_S = 6 * 3600
 

@@ -50,8 +50,10 @@ def is_browser(win: Any) -> bool:
                                                          for b in BROWSER_APPS)
 
 
+# Fields a sign-in can go into. Not the page itself ('document web'): typing
+# there lands wherever focus happens to be.
 TEXT_ROLES = ('entry', 'text', 'password text', 'password', 'passwordbox', 'textbox', 'edit', 'combo box',
-              'spin button', 'document web')
+              'spin button')
 
 
 def _norm(text: Any) -> str:
@@ -162,9 +164,11 @@ def fill(resolver: Resolver, text: str, *, browser: bool, host: str = '') -> str
             if target is None:
                 sites = ', '.join(_site_hosts(row))
                 if not sites:
+                    where = ('for commands on your computer' if SANDBOX_ONLY_HOST in (row.allowed_hosts or [])
+                             else 'without any sites')
                     raise SignInRefused(
-                        f'{row.name} was saved for commands on your computer, not for a website. Ask for it again '
-                        f"with ask_for_sign_in, allowed_hosts=['{host}'], then type it.")
+                        f'{row.name} was saved {where}, not for a website. Ask for it again with ask_for_sign_in, '
+                        f"name='{row.name}', allowed_hosts=['{host}'] (the person types it once more), then type it.")
                 raise SignInRefused(
                     f'{row.name} is saved for {sites}, but this page is on {host}, so it wasn\'t typed. If this '
                     'really is the right site, ask the person with ask_for_sign_in for a sign-in saved for '
