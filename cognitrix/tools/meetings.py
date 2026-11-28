@@ -5,12 +5,18 @@ from the browser on its desktop in the agents' sandboxed computer. It asks
 the person first (see destructive_ops). Once in, the agent listens, keeps a
 transcript, answers when someone says its name, and writes notes when the
 call ends. Meeting Transcript reads what was said so far, Say In Meeting
-speaks or writes in the call, and Leave Meeting brings it back. Upcoming
-Calls lists the calls found in the person's Google Calendar
-(cognitrix/meetings/calendar_calls.py); it can't send an agent to one.
+speaks or writes in the call, and Leave Meeting brings it back. Steer
+Meeting passes private guidance to the agent in the call, or asks it to
+raise something at the next pause. Upcoming Calls lists the calls found in
+the person's Google Calendar (cognitrix/meetings/calendar_calls.py); it
+can't send an agent to one. Search Meetings looks through past notes and
+transcripts.
+
+The chat that sends an agent into a call gets the notes back when it ends
+(``extras.report_to_chat``), and offers follow-ups.
 
 A chat's agent gets these tools for its turns while the sandboxed computer
-is on (``sessions/base.py``).
+is on (``sessions/base.py``); Search Meetings works without it.
 """
 from __future__ import annotations
 
@@ -20,7 +26,10 @@ from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import ToolOutcome
 
 MEETING_TOOL_CATEGORY = 'meetings'
-MEETING_TOOL_NAMES = ('join_meeting', 'meeting_transcript', 'say_in_meeting', 'leave_meeting', 'upcoming_calls')
+MEETING_TOOL_NAMES = ('join_meeting', 'meeting_transcript', 'say_in_meeting', 'leave_meeting', 'upcoming_calls',
+                      'steer_meeting', 'search_meetings')
+# Tools that need no sandboxed computer.
+OFFLINE_MEETING_TOOL_NAMES = ('search_meetings', 'meeting_transcript', 'upcoming_calls')
 
 
 def _who(parent: Any) -> tuple[str, str]:
@@ -48,11 +57,12 @@ async def _current(user_id: str, agent_id: str, meeting_id: str | None):
 
 @tool(category=MEETING_TOOL_CATEGORY, supported_interfaces=['web', 'ws', 'task'])
 async def join_meeting(url: str, reply_mode: str = 'chat', name: str = '', title: str = '',
-                       announce: bool = True, *, parent: Any | None = None):
+                       announce: bool = True, context: str = '', watch_for: str = '', share: str = '', *,
+                       parent: Any | None = None):
     """Join a live Google Meet, Microsoft Teams or Zoom call from the browser on your sandboxed computer.
     You listen, keep a transcript, answer when someone in the call says your name, and write notes when the
-    call ends (the person gets them in their Inbox and on the Meetings page). Returns right away; use
-    Meeting Transcript to follow the call. The person is asked first.
+    call ends. The notes come back to this chat when the call ends (and to the person's Inbox and the
+    Meetings page). Returns right away; use Meeting Transcript to follow the call. The person is asked first.
     Args:
         url (str): The meeting link, starting with https://.
         reply_mode (str, optional): How to answer when someone says your name: "chat" (the call's chat,
@@ -60,16 +70,28 @@ async def join_meeting(url: str, reply_mode: str = 'chat', name: str = '', title
         name (str, optional): The name you join as; your own name by default.
         title (str, optional): A title for the meeting's notes.
         announce (bool, optional): Say in the call's chat that you are taking notes (default true).
+        context (str, optional): Background for the call: the agenda, who is in it, what the person wants
+            out of it. Used for answers in the call and for the notes.
+        watch_for (str, optional): Words or topics, comma separated; the person gets an urgent alert when
+            one comes up in the call.
+        share (str, optional): What answers in the call may use: "call" (only the call and its background)
+            or "work" (also the person's memory, knowledge, past meetings and busy times). The person's
+            Meetings setting by default.
     """
     from cognitrix.api.routes.meetings import start_live
+    from cognitrix.meetings import extras
     from cognitrix.meetings.notes import MeetingError
+    from cognitrix.tools.utils import current_execution_context
 
     user_id, agent_id = _who(parent)
     if not user_id:
         return ToolOutcome.failure('no_owner', 'Only a signed-in person can send an agent into a call.')
+    ctx = current_execution_context()
     try:
         row = await start_live(user_id, url=url, agent_id=agent_id, title=title, name=name,
-                               reply_mode=reply_mode, announce=announce)
+                               reply_mode=reply_mode, announce=announce, context=context,
+                               watch_words=extras.words(watch_for), share=share,
+                               session_id=str(ctx.session_id or ''), chat_agent_id=agent_id)
     except MeetingError as exc:
         return ToolOutcome.failure('meeting', str(exc))
     return (f'Joining "{row.title}" as {row.bot_name} (meeting {row.id}). It takes a minute or two to get in; '
@@ -144,6 +166,54 @@ async def leave_meeting(meeting_id: str | None = None, *, parent: Any | None = N
     if row is None or not live.request_leave(str(row.id)):
         return ToolOutcome.failure('not_in_call', 'You are not in a call right now.')
     return 'Leaving the call. The notes will be on the Meetings page in a minute.'
+
+
+@tool(category=MEETING_TOOL_CATEGORY, supported_interfaces=['web', 'ws', 'task'])
+async def steer_meeting(text: str, kind: str = 'note', meeting_id: str | None = None, *,
+                        parent: Any | None = None):
+    """Pass private guidance to the agent in a live call; nobody in the call sees it.
+    Args:
+        text (str): The guidance, or what to bring up.
+        kind (str, optional): "note" (guidance the agent uses in its answers, default), "raise" (the agent
+            brings it up at the next pause in the conversation) or "answer" (the person's answer to a question
+            the agent in the call asked them; it is passed on in the call).
+        meeting_id (str, optional): The meeting; your current call by default.
+    """
+    from cognitrix.meetings import live
+
+    user_id, agent_id = _who(parent)
+    text = (text or '').strip()
+    if not text:
+        return ToolOutcome.failure('empty', 'Say what to pass on.')
+    if kind not in ('note', 'raise', 'answer'):
+        return ToolOutcome.failure('kind', 'Kind is "note", "raise" or "answer".')
+    row = await _current(user_id, agent_id, meeting_id)
+    if row is None or not live.steer(str(row.id), kind, text):
+        return ToolOutcome.failure('not_in_call', 'No agent is in that call right now.')
+    if kind == 'raise':
+        return 'Passed on: the agent brings it up at the next pause.'
+    if kind == 'answer':
+        return 'Passed on: the agent gives the answer in the call.'
+    return 'Passed on: the agent uses it in its answers for the rest of the call.'
+
+
+@tool(category=MEETING_TOOL_CATEGORY, supported_interfaces=['web', 'ws', 'task'])
+async def search_meetings(query: str, limit: int = 8, *, parent: Any | None = None):
+    """Search the person's past meetings (notes and transcripts, live calls and uploaded recordings).
+    Returns the best matches with a snippet each; read one in full with Meeting Transcript and its id.
+    Args:
+        query (str): What to look for: a topic, a name, a decision.
+        limit (int, optional): How many meetings to return, up to 20 (default 8).
+    """
+    from cognitrix.meetings import extras
+
+    user_id, _agent_id = _who(parent)
+    if not user_id:
+        return ToolOutcome.failure('no_owner', 'Only a signed-in person has meetings here.')
+    hits = await extras.search(user_id, query, max(1, min(int(limit or 8), 20)))
+    if not hits:
+        return 'No meetings match that.'
+    return '\n'.join(f'- {h["date"]} "{h["title"]}" (meeting {h["id"]}): {h["snippet"]}' for h in hits)
 
 
 @tool(category=MEETING_TOOL_CATEGORY, supported_interfaces=['web', 'ws', 'task'])

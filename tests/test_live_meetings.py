@@ -374,7 +374,7 @@ async def call(tmp_path, monkeypatch):
     from odbms import DBMS
 
     from cognitrix.config import _patch_odbms_sqlite
-    from cognitrix.meetings import live, notes
+    from cognitrix.meetings import extras, live, notes
     from cognitrix.models.voice_settings import VoiceSettings
 
     db_file = str(tmp_path / 'm.db')
@@ -383,14 +383,14 @@ async def call(tmp_path, monkeypatch):
     else:
         DBMS.initialize('sqlite', database=db_file)
     _patch_odbms_sqlite()
-    for model in (notes.MeetingNote, VoiceSettings):
+    for model in (notes.MeetingNote, extras.MeetingSettings, VoiceSettings):
         create = getattr(model, '_create_table_async', None) or model.create_table
         await create()
 
     said = iter(['Good morning everyone, we ship on Friday and Kofi writes the notes.',
                  "Ada, what's the launch date again?"])
 
-    async def fake_transcribe(audio, *, mime, provider, model, api_key, language=None):
+    async def fake_transcribe(audio, *, mime, provider, model, api_key, language=None, **kwargs):
         return next(said, '')
 
     async def voice(_user):
@@ -414,10 +414,11 @@ async def call(tmp_path, monkeypatch):
 
     alerts = []
 
-    async def alert(row, title, message):
+    async def alert(row, title, message, *, urgent=False):
         alerts.append(title)
 
     monkeypatch.setattr(notes, 'transcribe', fake_transcribe)
+    monkeypatch.setattr(notes, 'storage_dir', lambda: tmp_path)
     monkeypatch.setattr(notes, '_voice', voice)
     monkeypatch.setattr(notes, '_agent_llm', agent_llm)
     monkeypatch.setattr(live, '_Desk', Desk)
@@ -428,7 +429,8 @@ async def call(tmp_path, monkeypatch):
     monkeypatch.setattr(live, 'ANSWER_GAP_S', 0)
     import cognitrix.computer.sandbox.client as client
     monkeypatch.setattr(client, 'sandbox_mode', lambda: 'docker')
-    return SimpleNamespace(live=live, notes=notes, driver=driver, box=box, llm=llm, alerts=alerts)
+    return SimpleNamespace(live=live, notes=notes, extras=extras, driver=driver, box=box, llm=llm, alerts=alerts,
+                           tmp=tmp_path)
 
 
 async def test_an_agent_joins_listens_answers_when_named_and_leaves_with_notes(call):
@@ -1014,3 +1016,317 @@ def test_same_titled_windows_of_other_apps_are_not_told_apart_by_order():
     backend.atspi.states = lambda acc: {linux._ST_SHOWING} | ({linux._ST_ACTIVE} if acc.ptr == 'f2' else set())
     assert backend._frame(infos[6]).ptr == 'f2' and backend._frame(infos[5]) is None
 
+
+
+# --- in the call: gaps, spoken commands, steering, questions, running notes ------
+
+
+class SteerLLM:
+    """Answers with a question for the owner, phrases things to raise, writes running notes."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def __call__(self, prompt, stream=False):
+        self.calls.append(prompt)
+        system = prompt[0]['content']
+        if 'bring something up' in system:
+            return SimpleNamespace(error=None, llm_response='One more thing: the budget review is due Friday.')
+        if 'running notes' in system:
+            return SimpleNamespace(error=None, llm_response='**So far**\nLaunch timing discussed.')
+        if 'reply with "ASK: "' in system:
+            return SimpleNamespace(error=None, llm_response='ASK: Can the launch move to Monday?')
+        return SimpleNamespace(error=None, llm_response='Friday.')
+
+
+async def _in_call(call, llm=None, **fields):
+    """An agent already in a call, as the engine holds it."""
+    live = call.live
+    row = call.notes.MeetingNote(user_id='u1', kind='live', platform='meet', bot_name='Ada', status='live',
+                                 url='https://meet.google.com/abc-defg-hij', **fields)
+    await row.save()
+    row = await call.notes.MeetingNote.get(row.id)
+    item = live.Live(str(row.id))
+    desk = live._Desk('u1', 'a1', 'Ada', row.id)
+    desk.screen.open(row.url)
+    call.driver.state = 'live'
+    agent = SimpleNamespace(id='a1', name='Ada', llm=llm or call.llm, knowledge=[])
+    settings = await call.extras.settings_for('u1')
+    return live._Call(item, row, desk, agent, 'Sam', ('groq', 'whisper', 'key'), settings, [])
+
+
+def _b64(text='x'):
+    return base64.b64encode(text.encode()).decode()
+
+
+def _saying(call, monkeypatch, *texts):
+    said = iter(texts)
+
+    async def transcribe(audio, **kwargs):
+        return next(said)
+
+    monkeypatch.setattr(call.notes, 'transcribe', transcribe)
+
+
+async def test_speech_that_fails_to_transcribe_is_retried_then_marked_as_a_gap(call, monkeypatch):
+    monkeypatch.setattr(call.live, 'TRANSCRIBE_BACKOFF_S', (0, 0))
+    tries = []
+
+    async def flaky(audio, **kwargs):
+        tries.append(kwargs.get('hints'))
+        if len(tries) < 3:
+            raise call.notes.TranscriptionError('busy')
+        return 'Third time lucky.'
+
+    monkeypatch.setattr(call.notes, 'transcribe', flaky)
+    c = await _in_call(call, title='Launch Review')
+    await c._one(_b64(), '0:01')
+    assert len(tries) == 3 and 'Third time lucky.' in c.lines[-1]
+    # The names in the call go to speech-to-text as expected words.
+    assert 'Ada' in tries[0] and 'Sam' in tries[0] and 'Launch' in tries[0]
+
+    async def broken(audio, **kwargs):
+        raise call.notes.TranscriptionError('down')
+
+    monkeypatch.setattr(call.notes, 'transcribe', broken)
+    await c._one(_b64(), '0:05')
+    assert c.lines[-1] == '[0:05] (some speech here could not be transcribed)'
+    assert 'could not be transcribed' in (await call.notes.MeetingNote.get(c.id)).transcript
+
+
+async def test_anyone_in_the_call_can_pause_resume_mark_and_send_the_agent_away(call, monkeypatch):
+    c = await _in_call(call)
+    _saying(call, monkeypatch, 'Ada, pause the notes for a minute.', 'The acquisition price is 40 million.',
+            'Ada, resume.', 'We go with plan B.', 'Ada, mark that as a decision.', 'Ada, you can leave now.')
+    await c._one(_b64(), '0:01')
+    assert c.paused and (await call.notes.MeetingNote.get(c.id)).paused
+    assert any(t.startswith('Paused: nothing is kept until someone says') for t in call.driver.typed)
+    await c._one(_b64(), '0:02')
+    assert not any('40 million' in ln for ln in c.lines)
+    await c._one(_b64(), '0:03')
+    assert not c.paused and 'Back on: taking notes again.\n' in call.driver.typed
+    await c._one(_b64(), '0:04')
+    await c._one(_b64(), '0:05')
+    assert c.lines[-1].endswith('(marked: decision — the line above)')
+    await c._one(_b64(), '0:06')
+    assert c.item.leave.is_set() and 'someone in the call asked it to leave' in c.reasons
+
+
+async def test_private_steering_questions_for_the_owner_and_their_answer(call):
+    llm = SteerLLM()
+    c = await _in_call(call, llm)
+    c.item.control.put_nowait(('note', "Don't commit to dates."))
+    c.item.control.put_nowait(('raise', 'mention the budget review'))
+    await c.take_control()
+    assert (await call.notes.MeetingNote.get(c.id)).guidance == ["Don't commit to dates."]
+    c.quiet_s = 0.5  # someone is talking: wait
+    await c.raise_pending()
+    assert c.to_raise
+    c.quiet_s = 5
+    await c.raise_pending()
+    assert 'One more thing: the budget review is due Friday.\n' in call.driver.typed
+
+    c.add('Ada, can the launch move to Monday?')
+    await c.answer()
+    asked = llm.calls[-1]
+    assert "<private_guidance_from_owner>\n- Don't commit to dates." in asked[1]['content']
+    row = await call.notes.MeetingNote.get(c.id)
+    assert row.owner_question == 'Can the launch move to Monday?'
+    assert 'Let me check that with Sam.\n' in call.driver.typed
+    assert call.alerts[-1] == f'Question from {row.title}'
+
+    c.item.control.put_nowait(('answer', 'Yes, Monday works.'))
+    await c.take_control()
+    row = await call.notes.MeetingNote.get(c.id)
+    assert 'Sam says: Yes, Monday works.\n' in call.driver.typed
+    assert row.owner_question == '' and row.owner_answer == 'Yes, Monday works.'
+
+
+async def test_an_unanswered_question_is_let_go_after_a_while(call, monkeypatch):
+    c = await _in_call(call, SteerLLM())
+    await c.ask_owner('Is Monday OK?')
+    monkeypatch.setattr(call.live, 'ASK_WAIT_S', -1)
+    await c.question_timeout()
+    assert not c.question and any("hasn't answered yet" in t for t in call.driver.typed)
+
+
+async def test_running_notes_and_watch_word_alerts(call, monkeypatch):
+    monkeypatch.setattr(call.live, 'LIVE_NOTES_S', 0)
+    monkeypatch.setattr(call.live, 'LIVE_NOTES_MIN_LINES', 2)
+    c = await _in_call(call, SteerLLM(), watch_words=['budget'])
+    _saying(call, monkeypatch, 'We are over budget again.', 'The budget needs a look.')
+    await c._one(_b64(), '0:01')
+    await c._one(_b64(), '0:02')
+    assert call.alerts.count(f'"budget" came up in {c.row.title}') == 1  # once per few minutes
+    assert c.notes_due()
+    c.write_live_notes()
+    await c.notes_task
+    assert (await call.notes.MeetingNote.get(c.id)).live_notes.startswith('**So far**')
+    assert not c.notes_due()
+
+
+async def test_a_dropped_agent_rejoins_but_not_a_call_that_ended(call, monkeypatch):
+    c = await _in_call(call)
+    clicked = call.driver.act_on_element
+
+    def act(window_id, index, *args, **kwargs):
+        if call.driver._elements()[index].name == 'Rejoin':
+            call.driver.state = 'live'
+        return clicked(window_id, index, *args, **kwargs)
+
+    monkeypatch.setattr(call.driver, 'act_on_element', act)
+    call.driver.state = 'ended'  # "You left the meeting" with a Rejoin button
+    assert await c.check_screen()
+    row = await call.notes.MeetingNote.get(c.id)
+    assert row.rejoins == 1 and row.status == call.live.LIVE and '(back in the call)' in c.lines[-1]
+
+    c.rejoins = call.live.MAX_REJOINS
+    call.driver.state = 'ended'
+    assert not await c.check_screen() and c.ended
+
+    c2 = await _in_call(call)
+    monkeypatch.setattr(call.driver, '_elements', lambda: [_el('heading', 'The meeting has ended'),
+                                                           _el('push button', 'Rejoin')])
+    assert not await c2.check_screen() and c2.rejoins == 0
+
+
+async def test_a_call_in_progress_is_picked_back_up_after_a_restart(call, monkeypatch):
+    held = asyncio.Event()
+    started = []
+
+    async def run(item):
+        started.append((item.meeting_id, item.resume))
+        await held.wait()
+
+    monkeypatch.setattr(call.live, 'run', run)
+    in_call = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1',
+                                     url='https://meet.google.com/abc-defg-hij', progress='listening')
+    joining = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.JOINING, agent_id='a1',
+                                     url='https://meet.google.com/xyz-defg-hij')
+    await in_call.save()
+    await joining.save()
+    try:
+        assert await call.live.resume_interrupted() == 1
+        await asyncio.sleep(0)
+        assert started == [(str(in_call.id), True)]
+        assert (await call.notes.MeetingNote.get(in_call.id)).status == call.live.LIVE
+        assert (await call.notes.MeetingNote.get(joining.id)).status == call.notes.FAILED
+    finally:
+        held.set()
+        await asyncio.sleep(0)
+
+
+async def test_a_failed_join_keeps_what_the_agent_saw_and_tells_the_chat(call, monkeypatch):
+    reported = []
+
+    async def report(row, *, notes='', error=''):
+        reported.append(error)
+        return True
+
+    monkeypatch.setattr(call.extras, 'report_to_chat', report)
+    row = call.notes.MeetingNote(user_id='u1', kind='live', platform='meet', bot_name='Ada', status='joining',
+                                 url='https://meet.google.com/abc-defg-hij', session_id='s1')
+    await row.save()
+    desk = call.live._Desk('u1', 'a1', 'Ada', row.id)
+    desk.screen.open(row.url)
+    await call.live._failed(row, desk, False, None, [], 'Nobody let it in.')
+    saved = await call.notes.MeetingNote.get(row.id)
+    assert saved.status == call.notes.FAILED and 'push button: Ask to join' in saved.seen
+    assert 'Address: https://meet.google.com/abc-defg-hij' in saved.seen
+    assert reported == ['Nobody let it in.']
+
+
+async def test_the_test_call_reports_each_check(call):
+    c = await _in_call(call, test=True, title='Test call')
+    c.reasons.append('spoke')
+    c.add('Ada (chat): Hello')
+    c.add('Testing one two three. This is Ada checking the sound.')
+    await call.live._finish_test(c)
+    row = await call.notes.MeetingNote.get(c.id)
+    assert row.status == call.notes.DONE and row.notes.count('✓') == 4
+    assert call.alerts[-1] == 'Test call passed'
+
+    c2 = await _in_call(call, test=True, title='Test call')
+    await call.live._finish_test(c2)
+    row = await call.notes.MeetingNote.get(c2.id)
+    assert '✗ Spoke out loud' in row.notes and 'read-aloud key' in row.notes
+    assert call.alerts[-1] == 'Test call found a problem'
+
+
+async def test_notes_go_back_to_the_chat_that_sent_the_agent(call, monkeypatch):
+    from cognitrix.sessions import agent_chats
+
+    sent = []
+
+    async def deliver(user, agent_id, session_id, text, **kwargs):
+        sent.append((user, agent_id, session_id, text))
+        return 'started'
+
+    monkeypatch.setattr(agent_chats, 'deliver_report', deliver)
+    row = call.notes.MeetingNote(user_id='u1', kind='live', title='Launch', bot_name='Ada', agent_id='a1',
+                                 session_id='s1', chat_agent_id='a9')
+    notes = '## Summary\nShip Friday.\n\n## Action items\n- **Kofi** - send the deck\n- book the room\n'
+    assert await call.extras.report_to_chat(row, notes=notes)
+    user, agent_id, session_id, text = sent[0]
+    assert (user, agent_id, session_id) == ('u1', 'a9', 's1')
+    assert '- Kofi: send the deck' in text and '- Unassigned: book the room' in text
+    assert 'only after they say yes' in text
+    assert not await call.extras.report_to_chat(call.notes.MeetingNote(user_id='u1', title='x'), notes=notes)
+
+
+async def test_meeting_settings_background_and_search_from_the_page(call, monkeypatch):
+    from cognitrix.api.routes import meetings as routes
+
+    with pytest.raises(HTTPException) as err:
+        await routes.put_settings(routes.MeetingSettingsBody(share='everything'), _ctx())
+    assert err.value.status_code == 400
+    saved = await routes.put_settings(routes.MeetingSettingsBody(share='work', vocabulary='Kubernetes, Akosua'),
+                                      _ctx())
+    assert saved['share'] == 'work' and (await routes.get_settings(_ctx()))['vocabulary'] == 'Kubernetes, Akosua'
+
+    before = call.notes.MeetingNote(user_id='u1', kind='live', title='Weekly sync', status='done',
+                                    notes='## Summary\nOk.\n\n## Action items\n- **Kofi** - send the deck\n')
+    await before.save()
+    monkeypatch.setattr(call.live, 'start', lambda meeting_id, **kw: None)
+    made = await routes.join_live(routes.LiveJoin(url='https://meet.google.com/abc', title='Weekly sync',
+                                                  context='Agenda: launch', watch_words='budget, hiring'), _ctx())
+    assert made['share'] == 'work' and made['watch_words'] == ['budget', 'hiring']
+    assert made['context'].startswith('Agenda: launch') and '**Kofi** - send the deck' in made['context']
+
+    found = await routes.search_meetings('deck Kofi', _ctx())
+    assert [r['id'] for r in found['results']] == [str(before.id)]
+    assert (await routes.search_meetings('deck', _ctx('u2')))['results'] == []
+
+    with pytest.raises(HTTPException) as err:
+        await routes.steer_live(made['id'], routes.Steer(kind='note', text='hi'), _ctx())
+    assert err.value.status_code == 409
+    with pytest.raises(HTTPException) as err:
+        await routes.steer_live(made['id'], routes.Steer(kind='shout', text='hi'), _ctx())
+    assert err.value.status_code == 400
+
+    test = await routes.test_call(routes.TestCall(), _ctx())
+    assert test['test'] and test['url'].startswith('http://127.0.0.1:') and test['url'].endswith('/test-call')
+
+
+async def test_steer_and_search_tools(call, monkeypatch):
+    from cognitrix.tools.meetings import search_meetings, steer_meeting
+    from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
+
+    row = call.notes.MeetingNote(user_id='u1', kind='live', title='Pricing call', agent_id='a1', status='done',
+                                 notes='## Decisions\n- Prices go up in March.')
+    await row.save()
+    steered = []
+    monkeypatch.setattr(call.live, 'steer', lambda mid, kind, text='': steered.append((mid, kind, text)) or True)
+    token = set_execution_context(ToolExecutionContext(user_id='u1', agent_id='a1', session_id='s1'))
+    try:
+        out = await steer_meeting.run(text='Ask about churn', kind='raise', parent=SimpleNamespace(id='a1'))
+        assert 'next pause' in str(out.content) and steered == [(str(row.id), 'raise', 'Ask about churn')]
+        out = await search_meetings.run(query='prices March', parent=SimpleNamespace(id='a1'))
+        assert '"Pricing call"' in str(out.content)
+    finally:
+        reset_execution_context(token)
+
+    from cognitrix.safety.destructive_ops import DestructiveOpDetector, RiskLevel
+
+    for name in ('Steer Meeting', 'Search Meetings'):
+        assert DestructiveOpDetector().analyze(name, {}).risk_level == RiskLevel.LOW

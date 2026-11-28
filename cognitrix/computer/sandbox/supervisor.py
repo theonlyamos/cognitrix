@@ -3,10 +3,11 @@
 Each desktop is its own X display (``:1``, ``:2``, ...) with a window manager,
 a live-screen server (x11vnc, password protected, view-only until a person
 takes over) and a driver worker. Desktops share the container's files and
-accessibility bus. Every request except /health needs the container's token
-(``Authorization: Bearer <COGNITRIX_SANDBOX_TOKEN>``):
+accessibility bus. Every request except /health and /test-call needs the
+container's token (``Authorization: Bearer <COGNITRIX_SANDBOX_TOKEN>``):
 
     GET    /health
+    GET    /test-call                     the practice call page the agent's own browser opens (no data)
     POST   /agents/<name>/files           {give_back?}: let 'agent' read an agent's files (before a snapshot
                                           or copy), or hand them back to its own user (after); '_all' = every agent
     POST   /exec                          run a short shell script as this computer's user: {script, input?}
@@ -394,7 +395,40 @@ def busy_reasons(sup: Supervisor, work: Workspace | None, activity: _Activity) -
         reasons.append('a person has control')
     if work is not None and any(job.running for job in list(work.jobs.values())):
         reasons.append('a command is running')
+    if any(d.audio is not None and d.audio.recorder is not None and d.audio.recorder.alive
+           for d in list(sup.desktops.values())):
+        reasons.append('an agent is in a call')
     return reasons
+
+
+# The practice call (Meetings > Test call): a page the agent's own browser
+# opens here to check joining, the call chat, speaking and hearing without a
+# real meeting. It plays the microphone back out of the speaker, so what the
+# agent says comes back to it as call sound. Served without the token, like
+# /health, because the browser opening it has none; it holds no data.
+TEST_CALL_PAGE = b"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Practice call</title>
+<style>body{font:16px sans-serif;margin:40px;max-width:640px}button,input{font:inherit;padding:6px 10px}
+#room{display:none}#log p{margin:4px 0}</style></head>
+<body><h1>Practice call</h1>
+<div id="lobby"><label>Your name <input id="name" aria-label="Your name"></label>
+<button id="join">Join now</button></div>
+<div id="room"><p id="status">You are in the practice call.</p>
+<button id="leave">Leave call</button>
+<div id="log" role="log" aria-label="Call chat"></div>
+<input id="msg" aria-label="Send a message" placeholder="Send a message">
+</div>
+<script>
+const $=id=>document.getElementById(id);
+$('join').onclick=async()=>{
+  $('lobby').remove();$('room').style.display='block';
+  try{const s=await navigator.mediaDevices.getUserMedia({audio:true});
+    const a=new Audio();a.srcObject=s;a.play();}catch(e){$('status').textContent='No microphone: '+e.message;}
+};
+$('msg').addEventListener('keydown',e=>{if(e.key==='Enter'&&$('msg').value.trim()){
+  const p=document.createElement('p');p.textContent=$('msg').value;$('log').appendChild(p);$('msg').value='';}});
+$('leave').onclick=()=>{document.body.innerHTML='<h1>You left the call</h1>';};
+</script></body></html>"""
 
 
 class _DualStackServer(ThreadingHTTPServer):
@@ -447,6 +481,13 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
         def _route(self, method: str) -> None:
             if method == 'GET' and self.path == '/health':
                 self._reply(200, {'ok': True})
+                return
+            if method == 'GET' and self.path.split('?')[0] == '/test-call':
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(TEST_CALL_PAGE)))
+                self.end_headers()
+                self.wfile.write(TEST_CALL_PAGE)
                 return
             if not self._authed():
                 return

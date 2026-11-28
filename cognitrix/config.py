@@ -441,6 +441,10 @@ _MEETING_MIGRATION_COLUMNS = (
     ('reply_mode', "TEXT DEFAULT 'chat'"),
     ('announce', 'BOOLEAN DEFAULT 1'),
     ('answers', 'INTEGER DEFAULT 0'),
+    ('share', "TEXT DEFAULT 'call'"),
+    ('paused', 'BOOLEAN DEFAULT 0'),
+    ('rejoins', 'INTEGER DEFAULT 0'),
+    ('test', 'BOOLEAN DEFAULT 0'),
 )
 
 _AGENT_MIGRATION_COLUMNS = (
@@ -903,6 +907,7 @@ async def _ensure_schema():
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
     from cognitrix.mcp.app_views import MODELS as APP_VIEW_MODELS
     from cognitrix.meetings.calendar_calls import MODELS as CALENDAR_CALL_MODELS
+    from cognitrix.meetings.extras import MODELS as MEETING_SETTINGS_MODELS
     from cognitrix.meetings.notes import MeetingNote
     from cognitrix.models.paired_device import MODELS as PAIRED_DEVICE_MODELS
     from cognitrix.models.sign_in import MODELS as SIGN_IN_MODELS
@@ -936,6 +941,7 @@ async def _ensure_schema():
         *EMAIL_MODELS,
         *PAYMENT_MODELS,
         *CALENDAR_CALL_MODELS,
+        *MEETING_SETTINGS_MODELS,
         *ASSISTANT_MODELS,
         *PR_WATCH_MODELS,
         *PAIRED_DEVICE_MODELS,

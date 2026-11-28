@@ -131,8 +131,10 @@ class DesktopAudio:
         rec = self.recorder
         if rec is None:
             return {'ok': True, 'listening': False, 'pieces': [], 'last_sound': 0.0}
+        # quiet_s is measured here, so the engine on another machine needs no matching clock.
+        quiet = round(time.time() - rec.last_sound, 2) if rec.last_sound else None
         return {'ok': True, 'listening': rec.alive, 'pieces': rec.pieces_after(after),
-                'last_sound': rec.last_sound, 'error': rec.error}
+                'last_sound': rec.last_sound, 'quiet_s': quiet, 'error': rec.error}
 
     # --------------------------------------------------------------- speaking
 

@@ -4,7 +4,12 @@ Every few minutes (``poll``, from the scheduler's automation tick) the
 connected Google Calendar of each person who has this on is read for the
 next day. Only events with a Google Meet, Teams or Zoom link are kept, and
 only their title, times, organiser and link. No model is involved, and the
-rest of the event (description, guests) is never stored.
+rest of the event (description, guests) is not stored with the call.
+
+When an agent joins one, the event is read once more and its agenda and
+guests' names (never their addresses) become the meeting's background,
+with the open items from the last meeting of the same series
+(``extras.event_context``, ``extras.previous_context``).
 
 Each call found is then:
 
@@ -437,7 +442,12 @@ async def _join(call: CalendarCall, settings: CalendarCallSettings) -> bool:
                                      {'status': JOINED}) != 1:
         return False
     try:
-        row = await start_live(call.user_id, url=call.url, agent_id=settings.agent_id, title=call.title)
+        from cognitrix.meetings import extras
+
+        event = await extras.fetch_event(call.user_id, call.event_id)
+        background = extras.event_context(event)[0] if event else ''
+        row = await start_live(call.user_id, url=call.url, agent_id=settings.agent_id, title=call.title,
+                               context=background, series_id=call.series_id)
     except meeting_notes.MeetingError as exc:
         await CalendarCall.update_one({'id': call.id}, {'status': FAILED, 'error': str(exc)[:300]})
         await create_notification(call.user_id, f"Couldn't send an agent to {call.title}", str(exc)[:300],

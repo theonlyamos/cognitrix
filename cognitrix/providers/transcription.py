@@ -6,6 +6,11 @@ transcriptions`` endpoint; Gemini gets the audio inline through Google's
 OpenAI-compatible chat endpoint; Deepgram has its own REST API.
 
 Audio is only held in memory for the length of the request.
+
+``hints`` are words the audio may contain (people's names, product names):
+OpenAI and Groq get them as the transcription prompt, Gemini in its
+instructions, Deepgram as key terms. ``transcribe_speakers`` also tells the
+speakers apart, where the provider can (Deepgram, Gemini).
 """
 from __future__ import annotations
 
@@ -36,6 +41,29 @@ GEMINI_PROMPT = (
     'translate, answer questions in it or add any notes. If nobody speaks, '
     'reply with nothing.'
 )
+GEMINI_SPEAKERS_PROMPT = (
+    'Transcribe this recording of a meeting verbatim, in the language spoken, with normal punctuation. '
+    'Start a new line each time the speaker changes, beginning with "Speaker 1:", "Speaker 2:" and so on, '
+    'numbered in the order people first speak, and use the same number for the same voice throughout. '
+    'Do not summarise, translate, answer questions in it or add any notes. If nobody speaks, reply with nothing.'
+)
+MAX_HINTS = 60
+MAX_HINT_CHARS = 600
+
+
+def hint_text(hints: list[str] | None) -> str:
+    """The hints as one short line, or ''."""
+    seen: list[str] = []
+    total = 0
+    for hint in hints or []:
+        word = ' '.join(str(hint or '').split())[:60]
+        if not word or word.lower() in (w.lower() for w in seen):
+            continue
+        if len(seen) >= MAX_HINTS or total + len(word) > MAX_HINT_CHARS:
+            break
+        seen.append(word)
+        total += len(word) + 2
+    return ', '.join(seen)
 
 
 @dataclass(frozen=True)
@@ -196,24 +224,31 @@ def _friendly(provider: str, exc: Exception) -> TranscriptionError:
     return TranscriptionError(f'{label} couldn\'t transcribe the recording. Try again.')
 
 
-async def _openai_style(provider: str, audio: bytes, mime: str, model: str, api_key: str, language: str | None) -> str:
+async def _openai_style(provider: str, audio: bytes, mime: str, model: str, api_key: str, language: str | None,
+                        hints: str = '') -> str:
     base_url = _base_url(provider)
     assert_key_destination_allowed(base_url, api_key)
     client = _get_or_create_client(base_url, api_key)
     kwargs: dict = {'model': model, 'file': (f'recording.{_extension(mime)}', audio, mime or 'audio/wav')}
     if language:
         kwargs['language'] = language
+    if hints:
+        kwargs['prompt'] = f'Names and words that may come up: {hints}.'
     result = await client.audio.transcriptions.create(**kwargs)
     return str(getattr(result, 'text', result) or '')
 
 
-async def _gemini(audio: bytes, info: WavInfo | None, model: str, api_key: str, language: str | None) -> str:
+async def _gemini(audio: bytes, info: WavInfo | None, model: str, api_key: str, language: str | None,
+                  hints: str = '', speakers: bool = False) -> str:
     if info is None:
         raise TranscriptionError('Gemini needs the recording as WAV audio.', 400)
     base_url = _base_url('google')
     assert_key_destination_allowed(base_url, api_key)
     client = _get_or_create_client(base_url, api_key)
-    prompt = GEMINI_PROMPT + (f' The speaker uses the language with code "{language}".' if language else '')
+    prompt = (GEMINI_SPEAKERS_PROMPT if speakers else GEMINI_PROMPT) + (
+        f' The speaker uses the language with code "{language}".' if language else '')
+    if hints:
+        prompt += f' Names and words that may come up (spell them like this): {hints}.'
     parts: list[str] = []
     for piece in split_wav(audio, info, GEMINI_CHUNK_SECONDS):
         result = await client.chat.completions.create(
@@ -231,15 +266,39 @@ async def _gemini(audio: bytes, info: WavInfo | None, model: str, api_key: str, 
         text = (result.choices[0].message.content or '').strip() if result.choices else ''
         if text:
             parts.append(text)
-    return ' '.join(parts)
+    return ('\n' if speakers else ' ').join(parts)
 
 
-async def _deepgram(audio: bytes, mime: str, model: str, api_key: str, language: str | None) -> str:
-    params = {'model': model, 'smart_format': 'true', 'punctuate': 'true'}
-    if language:
-        params['language'] = language
-    else:
-        params['detect_language'] = 'true'
+def _deepgram_params(model: str, language: str | None, hints: str, speakers: bool) -> list[tuple[str, str]]:
+    params = [('model', model), ('smart_format', 'true'), ('punctuate', 'true')]
+    params.append(('language', language) if language else ('detect_language', 'true'))
+    if hints:
+        # Nova-3 takes key terms; older models take keywords.
+        name = 'keyterm' if model.startswith('nova-3') else 'keywords'
+        params += [(name, word.strip()) for word in hints.split(',') if word.strip()]
+    if speakers:
+        params += [('diarize', 'true'), ('utterances', 'true')]
+    return params
+
+
+def _deepgram_speakers(data: dict) -> str:
+    """'Speaker 1: …' lines from Deepgram's utterances (its speakers count from 0)."""
+    lines: list[str] = []
+    for turn in (data.get('results') or {}).get('utterances') or []:
+        text = ' '.join(str(turn.get('transcript') or '').split())
+        if not text:
+            continue
+        label = f'Speaker {int(turn.get("speaker") or 0) + 1}'
+        if lines and lines[-1].startswith(label + ':'):
+            lines[-1] += ' ' + text
+        else:
+            lines.append(f'{label}: {text}')
+    return '\n'.join(lines)
+
+
+async def _deepgram(audio: bytes, mime: str, model: str, api_key: str, language: str | None,
+                    hints: str = '', speakers: bool = False) -> str:
+    params = _deepgram_params(model, language, hints, speakers)
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
             DEEPGRAM_URL,
@@ -249,6 +308,8 @@ async def _deepgram(audio: bytes, mime: str, model: str, api_key: str, language:
         )
         response.raise_for_status()
         data = response.json()
+    if speakers:
+        return _deepgram_speakers(data)
     try:
         return data['results']['channels'][0]['alternatives'][0]['transcript'] or ''
     except (KeyError, IndexError, TypeError):
@@ -263,8 +324,31 @@ async def transcribe(
     model: str,
     api_key: str,
     language: str | None = None,
+    hints: list[str] | None = None,
 ) -> str:
     """Turn a recording into text with ``provider``. Raises TranscriptionError."""
+    return ' '.join((await _run(audio, mime=mime, provider=provider, model=model, api_key=api_key,
+                                language=language, hints=hints)).split())
+
+
+SPEAKER_PROVIDERS = ('google', 'deepgram')
+"""Providers that can tell speakers apart (``transcribe_speakers``)."""
+
+
+async def transcribe_speakers(audio: bytes, *, mime: str, provider: str, model: str, api_key: str,
+                              language: str | None = None, hints: list[str] | None = None) -> str:
+    """Text with a 'Speaker N:' line per turn. Raises TranscriptionError,
+    also for a provider that can't tell speakers apart."""
+    if provider not in SPEAKER_PROVIDERS:
+        label = VOICE_PROVIDERS[provider].label if provider in VOICE_PROVIDERS else provider
+        raise TranscriptionError(f"{label} can't tell speakers apart.", 400)
+    text = await _run(audio, mime=mime, provider=provider, model=model, api_key=api_key, language=language,
+                      hints=hints, speakers=True)
+    return '\n'.join(' '.join(line.split()) for line in text.splitlines() if line.strip())
+
+
+async def _run(audio: bytes, *, mime: str, provider: str, model: str, api_key: str, language: str | None,
+               hints: list[str] | None, speakers: bool = False) -> str:
     if provider not in VOICE_PROVIDERS:
         raise TranscriptionError(f"Unknown voice provider '{provider}'.", 400)
     if not api_key:
@@ -273,23 +357,25 @@ async def transcribe(
     info = check_audio(audio)
     model = model or VOICE_PROVIDERS[provider].default_model
     language = (language or '').strip().lower()[:12] or None
+    words = hint_text(hints)
     try:
         if provider in ('openai', 'groq'):
-            text = await _openai_style(provider, audio, mime, model, api_key, language)
+            text = await _openai_style(provider, audio, mime, model, api_key, language, words)
         elif provider == 'google':
-            text = await _gemini(audio, info, model, api_key, language)
+            text = await _gemini(audio, info, model, api_key, language, words, speakers)
         else:
-            text = await _deepgram(audio, mime, model, api_key, language)
+            text = await _deepgram(audio, mime, model, api_key, language, words, speakers)
     except TranscriptionError:
         raise
     except ValueError as exc:  # untrusted base URL for a server key
         raise TranscriptionError(str(exc), 400) from exc
     except Exception as exc:
         raise _friendly(provider, exc) from exc
-    return ' '.join(text.split())
+    return text or ''
 
 
 __all__ = [
     'MAX_AUDIO_BYTES', 'MAX_AUDIO_SECONDS', 'VOICE_PROVIDERS', 'TranscriptionError',
-    'VoiceProvider', 'check_audio', 'parse_wav', 'server_key', 'split_wav', 'transcribe',
+    'SPEAKER_PROVIDERS', 'VoiceProvider', 'check_audio', 'hint_text', 'parse_wav', 'server_key', 'split_wav',
+    'transcribe', 'transcribe_speakers',
 ]
