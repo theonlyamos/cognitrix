@@ -1330,3 +1330,88 @@ async def test_steer_and_search_tools(call, monkeypatch):
 
     for name in ('Steer Meeting', 'Search Meetings'):
         assert DestructiveOpDetector().analyze(name, {}).risk_level == RiskLevel.LOW
+
+
+async def test_speech_heard_while_paused_stays_dropped_even_if_notes_resume_before_it_is_transcribed(call, monkeypatch):
+    c = await _in_call(call)
+    # Paused from the page: pieces heard from now on are off the record.
+    await c.set_paused(True, by='Sam')
+    c.piece_no = 1  # one piece arrives while paused, still waiting to be transcribed
+    await c.set_paused(False, by='Sam')  # resumed before its text came back
+    _saying(call, monkeypatch, 'The acquisition price is 40 million.', 'Next item is hiring.')
+    await c._one(_b64(), '0:02', 1)
+    c.piece_no = 2
+    await c._one(_b64(), '0:03', 2)
+    assert not any('40 million' in ln for ln in c.lines) and 'hiring' in c.lines[-1]
+
+    # Said in the call: pieces already queued after "pause notes" are dropped too.
+    c2 = await _in_call(call)
+    c2.piece_no = 3  # "pause notes", then two more pieces queued before its text came back
+    _saying(call, monkeypatch, 'Ada, pause the notes.', 'Salary bands are 90 to 120.', 'Still private.',
+            'Back to the roadmap.')
+    await c2._one(_b64(), '0:01', 1)
+    await c2.set_paused(False, by='Sam')  # the page resumes while pieces 2 and 3 wait
+    await c2._one(_b64(), '0:02', 2)
+    await c2._one(_b64(), '0:03', 3)
+    c2.piece_no = 4
+    await c2._one(_b64(), '0:04', 4)
+    text = '\n'.join(c2.lines)
+    assert 'Salary' not in text and 'Still private' not in text and 'roadmap' in c2.lines[-1]
+
+
+async def test_a_lost_connection_without_a_rejoin_button_is_reopened_after_a_few_checks(call, monkeypatch):
+    c = await _in_call(call)
+    dropped = {'on': True}
+    elements = call.driver._elements
+    opened = call.driver.open
+
+    def look_elements():
+        return [_el('heading', 'Connection lost')] if dropped['on'] else elements()
+
+    def reopen(target, args=None, timeout_s=12.0):
+        dropped['on'] = False
+        return opened(target, args, timeout_s)
+
+    monkeypatch.setattr(call.driver, '_elements', look_elements)
+    monkeypatch.setattr(call.driver, 'open', reopen)
+    for _ in range(call.live.LOST_CHECKS - 1):
+        assert await c.check_screen() and c.rejoins == 0
+    assert await c.check_screen()
+    assert c.rejoins == 1 and not dropped['on'] and '(back in the call)' in c.lines[-1]
+
+
+async def test_only_one_process_takes_over_a_call_after_a_restart(call, monkeypatch):
+    held = asyncio.Event()
+
+    async def run(item):
+        await held.wait()
+
+    monkeypatch.setattr(call.live, 'run', run)
+    row = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1', runner='old',
+                                 url='https://meet.google.com/abc-defg-hij', progress='listening')
+    await row.save()
+    stale = await call.notes.MeetingNote.find({'kind': 'live'})  # what a second process read at the same time
+    try:
+        assert await call.live.resume_interrupted() == 1
+        assert (await call.notes.MeetingNote.get(row.id)).runner == call.live.BOOT
+        assert await call.live.resume_interrupted() == 0  # already ours
+        other = AsyncFind(stale)
+        monkeypatch.setattr(call.live, 'BOOT', 'second-process')
+        monkeypatch.setattr(call.notes.MeetingNote, 'find', other)
+        monkeypatch.setattr(call.live, '_live', {})
+        monkeypatch.setattr(call.live, 'fail_interrupted', other.nothing)
+        assert await call.live.resume_interrupted() == 0
+    finally:
+        held.set()
+        await asyncio.sleep(0)
+
+
+class AsyncFind:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def __call__(self, *args, **kwargs):
+        return self.rows
+
+    async def nothing(self):
+        return None

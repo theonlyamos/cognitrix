@@ -236,6 +236,7 @@ async def start_live(user_key: str, *, url: str, agent_id: str = '', title: str 
         status=live_meetings.JOINING, progress='starting its computer',
         context=background, watch_words=extras.words(watch_words or []), share=share or settings.share,
         session_id=session_id, chat_agent_id=chat_agent_id, series_id=series_id, test=bool(test),
+        runner=live_meetings.BOOT,
     )
     await row.save()
     live_meetings.start(str(row.id))

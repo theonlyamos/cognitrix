@@ -203,6 +203,8 @@ class MeetingNote(Model):
     live_notes: str = ''
     """Running notes while the call goes on."""
     rejoins: int = 0
+    runner: str = ''
+    """The process running this live call (live.BOOT), so only one picks it up after a restart."""
     seen: str = ''
     """What was on the agent's screen when joining failed (control names)."""
     test: bool = False
@@ -215,7 +217,7 @@ class MeetingNote(Model):
 
     @validator('title', 'filename', 'agent_id', 'language', 'progress', 'transcript', 'notes', 'error', 'url',
                'platform', 'bot_name', 'session_id', 'chat_agent_id', 'series_id', 'context', 'owner_question',
-               'owner_answer', 'live_notes', 'seen', 'speaker_transcript', pre=True)
+               'owner_answer', 'live_notes', 'seen', 'speaker_transcript', 'runner', pre=True)
     def _text(cls, value):
         return value or ''
 

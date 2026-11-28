@@ -445,6 +445,7 @@ _MEETING_MIGRATION_COLUMNS = (
     ('paused', 'BOOLEAN DEFAULT 0'),
     ('rejoins', 'INTEGER DEFAULT 0'),
     ('test', 'BOOLEAN DEFAULT 0'),
+    ('runner', "TEXT DEFAULT ''"),
 )
 
 _AGENT_MIGRATION_COLUMNS = (

@@ -42,6 +42,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import SplitResult, parse_qs, quote, urlsplit
@@ -646,6 +647,11 @@ class Live:
 
 _live: dict[str, Live] = {}
 
+# This process. A call's row names the process running it (``runner``), so
+# after a restart only one process can take it over: the claim succeeds only
+# while the row still names the process that was running it before.
+BOOT = uuid.uuid4().hex
+
 
 def running(meeting_id: str) -> bool:
     item = _live.get(meeting_id)
@@ -684,6 +690,8 @@ def steer(meeting_id: str, kind: str, text: str = '') -> bool:
 
 
 def start(meeting_id: str, *, resume: bool = False) -> None:
+    """Run the call in this process (start_live and resume_interrupted mark
+    the row with ``BOOT`` first)."""
     item = Live(meeting_id, resume=resume)
     _live[meeting_id] = item
     item.task = asyncio.create_task(run(item))
@@ -934,6 +942,12 @@ class _Call:
         self.queue: asyncio.Queue = asyncio.Queue()
         self.worker: asyncio.Task | None = None
         self.paused = bool(row.paused)
+        # Off the record by piece number, not by the state when a piece's text
+        # comes back: a piece heard while paused stays dropped even if notes
+        # resume before its transcription finishes, and pieces already queued
+        # after "pause notes" was said are dropped too. [start, end or None].
+        self.piece_no = 0
+        self.off: list[list[int | None]] = [[1, None]] if self.paused else []
         self.paused_at = 0.0
         self.pending_question = False
         self.last_heard = time.monotonic()
@@ -976,7 +990,8 @@ class _Call:
             if seq <= self.after:
                 continue
             self.after = seq
-            self.queue.put_nowait((piece.get('audio') or '', self.now()))
+            self.piece_no += 1
+            self.queue.put_nowait((piece.get('audio') or '', self.now(), self.piece_no))
         if self.worker is None or self.worker.done():
             self.worker = asyncio.create_task(self._work())
 
@@ -995,9 +1010,9 @@ class _Call:
 
     async def _work(self) -> None:
         while True:
-            audio, at = await self.queue.get()
+            audio, at, number = await self.queue.get()
             try:
-                await self._one(audio, at)
+                await self._one(audio, at, number)
             except Exception:
                 logger.exception('Meeting %s: a piece of speech could not be handled', self.id)
             finally:
@@ -1019,7 +1034,7 @@ class _Call:
 
     def _keep_audio(self, clip: bytes) -> None:
         """The speech, kept on the engine for the second pass with speakers."""
-        if self.audio_path is None or self.paused:
+        if self.audio_path is None:
             return
         from cognitrix.providers.transcription import parse_wav
 
@@ -1033,11 +1048,15 @@ class _Call:
         except OSError:
             logger.debug('Meeting %s: could not keep audio for the second pass', self.id, exc_info=True)
 
-    async def _one(self, audio_b64: str, at: str) -> None:
+    def off_record(self, number: int) -> bool:
+        return any(start <= number and (end is None or number <= end) for start, end in self.off)
+
+    async def _one(self, audio_b64: str, at: str, number: int = 0) -> None:
+        off = self.off_record(number) if number else self.paused
         clip = base64.b64decode(audio_b64 or '')
         text = await self._transcribe(clip)
         if text is None:
-            if not self.paused:
+            if not off:
                 self.add('(some speech here could not be transcribed)', at)
                 await self.save()
             return
@@ -1049,14 +1068,14 @@ class _Call:
         from cognitrix.meetings import extras
 
         order = extras.command(text) if named else None
-        if self.paused:
-            if order and order[0] == 'resume':
-                await self.set_paused(False, by='the room')
+        if off:
+            if order and order[0] == 'resume' and self.paused:
+                await self.set_paused(False, by='the room', at=number)
             return
         self._keep_audio(clip)
         self.add(text, at)
         if order:
-            await self._obey(order)
+            await self._obey(order, number)
         elif named:
             self.pending_question = True
         hits = extras.watch_hits(text, self.watch)
@@ -1067,10 +1086,10 @@ class _Call:
                 await _alert(self.row, f'"{word}" came up in {self.row.title}', f'[{at}] {text}'[:300],
                              urgent=True)
 
-    async def _obey(self, order: tuple[str, str]) -> None:
+    async def _obey(self, order: tuple[str, str], number: int = 0) -> None:
         kind, detail = order
         if kind == 'pause':
-            await self.set_paused(True, by='the room')
+            await self.set_paused(True, by='the room', at=number + 1 if number else None)
         elif kind == 'resume':
             await self.say_now('I am listening and taking notes.', 'chat')
         elif kind == 'leave':
@@ -1080,10 +1099,17 @@ class _Call:
         elif kind == 'mark':
             self.add(f'(marked: {detail} — the line above)')
 
-    async def set_paused(self, paused: bool, *, by: str) -> None:
+    async def set_paused(self, paused: bool, *, by: str, at: int | None = None) -> None:
+        """``at``: the first piece off the record (pausing) or the last one
+        (resuming); by default the pieces already handed over stay as they
+        were heard and the change applies from the next one."""
         if paused == self.paused:
             return
         self.paused = paused
+        if paused:
+            self.off.append([self.piece_no + 1 if at is None else at, None])
+        elif self.off and self.off[-1][1] is None:
+            self.off[-1][1] = self.piece_no if at is None else at
         if paused:
             self.paused_at = time.monotonic()
             self.pending_question = False
@@ -1235,10 +1261,22 @@ class _Call:
             if self.lost < LOST_CHECKS:
                 return True
             return await self.rejoin('the call window was lost')
-        self.lost = 0
         gone = view.ended() or view.says(REFUSED)
-        if not gone or view.in_call(self.row.platform):
+        if view.in_call(self.row.platform):
+            self.lost = 0
             return True
+        if not gone:
+            if not view.says(DROPPED):
+                self.lost = 0
+                return True
+            # "Connection lost" with no Rejoin button: the page may be
+            # reconnecting by itself, so give it a few checks, then open the
+            # call again.
+            self.lost += 1
+            if self.lost < LOST_CHECKS:
+                return True
+            return await self.rejoin('the connection was lost')
+        self.lost = 0
         if can_rejoin(view):
             return await self.rejoin(f'dropped out ({gone})')
         self.add(f'(the call ended: {gone})')
@@ -1646,11 +1684,13 @@ async def resume_interrupted() -> int:
     picked = 0
     if sandbox_mode() is not None:
         for row in await MeetingNote.find({'kind': 'live'}) or []:
-            if row.status != LIVE or running(str(row.id)) or not row.url or not row.agent_id:
+            if (row.status != LIVE or running(str(row.id)) or not row.url or not row.agent_id
+                    or row.runner == BOOT):
                 continue
-            # Claim it, so two processes never both pick it up.
-            if await MeetingNote.update_one({'id': row.id, 'status': LIVE, 'progress': row.progress},
-                                            {'progress': 'picking the call back up'}) != 1:
+            # Claim it from the process that ran it, so two processes starting
+            # together never both pick it up.
+            if await MeetingNote.update_one({'id': row.id, 'status': LIVE, 'runner': row.runner},
+                                            {'runner': BOOT, 'progress': 'picking the call back up'}) != 1:
                 continue
             start(str(row.id), resume=True)
             picked += 1
