@@ -602,7 +602,8 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
             elif method == 'POST' and action == 'start':
                 self._reply(200, audio.start())
             elif method == 'POST' and action == 'stop':
-                self._reply(200, audio.stop())
+                after = self._body().get('after')
+                self._reply(200, audio.stop(int(after) if after is not None else None))
             elif method == 'POST' and action == 'say':
                 body = self._body()
                 try:

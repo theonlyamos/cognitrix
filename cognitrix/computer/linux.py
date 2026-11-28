@@ -55,6 +55,7 @@ _MAX_DEPTH = 40
 _TEXT_LIMIT = 2000
 
 # AtspiStateType
+_ST_ACTIVE = 1
 _ST_CHECKED, _ST_DEFUNCT, _ST_EDITABLE, _ST_ENABLED, _ST_EXPANDABLE, _ST_EXPANDED = 4, 6, 7, 8, 9, 10
 _ST_FOCUSABLE, _ST_FOCUSED, _ST_HORIZONTAL, _ST_PRESSED, _ST_SELECTABLE, _ST_SELECTED = 11, 12, 14, 20, 22, 23
 _ST_SENSITIVE, _ST_SHOWING, _ST_VISIBLE = 24, 25, 30
@@ -427,9 +428,9 @@ class _Atspi:
         if not ptr:
             return {_ST_DEFUNCT}
         try:
-            return {s for s in (_ST_CHECKED, _ST_DEFUNCT, _ST_EDITABLE, _ST_ENABLED, _ST_EXPANDABLE, _ST_EXPANDED,
-                                _ST_FOCUSABLE, _ST_FOCUSED, _ST_HORIZONTAL, _ST_PRESSED, _ST_SELECTABLE,
-                                _ST_SELECTED, _ST_SENSITIVE, _ST_SHOWING, _ST_VISIBLE)
+            return {s for s in (_ST_ACTIVE, _ST_CHECKED, _ST_DEFUNCT, _ST_EDITABLE, _ST_ENABLED, _ST_EXPANDABLE,
+                                _ST_EXPANDED, _ST_FOCUSABLE, _ST_FOCUSED, _ST_HORIZONTAL, _ST_PRESSED,
+                                _ST_SELECTABLE, _ST_SELECTED, _ST_SENSITIVE, _ST_SHOWING, _ST_VISIBLE)
                     if self.lib.atspi_state_set_contains(ptr, s)}
         finally:
             self.gobject.g_object_unref(ptr)
@@ -482,6 +483,29 @@ def _number(value: float) -> str:
 
 
 # --------------------------------------------------------------- backend
+
+# What browsers add to a window's accessible name (for screen readers) but
+# not to its title: "Meet - Microphone recording - Chromium".
+_NAME_ADDITIONS = re.compile(
+    r' - (?:audio playing|audio muted|site muted|microphone recording|camera recording|'
+    r'camera and microphone recording|camera or microphone recording|sharing (?:screen|window|tab|this tab)|'
+    r'(?:screen|window|tab) sharing|recording|picture in picture|bluetooth device connected|'
+    r'usb device connected|serial port connected|hid device connected|connected to a (?:bluetooth|usb|serial|hid) '
+    r'device|network error|crashed|unresponsive|memory usage - [\d.,]+ ?[kmgt]?b|'
+    r'pinned|this tab is using your (?:camera|microphone|camera and microphone))(?= - |$)', re.I)
+
+
+def title_key(name: str) -> str:
+    """A window's title or accessible name without the browser's additions."""
+    previous = None
+    name = (name or '').strip()
+    while previous != name:
+        previous, name = name, _NAME_ADDITIONS.sub('', name)
+    return name.strip().lower()
+
+
+_CHROMIUM_APPS = frozenset({'chrome', 'chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable'})
+
 
 class LinuxBackend:
     """See the module docstring. One lock guards both libraries."""
@@ -682,7 +706,16 @@ class LinuxBackend:
 
     # -- controls -------------------------------------------------------
     def _frame(self, info: WindowInfo) -> _Acc | None:
-        """The accessibility object of an X window: same process, same title."""
+        """The accessibility object of an X window: same process, same title.
+
+        Chromium names its frames for screen readers, so a frame's name can
+        carry more than the window's title: what the page is doing ("Meet -
+        Microphone recording - Chromium" for the window "Meet - Chromium")
+        and, with several profiles, the profile's name after it. One process
+        also owns all its windows, often with the same title (two Meet
+        windows). Names are compared without those additions; windows that
+        still look alike are told apart by where they are, by which one is
+        in front, and last by the order they were made in."""
         a = self.atspi
         if a is None or not info.pid:
             return None
@@ -696,13 +729,51 @@ class LinuxBackend:
                     frames.append((top, a.name(top)))
         if not frames:
             return None
-        for frame, name in frames:
-            if name == info.title:
-                return frame
         if len(frames) == 1:
             return frames[0][0]
-        showing = [f for f, _ in frames if _ST_SHOWING in a.states(f)]
+        key = title_key(info.title)
+        chromium = info.app in _CHROMIUM_APPS
+
+        def same(name: str) -> bool:
+            other = title_key(name)
+            return bool(key) and (other == key or (chromium and other.startswith(key + ' - ')))
+
+        alike = [f for f, name in frames if same(name)]
+        if len(alike) == 1:
+            return alike[0]
+        if len(alike) > 1:
+            return self._twin_frame(info, key, alike)
+        exact = [f for f, name in frames if name == info.title]
+        if len(exact) == 1:
+            return exact[0]
+        showing = [f for f, name in frames if name and _ST_SHOWING in a.states(f)]
         return showing[0] if len(showing) == 1 else None
+
+    def _twin_frame(self, info: WindowInfo, key: str, alike: list[_Acc]) -> _Acc | None:
+        """Which of several frames with one title belongs to this window."""
+        a = self.atspi
+        positioned = [f for f in alike if a.extents(f) == tuple(info.rect)]
+        if len(positioned) == 1:
+            return positioned[0]
+        twins = sorted(w for w in self._client_windows() if (other := self._info(w)) is not None
+                       and other.pid == info.pid and title_key(other.title) == key)
+        # Chromium's windows are made, and listed by AT-SPI, in the same order
+        # as their X ids grow. Other toolkits list a window again at the end
+        # when it is hidden and shown (GTK), so there the order says nothing:
+        # no frame (no controls, try again) beats another window's controls.
+        by_order = (alike[twins.index(info.id)]
+                    if info.app in _CHROMIUM_APPS and len(twins) == len(alike) and info.id in twins else None)
+        # The window in front is the one frame that is active: that settles
+        # it for that window, and rules its frame out for the others.
+        active = [f for f in alike if _ST_ACTIVE in a.states(f)]
+        if len(active) == 1 and self.foreground() in twins:
+            if info.id == self.foreground():
+                return active[0]
+            others = [f for f in alike if f is not active[0]]
+            if len(others) == 1:
+                return others[0]
+            return by_order if by_order is not active[0] else None
+        return by_order
 
     def _describe(self, ref: _Ref, rects: bool = True) -> Element | None:
         a = self.atspi
@@ -755,7 +826,7 @@ class LinuxBackend:
                 value = _number(current)
                 if role != 'progress bar' and role != 'level bar':
                     actions.append('set_value')
-        elif role in ('text', 'terminal', 'paragraph', 'document text') and a.has(acc, 'text'):
+        elif role in ('entry', 'text', 'terminal', 'paragraph', 'document text') and a.has(acc, 'text'):
             value = a.text(acc)
         if 'set_value' in actions and 'invoke' in actions:
             # A field's own action is "activate" (like pressing Enter), not a click.

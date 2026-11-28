@@ -33,7 +33,7 @@ export interface MeetingSummary {
   bot_name?: string;
   reply_mode?: ReplyMode;
   answers?: number;
-  /** The agent is in the call right now. */
+  /** The live meeting worker is running, including while it writes notes after the call. */
   in_call?: boolean;
 }
 interface Meeting extends MeetingSummary { transcript: string; notes: string }
@@ -76,7 +76,7 @@ function day(stamp: string): string {
 function statusText(meeting: MeetingSummary): string {
   if (meeting.status === 'error') return 'failed';
   if (meeting.status === 'live') return ['in the call', length(meeting.seconds)].filter(Boolean).join(' · ');
-  if (meeting.status === 'waiting') return 'waiting to be let in';
+  if (meeting.status === 'waiting') return meeting.progress || 'waiting to be let in';
   if (meeting.status === 'joining') return meeting.progress || 'joining';
   if (meeting.status === 'done') return [day(meeting.created_at), length(meeting.seconds)].filter(Boolean).join(' · ');
   return meeting.progress || (meeting.status === 'queued' ? 'waiting to start' : meeting.status);
@@ -241,7 +241,7 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
     }
   };
 
-  if (meeting.in_call || IN_CALL.includes(meeting.status)) {
+  if (IN_CALL.includes(meeting.status)) {
     return (
       <div className="border-t border-line px-4 py-3">
         <LiveCall meeting={meeting} agents={agents} onChanged={onChanged} onReload={load} />
