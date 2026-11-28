@@ -90,6 +90,12 @@ def _set(**values):
     app_settings.set_many(values)
 
 
+@pytest.fixture
+def public_on():
+    """The public address is on in Settings (its door lets nothing through otherwise)."""
+    _set(COGNITRIX_TAILSCALE=True, COGNITRIX_TAILSCALE_FUNNEL=True)
+
+
 # ---------------------------------------------------------------------------
 # The client
 # ---------------------------------------------------------------------------
@@ -221,7 +227,7 @@ async def test_tailnet_door_keeps_who_the_visitor_is():
     assert seen['client'][0] == '100.64.0.9'               # never this machine
 
 
-async def test_identity_headers_count_nowhere_else():
+async def test_identity_headers_count_nowhere_else(public_on):
     # Straight at the main listener (which the local network can reach): dropped.
     seen = (await _through(doors.DoorGuard(_echo), 'GET', '/api/v1/agents', TAILSCALE_HEADERS)).json()
     assert seen['door'] == 'direct'
@@ -233,7 +239,7 @@ async def test_identity_headers_count_nowhere_else():
     assert not [h for h in seen['headers'] if h.startswith('tailscale-')]
 
 
-async def test_door_requests_never_look_like_this_machine():
+async def test_door_requests_never_look_like_this_machine(public_on):
     for forwarded in ('127.0.0.1', '::1', '0.0.0.0', 'garbage', '', '[::1]', '127.0.0.1, 100.64.0.9'):
         headers = {'X-Forwarded-For': forwarded} if forwarded else {}
         headers['fly-client-ip'] = '127.0.0.1'
@@ -243,7 +249,7 @@ async def test_door_requests_never_look_like_this_machine():
             assert 'fly-client-ip' not in seen['headers']
 
 
-async def test_public_door_answers_404_before_the_app(monkeypatch):
+async def test_public_door_answers_404_before_the_app(public_on):
     reached = []
 
     async def app(scope, receive, send):
@@ -259,7 +265,7 @@ async def test_public_door_answers_404_before_the_app(monkeypatch):
     assert reached == ['/api/v1/hooks/a/b']
 
 
-async def test_public_door_limits_one_address(monkeypatch):
+async def test_public_door_limits_one_address(public_on, monkeypatch):
     monkeypatch.setattr(doors, '_hits', {})
     monkeypatch.setattr(doors, 'RATE_LIMIT', 3)
     public = doors.door_app(_echo, doors.PUBLIC)
@@ -270,7 +276,7 @@ async def test_public_door_limits_one_address(monkeypatch):
     assert other.status_code == 200
 
 
-async def test_public_door_closes_live_connections_unless_the_whole_app_is_public():
+async def test_public_door_closes_live_connections_unless_the_whole_app_is_public(public_on):
     async def connect(allow: str) -> list[dict]:
         app_settings.set_many({'COGNITRIX_TAILSCALE_FUNNEL_ALLOW': allow})
         sent: list[dict] = []
@@ -290,7 +296,39 @@ async def test_public_door_closes_live_connections_unless_the_whole_app_is_publi
     assert (await connect('app'))[0] == {'type': 'websocket.accept'}
 
 
-async def test_the_real_app_says_which_door(monkeypatch):
+async def test_public_door_lets_nothing_through_while_the_public_address_is_off():
+    """Tailscale may still forward to the door after Settings turned the address off
+    (taking it down can fail): the door itself refuses then."""
+    reached = []
+
+    async def app(scope, receive, send):
+        reached.append(scope['path'])
+        await _echo(scope, receive, send)
+
+    public = doors.door_app(app, doors.PUBLIC)
+    for on, public_wanted, allow in ((False, False, 'webhooks'), (True, False, 'webhooks'), (False, True, 'app'),
+                                     (True, False, 'app')):
+        settings = {'COGNITRIX_TAILSCALE': on, 'COGNITRIX_TAILSCALE_FUNNEL': public_wanted,
+                    'COGNITRIX_TAILSCALE_FUNNEL_ALLOW': allow}
+        _set(**settings)
+        assert (await _through(public, 'POST', '/api/v1/hooks/a/b')).status_code == 404, settings
+        sent: list[dict] = []
+
+        async def receive():
+            return {'type': 'websocket.connect'}
+
+        async def send(message, sent=sent):
+            sent.append(message)
+
+        await public({'type': 'websocket', 'path': '/ws', 'headers': [], 'client': ('127.0.0.1', 1), 'scheme': 'ws'},
+                     receive, send)
+        assert sent == [{'type': 'websocket.close', 'code': 1008}]
+    assert reached == []
+    _set(COGNITRIX_TAILSCALE=True, COGNITRIX_TAILSCALE_FUNNEL=True, COGNITRIX_TAILSCALE_FUNNEL_ALLOW='webhooks')
+    assert (await _through(public, 'POST', '/api/v1/hooks/a/b')).status_code == 200 and reached == ['/api/v1/hooks/a/b']
+
+
+async def test_the_real_app_says_which_door(public_on, monkeypatch):
     from cognitrix.api.main import app
 
     seen = await _through(doors.door_app(app, doors.PUBLIC), 'GET', '/api/v1/tailscale/door',
@@ -380,6 +418,26 @@ def test_public_address_for_webhooks(fake, monkeypatch):
     _set(COGNITRIX_TAILSCALE_FUNNEL_PORT='10000')
     service.reconcile()
     assert sorted(fake.web) == [f'{NAME}:10000', f'{NAME}:443'] and fake.funnel == {f'{NAME}:10000'}
+
+
+def test_an_address_tailscale_will_not_remove_is_tried_again(fake):
+    _set(COGNITRIX_TAILSCALE=True, COGNITRIX_TAILSCALE_SERVE=True, COGNITRIX_TAILSCALE_FUNNEL=True)
+    assert service.reconcile()['public']['active']
+    # Turned off in Settings, but Tailscale refuses to take it down.
+    fake.denied = True
+    _set(COGNITRIX_TAILSCALE_FUNNEL=False)
+    snap = service.reconcile()
+    assert not snap['public']['active'] and not snap['public']['wanted']
+    assert snap['public']['problem'] == 'not_removed' and 'Access denied' in snap['public']['detail']
+    assert fake.funnel == {f'{NAME}:8443'}                 # still forwarded by Tailscale
+    assert addresses.hooks_url() == ''                     # and no longer given out as an address
+    # It stays written down as ours, so the next check tries again and succeeds.
+    fake.denied = False
+    snap = service.reconcile()
+    assert snap['public']['problem'] == '' and fake.funnel == set() and sorted(fake.web) == [f'{NAME}:443']
+    off = len(fake.ran('funnel', '--https=8443', 'off'))
+    service.reconcile()
+    assert len(fake.ran('funnel', '--https=8443', 'off')) == off     # nothing left to remove
 
 
 def test_desktop_without_a_public_address_still_has_no_webhooks(fake, monkeypatch):

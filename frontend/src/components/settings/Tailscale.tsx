@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import qrcode from 'qrcode-generator';
 import { errorMessage } from '@/lib/api';
 import { isDesktop } from '@/lib/desktop';
 import { tr } from '@/lib/i18n';
 import {
-  checkTailscale, connectTailscale, disconnectTailscale, loadAddresses, saveTailscale, tailscalePending, tailscaleStatus,
+  addressesKey, checkTailscale, connectTailscale, disconnectTailscale, loadAddresses, saveTailscale, tailscalePending,
+  tailscaleStatus,
   type TailscaleAddress, type TailscaleAllow, type TailscaleChange, type TailscaleCheck, type TailscaleStatus,
 } from '@/lib/tailscale';
 import { Toggle } from '@/pages/Notifications';
@@ -41,6 +42,14 @@ function ExternalLink({ href, children }: { href: string; children: ReactNode })
 
 /** What stands between the owner and a working address, in words they can act on. */
 function Problem({ address, kind }: { address: TailscaleAddress; kind: 'private' | 'public' }) {
+  if (!address.wanted && address.problem === 'not_removed') {
+    return (
+      <div role="status" className="px-3.5 py-3 text-[12.5px] leading-snug text-warn-ink">
+        {kind === 'public' ? tr('ui.tailscale.publicNotRemovedYet') : tr('ui.tailscale.privateNotRemovedYet')}
+        {address.detail && <>{' '}{tr('ui.tailscale.tailscaleSaid', { detail: address.detail })}</>}
+      </div>
+    );
+  }
   if (!address.wanted || address.active) return null;
   let body: ReactNode;
   switch (address.problem) {
@@ -211,6 +220,16 @@ export function TailscaleSettings() {
       .catch((err) => setError(errorMessage(err, tr('ui.tailscale.couldNotLoad'))));
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // An address that comes up (or goes) after the page loaded, such as once the
+  // owner turns Funnel on at Tailscale: everything that shows addresses asks again.
+  const addresses = addressesKey(status);
+  const lastAddresses = useRef<string | null>(null);
+  useEffect(() => {
+    if (!status) return;
+    if (lastAddresses.current !== null && lastAddresses.current !== addresses) void loadAddresses(true);
+    lastAddresses.current = addresses;
+  }, [status, addresses]);
 
   // A sign-in or a feature being turned on happens elsewhere: keep looking.
   const pending = tailscalePending(status);

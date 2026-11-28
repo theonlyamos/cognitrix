@@ -200,9 +200,13 @@ def _is_door(served: cli.Served | None, mine: dict[str, Any], target: str) -> bo
 _KINDS = (('serve', 'private', doors.TAILNET), ('funnel', 'public', doors.PUBLIC))
 
 
-def _take_down(ours: dict[str, Any], served: dict[int, cli.Served], keep: dict[str, int]) -> bool:
-    """Remove what we set up on a port Settings no longer names. True when anything changed."""
+def _take_down(ours: dict[str, Any], served: dict[int, cli.Served], keep: dict[str, int]) -> tuple[bool, dict[str, str]]:
+    """Remove what we set up on a port Settings no longer names. Returns
+    (whether anything changed, {kind: what Tailscale said} for each it would
+    not remove). One that wasn't removed stays written down as ours, so the
+    next check tries again."""
     changed = False
+    failed: dict[str, str] = {}
     ports = doors.ports()
     for kind, _, door in _KINDS:
         mine = _dict(ours.get(kind))
@@ -211,11 +215,16 @@ def _take_down(ours: dict[str, Any], served: dict[int, cli.Served], keep: dict[s
             continue
         target = cli.target_for(ports[door]) if door in ports else '-'
         if _is_door(served.get(port), mine, target):
-            cli.serve_off(port, funnel=kind == 'funnel')
+            result = cli.serve_off(port, funnel=kind == 'funnel')
             changed = True
+            if not result.ok:
+                lines = [line.strip() for line in result.text.splitlines() if line.strip()]
+                failed[kind] = (lines[0] if lines else 'Tailscale gave no reason.')[:300]
+                logger.warning("Tailscale didn't remove the %s address on port %s: %s", kind, port, result.text[:300])
+                continue
         ours.pop(kind, None)
         _waiting.pop(kind, None)
-    return changed
+    return changed, failed
 
 
 def _apply(snap: dict[str, Any]) -> None:
@@ -223,8 +232,14 @@ def _apply(snap: dict[str, Any]) -> None:
     before = json.dumps(ours, sort_keys=True)
     served = cli.serving()
     want = {kind: snap[part]['port'] for kind, part, _ in _KINDS if snap[part]['wanted']}
-    if _take_down(ours, served, want):
+    changed, failed = _take_down(ours, served, want)
+    if changed:
         served = cli.serving()
+    for kind, part, _ in _KINDS:
+        if kind in failed and not snap[part]['wanted']:
+            # Still forwarded by Tailscale though Settings says off. The public
+            # door refuses everything meanwhile (doors.door_app).
+            snap[part]['problem'], snap[part]['detail'] = 'not_removed', failed[kind]
     ports = doors.ports()
     now = time.monotonic()
     for kind, part, door in _KINDS:

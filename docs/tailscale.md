@@ -43,6 +43,8 @@ On the **desktop app**, the public address works while the app is running. GitHu
 
 Requests through the public address are limited to 240 a minute from one address.
 
+Turning the public address off closes it at once: Cognitrix stops letting anything in through it, whether or not Tailscale has taken the address down yet. If Tailscale refuses to take it down, Settings says so and Cognitrix keeps trying.
+
 ## Only reachable through Tailscale
 
 On a server, **Only reachable through Tailscale** makes the server stop listening on the local network (it listens on this machine only), so the Tailscale addresses are the only way in. It applies after a restart. Leave it off where your host checks the server's own port, as Fly does.

@@ -161,6 +161,13 @@ def door_app(app, name: str):
         if name == PUBLIC:
             headers = [(k, v) for k, v in headers if not k.startswith(IDENTITY_PREFIX)]
             method = scope.get('method', 'GET') if scope['type'] == 'http' else 'GET'
+            if not tailscale.funnel_wanted():
+                # The public address is off in Settings. Should Tailscale still
+                # forward to this door (taking it down failed), nothing gets through.
+                if scope['type'] == 'websocket':
+                    await receive()
+                    return await send({'type': 'websocket.close', 'code': 1008})
+                return await _plain(send, 404, 'Not found')
             allow = tailscale.funnel_allow()
             whole_app = tailscale.ALLOW_APP in allow
             if scope['type'] == 'websocket':
