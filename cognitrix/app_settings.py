@@ -254,6 +254,20 @@ def _registry() -> list[Setting]:
                 'People can link their Tailscale login to their account in Settings > Sign-ins. After that, '
                 'opening the private address from their tailnet signs them in without a password.',
                 kind=ON_OFF, default='0'))
+    add(Setting('COGNITRIX_TAILSCALE_OAUTH_ID', 'tailscale', g, 'Tailscale OAuth client ID',
+                "From Tailscale's admin console (Settings, OAuth clients), with the auth keys scope and the "
+                "computers' tag. Lets Cognitrix add each person's Fly computer to your tailnet."))
+    add(Setting('COGNITRIX_TAILSCALE_OAUTH_SECRET', 'tailscale', g, 'Tailscale OAuth client secret', kind='secret'))
+    add(Setting('COGNITRIX_TAILSCALE_SANDBOX', 'tailscale', g, 'Whose Fly computers join your tailnet',
+                kind='select', default='nobody',
+                options=(('nobody', 'Nobody'), ('admins', "Admins' computers"), ('everyone', "Everyone's computers"))))
+    add(Setting('COGNITRIX_TAILSCALE_SANDBOX_TAG', 'tailscale', g, "Tag for agents' computers",
+                'The Tailscale tag each computer joins with. Your tailnet policy decides what that tag may reach.',
+                placeholder='tag:cognitrix-sandbox'))
+    add(Setting('COGNITRIX_TAILSCALE_DEVICES', 'tailscale', g, 'Agents may run commands on tailnet devices',
+                'Only on devices switched on in Settings > Tailscale, and every command asks first.',
+                kind='select', default='off',
+                options=(('off', 'Off'), ('admins', "Admins' agents"), ('everyone', "Everyone's agents"))))
     add(Setting('COGNITRIX_LISTEN_LOCAL', 'tailscale', g, 'Only reachable through Tailscale',
                 "The server stops listening on the local network, so the Tailscale addresses are the only "
                 "way in. Leave off where a hosting platform checks the server's own port (Fly).",

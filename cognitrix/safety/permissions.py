@@ -202,7 +202,8 @@ class ToolDecision:
 def needs_person(tools: tuple, args: dict) -> bool:
     """True when the tool itself only runs this call after a person approves it.
 
-    Today that's Bash outside the allowlist (the full shell). ``tools`` is the
+    Today that's Bash outside the allowlist (the full shell), Coding Agent,
+    Copy Back From Sandbox and Run On Tailnet Device. ``tools`` is the
     assigned tool and the registered one that actually runs: an agent saved
     before Bash had ``internal_params`` only shows it on the registered one.
     """
@@ -218,6 +219,8 @@ def needs_person(tools: tuple, args: dict) -> bool:
         return False
     if 'copy_back_from_sandbox' in names:
         return True  # changes land on the person's computer only when they say so
+    if 'run_on_tailnet_device' in names:
+        return True  # a command on a real machine on the person's tailnet is theirs to OK
     try:
         from cognitrix.common.sandbox_work import turn_in_sandbox
         if turn_in_sandbox():
@@ -292,7 +295,7 @@ READ_ONLY_TOOLS = frozenset({
     'read', 'grep', 'glob', 'search', 'tavily_search', 'webfetch', 'web_fetch',
     'search_knowledge', 'search_chats', 'read_chat', 'check_chat',
     'list_agents', 'list_tasks', 'get_task', 'list_mcp_tools', 'list_credentials',
-    'load_skill', 'bash_output', 'list_windows', 'look_at_window', 'take_screenshot',
+    'load_skill', 'bash_output', 'list_windows', 'look_at_window', 'take_screenshot', 'list_tailnet_devices',
     # the check-in's own notes, alerts and offers
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me', 'offer_help',
     'publish_brief', 'upcoming_calls',

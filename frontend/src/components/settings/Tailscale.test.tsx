@@ -3,10 +3,10 @@ import { act, render, renderHook, screen, fireEvent, waitFor } from '@testing-li
 import { TailscaleSettings } from './Tailscale';
 import { hooksOrigin, linksOrigin, loadAddresses, tailscalePending, useAddresses, type TailscaleStatus } from '@/lib/tailscale';
 
-const { get, put, post } = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn() }));
+const { get, put, post, del } = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn(), del: vi.fn() }));
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
-  api: { get, put, post },
+  api: { get, put, post, delete: del },
 }));
 
 const NAME = 'studio.tail1234.ts.net';
@@ -22,7 +22,7 @@ const status = (over: Partial<TailscaleStatus> = {}): TailscaleStatus => ({
 
 let current: TailscaleStatus;
 beforeEach(() => {
-  [get, put, post].forEach((fn) => fn.mockReset());
+  [get, put, post, del].forEach((fn) => fn.mockReset());
   current = status();
   get.mockImplementation((url: string) => Promise.resolve({ data: url === '/tailscale' ? current : {} }));
 });
@@ -123,6 +123,71 @@ describe('TailscaleSettings', () => {
     render(<TailscaleSettings />);
     expect(await screen.findByText('Only an admin can change these.')).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Use Tailscale' })).toBeDisabled();
+    expect(screen.queryByText('DEVICES AGENTS MAY USE')).toBeNull();
+  });
+
+  it("puts the agents' Fly computers on the tailnet with an OAuth client", async () => {
+    const computers = { fly: true, scope: 'admins' as const, tag: 'tag:cognitrix-sandbox', oauth_id: '', oauth_saved: false, on_fly: false, policy: '"tag:cognitrix-sandbox": ["autogroup:admin"],' };
+    current = status({ computers, devices: 'off' });
+    put.mockResolvedValue({ data: status({ computers: { ...computers, oauth_id: 'kABC', oauth_saved: true }, devices: 'off' }) });
+    post.mockResolvedValue({ data: { ok: false, steps: [
+      { name: 'oauth', ok: true, detail: '' },
+      { name: 'join_key', ok: false, detail: 'The OAuth client may not use tag:cognitrix-sandbox.' },
+      { name: 'engine', ok: true, detail: '' },
+    ] } });
+    render(<TailscaleSettings />);
+    expect(await screen.findByText('"tag:cognitrix-sandbox": ["autogroup:admin"],')).toBeInTheDocument();
+    expect(screen.getByText(/isn't on Fly, so it reaches the computers over your tailnet/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check the connection' })).toBeDisabled();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Client ID' }), { target: { value: ' kABC ' } });
+    fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: 'tskey-client-kABC-xyz' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/tailscale', { oauth_id: 'kABC', oauth_secret: 'tskey-client-kABC-xyz' }));
+    // The secret never comes back: the box only says one is saved.
+    await waitFor(() => expect(screen.getByLabelText('Client secret')).toHaveAttribute('placeholder', 'Secret saved. Type a new one to replace it.'));
+    expect((screen.getByLabelText('Client secret') as HTMLInputElement).value).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'Check the connection' }));
+    expect(await screen.findByText("It can't make a join key with the computers' tag.")).toBeInTheDocument();
+    expect(screen.getByText('The OAuth client may not use tag:cognitrix-sandbox.')).toBeInTheDocument();
+    expect(post).toHaveBeenCalledWith('/tailscale/computers/check');
+  });
+
+  it('hides the Fly computers card when computers run elsewhere', async () => {
+    current = status({ computers: { fly: false, scope: 'nobody', tag: 'tag:cognitrix-sandbox', oauth_id: '', oauth_saved: false, on_fly: false, policy: '' }, devices: 'off' });
+    render(<TailscaleSettings />);
+    expect(await screen.findByText('DEVICES AGENTS MAY USE')).toBeInTheDocument();
+    expect(screen.queryByText("AGENTS' COMPUTERS ON YOUR TAILNET")).toBeNull();
+    expect(get).not.toHaveBeenCalledWith('/tailscale/devices');   // off: the list isn't even asked for
+  });
+
+  it('lets an admin allow a tailnet device with its login names, and take it off again', async () => {
+    const device = (over = {}) => ({ node: 'nNAS', name: 'nas', dns: 'nas.tail1234.ts.net', os: 'linux', online: true, tags: [], tailscale_ssh: true, present: true, allowed: false, users: [], path: 'tailscale', ...over });
+    let devices = [device(), device({ node: 'nWIN', name: 'Office-PC', os: 'windows', tailscale_ssh: false })];
+    current = status({ devices: 'admins' });
+    get.mockImplementation((url: string) => Promise.resolve({
+      data: url === '/tailscale' ? current : url === '/tailscale/devices' ? { scope: 'admins', devices, key: 'ssh-ed25519 AAAAC3 cognitrix', ssh: true } : {},
+    }));
+    put.mockImplementation(() => {
+      devices = [device({ allowed: true, users: ['ada', 'deploy'] }), devices[1]];
+      return Promise.resolve({ data: devices[0] });
+    });
+    del.mockImplementation(() => { devices = [device(), devices[1]]; return Promise.resolve({ data: { removed: true } }); });
+    render(<TailscaleSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Allow nas' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Login names agents may use' }), { target: { value: 'ada, deploy ada' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/tailscale/devices/nNAS', { users: ['ada', 'deploy'], path: 'tailscale' }));
+    expect(await screen.findByText('Agents run commands as ada, deploy, over Tailscale SSH.')).toBeInTheDocument();
+    expect(screen.getByText('ssh-ed25519 AAAAC3 cognitrix')).toBeInTheDocument();
+
+    // A machine without Tailscale SSH starts on this server's key.
+    fireEvent.click(screen.getByRole('button', { name: 'Allow Office-PC' }));
+    expect((screen.getByRole('combobox', { name: 'How this server signs in' }) as HTMLSelectElement).value).toBe('key');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove nas' }));
+    await waitFor(() => expect(del).toHaveBeenCalledWith('/tailscale/devices/nNAS'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Allow nas' })).toBeInTheDocument());
   });
 });
 

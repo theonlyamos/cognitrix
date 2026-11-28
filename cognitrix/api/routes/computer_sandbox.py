@@ -113,7 +113,17 @@ async def status(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
         update = bool(await run_in_threadpool(mgr.update_available, box))
     except Exception:
         update = False
-    return {'enabled': True, 'running': True, 'desktops': desktops, 'update_available': update, 'host': mode}
+    answer = {'enabled': True, 'running': True, 'desktops': desktops, 'update_available': update, 'host': mode}
+    info = getattr(mgr, 'tailnet_info', None)
+    if info is not None:
+        try:
+            tailnet = await run_in_threadpool(info, _owner(ctx))
+        except Exception:
+            tailnet = None
+        if tailnet:
+            # The computer is a machine on the owner's tailnet (cognitrix/tailscale/computers.py).
+            answer['tailnet'] = tailnet
+    return answer
 
 
 class WakeBody(BaseModel):

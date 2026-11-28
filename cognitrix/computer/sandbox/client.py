@@ -622,11 +622,12 @@ class SandboxManager:
             self._boxes.pop(name, None)
         # A throwaway container on the same home volume, without network,
         # empties it and unpacks the snapshot as the agent user.
+        from cognitrix.computer.sandbox.snapshots import EMPTY_HOME
         code, err = self._run_with_input(
             [self.docker, 'run', '--rm', '-i', '--network', 'none', '--cap-drop', 'ALL',
              '--security-opt', 'no-new-privileges', '-u', 'agent',
              '-v', f'cognitrix-sandbox-home-{user_key(user_id)}:/home/agent', '--entrypoint', 'sh', self.image,
-             '-c', 'cd /home/agent && find . -mindepth 1 -delete && tar -xzf - --no-same-owner'], source, 3600)
+             '-c', f'cd /home/agent && {EMPTY_HOME} && tar -xzf - --no-same-owner'], source, 3600)
         if code != 0:
             raise DriverError(f"Couldn't restore the snapshot: {err.strip()[-300:]}")
 
@@ -655,6 +656,10 @@ class SandboxManager:
             self._proxy_where = (bind, host)
         return self._proxy_where
 
+    def _proxy_ports(self) -> tuple[int, ...]:
+        """The ports the key proxy picks from; empty for any free one."""
+        return ()
+
     def _install_ca(self, box: Sandbox, pem: bytes, fingerprint: str) -> None:
         """Put the key proxy's CA certificate (only the certificate) in the
         container, alone and appended to the system bundle."""
@@ -676,8 +681,9 @@ class SandboxManager:
         box = self.sandbox(user_id)
         proxy = get_proxy()
         bind, host = self._proxy_addresses()
+        ports = self._proxy_ports()
         try:
-            _, port = proxy.ensure_started(bind)
+            _, port = proxy.ensure_started(bind, ports) if ports else proxy.ensure_started(bind)
         except OSError:
             if bind in ('0.0.0.0', '127.0.0.1', '::') or os.environ.get('COGNITRIX_SANDBOX_PROXY_BIND'):  # noqa: S104
                 raise
@@ -685,7 +691,8 @@ class SandboxManager:
             # container itself): listen everywhere; the password still guards it.
             logger.info("Couldn't listen on %s for the key proxy; listening on all addresses", bind)
             self._proxy_where = ('0.0.0.0', host)  # noqa: S104
-            _, port = proxy.ensure_started('0.0.0.0')  # noqa: S104
+            _, port = (proxy.ensure_started('0.0.0.0', ports) if ports  # noqa: S104
+                       else proxy.ensure_started('0.0.0.0'))  # noqa: S104
         self._install_ca(box, proxy.ca.pem, proxy.ca.fingerprint)
         token = proxy.token_for(user_key(user_id))
         folder = '/home/agent/.cognitrix-sandbox/proxy'

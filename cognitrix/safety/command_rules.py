@@ -1,5 +1,6 @@
 """Saved "Always allow" answers for commands a person approves one by one:
-the full shell on this machine and every command on a paired PC.
+the full shell on this machine, every command on a paired PC and every
+command on a tailnet device.
 
 A rule is a command prefix (the program and, when it has one, its
 subcommand: ``git status``, ``npm test``, ``ls``) for one person and one
@@ -21,7 +22,8 @@ from odbms import Model
 
 MAX_RULES_PER_USER = 200
 LOCAL = 'local'
-"""The computer key for this machine; a paired PC is 'pc:<device id>'."""
+"""The computer key for this machine; a paired PC is 'pc:<device id>'; a tailnet
+device is 'tailnet:<node id>:<login name>'."""
 
 _UNSAFE = re.compile(r'[;&|<>`\n\r]|\$\(|\$\{')
 _WORD = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:+@/-]*$')
@@ -88,6 +90,12 @@ def matches(prefix: str, command: Any) -> bool:
 
 def computer_key(device_id: Any = None) -> str:
     return f'pc:{device_id}' if device_id else LOCAL
+
+
+def tailnet_key(node: Any, user: Any) -> str:
+    """The computer key for one login name on one tailnet device (Run On
+    Tailnet Device): a rule saved for one never covers another."""
+    return f'tailnet:{node}:{user}'
 
 
 async def rules_of(user_id: str) -> list[CommandRule]:

@@ -22,6 +22,8 @@ export interface SandboxStatus {
   /** Hosted: the computer exists but is stopped while nobody uses it. */
   asleep?: boolean;
   error?: string;
+  /** Hosted: the computer is a machine on the owner's tailnet (Settings › Tailscale). */
+  tailnet?: { name: string; dns: string; online: boolean };
 }
 
 export async function sandboxStatus(): Promise<SandboxStatus> {

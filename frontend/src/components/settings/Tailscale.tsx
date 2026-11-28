@@ -9,6 +9,7 @@ import {
   type TailscaleAddress, type TailscaleAllow, type TailscaleChange, type TailscaleCheck, type TailscaleStatus,
 } from '@/lib/tailscale';
 import { Toggle } from '@/pages/Notifications';
+import { TailnetComputersCard, TailnetDevicesCard } from '@/components/settings/TailnetMachines';
 import {
   Group, SectionHeader, SettingRow, StatusPill, SubHeading, buttonClass, primaryButtonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -432,6 +433,13 @@ export function TailscaleSettings() {
                 <span className="text-[12px] leading-snug text-fg-dim">{tr('ui.tailscale.checkFromAnotherDevice')}</span>
               )}
             </div>
+          )}
+
+          {status.can_edit && status.computers?.fly && (
+            <TailnetComputersCard computers={status.computers} locked={locked} onSave={save} />
+          )}
+          {status.can_edit && status.devices && (
+            <TailnetDevicesCard scope={status.devices} locked={locked} onSave={save} />
           )}
         </>
       )}

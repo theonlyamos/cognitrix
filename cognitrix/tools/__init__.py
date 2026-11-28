@@ -55,6 +55,7 @@ from cognitrix.tools.meetings import join_meeting, leave_meeting, meeting_transc
 from cognitrix.tools.followups import follow_up_later
 from cognitrix.tools.memory import memory
 from cognitrix.tools.payments import cancel_payment, pay, request_payment
+from cognitrix.tools.tailnet import list_tailnet_devices, run_on_tailnet_device
 from cognitrix.tools.sandbox_work import (
     ask_for_sign_in,
     copy_back_from_sandbox,
@@ -130,6 +131,7 @@ __all__ = [
     'memory', 'follow_up_later', 'publish_brief', 'search_chats', 'read_chat', 'set_theme', 'search_knowledge', 'learn_from_website', 'send_email',
     'join_meeting', 'meeting_transcript', 'say_in_meeting', 'leave_meeting', 'upcoming_calls',
     'request_payment', 'pay', 'cancel_payment',
+    'list_tailnet_devices', 'run_on_tailnet_device',
     'take_screenshot', 'text_input', 'key_press', 'hot_key',
     'mouse_click', 'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
     'list_windows', 'open_app', 'look_at_window', 'show_screenshot', 'click_element', 'set_text',

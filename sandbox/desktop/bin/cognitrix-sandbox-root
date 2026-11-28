@@ -10,11 +10,90 @@
 # supervisor clears them from everything it starts
 # (cognitrix/computer/sandbox/users.py). Started as 'agent' (an older engine),
 # it goes straight on and every agent shares that user, as before.
+#
+# A computer on Fly that joins its owner's tailnet (COGNITRIX_TAILNET=1, set by
+# the engine: cognitrix/tailscale/computers.py) starts Tailscale first, as
+# root. Its identity stays in a root-only folder on the volume, so a stop and
+# a wake keep the same name and address. The join key works once; it is used
+# from a root-only file and dropped from the environment before anything of
+# the agents' runs. A key this computer has not tried before is a replacement
+# from the engine (the computers' tag changed, or the old identity was
+# removed): it is used even when the saved identity still works. A computer
+# that no longer joins has its saved identity deleted.
 set -e
+
+TAILNET_STATE=/home/agent/.cognitrix-tailscale
+
+start_tailscale() {
+    state=$TAILNET_STATE
+    sock=/run/tailscale/tailscaled.sock
+    # The folder sits in the agents' home, which they can rearrange between
+    # starts. Anything there that isn't root's own real folder is thrown away,
+    # so Tailscale never writes its identity into something an agent set up.
+    if [ -L "$state" ] || { [ -e "$state" ] && { [ ! -d "$state" ] || [ "$(stat -c %u "$state")" != "0" ]; }; }; then
+        rm -rf "$state"
+    fi
+    keys=/run/cognitrix-tailnet
+    mkdir -p "$state" /run/tailscale "$keys"
+    chown root:root "$state" "$keys"
+    chmod 700 "$state" "$keys"
+    tun=
+    [ -c /dev/net/tun ] || tun=--tun=userspace-networking
+    # shellcheck disable=SC2086
+    env -u COGNITRIX_TAILNET_AUTHKEY tailscaled --statedir="$state" --socket="$sock" $tun \
+        >/var/log/tailscaled.log 2>&1 &
+    i=0
+    while [ ! -S "$sock" ] && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
+    # Signed in from an earlier start: nothing more to do.
+    i=0
+    backend=
+    while [ "$i" -lt 25 ]; do
+        backend=$(tailscale --socket="$sock" status --json 2>/dev/null \
+            | sed -n 's/.*"BackendState": *"\([A-Za-z]*\)".*/\1/p' | head -n 1)
+        case "$backend" in Running|NeedsLogin|NeedsMachineAuth) break ;; esac
+        sleep 0.2
+        i=$((i + 1))
+    done
+    [ -n "${COGNITRIX_TAILNET_AUTHKEY:-}" ] || return 0
+    # Which key was tried last is remembered (as a hash, in root's folder), so an
+    # ordinary wake with the same used key is told apart from a replacement key.
+    tried="$state/cognitrix-join-key.sha256"
+    sum=$(printf '%s' "$COGNITRIX_TAILNET_AUTHKEY" | sha256sum | cut -d' ' -f1)
+    replacement=
+    if [ ! -e "$tried" ] && [ "$backend" = "Running" ]; then
+        # Signed in before keys were remembered: this is the key it joined with.
+        (umask 077 && printf '%s' "$sum" > "$tried")
+    elif [ "$(cat "$tried" 2>/dev/null)" != "$sum" ]; then
+        replacement=1
+    fi
+    if [ "$backend" != "Running" ] || [ -n "$replacement" ]; then
+        again=
+        # Signed in already and handed another key: sign in again with it (a new tag, a removed machine).
+        [ "$backend" = "Running" ] && again=--force-reauth
+        (umask 077 && printf '%s' "$sum" > "$tried")
+        # The key is read from a file only root can reach, outside the agents' home.
+        rm -f "$keys/join-key"
+        (umask 077 && printf '%s' "$COGNITRIX_TAILNET_AUTHKEY" > "$keys/join-key")
+        # shellcheck disable=SC2086
+        tailscale --socket="$sock" up $again --auth-key="file:$keys/join-key" \
+            --hostname="${COGNITRIX_TAILNET_NAME:-cognitrix-sandbox}" --accept-dns=false --accept-routes=false \
+            --timeout=30s >>/var/log/tailscaled.log 2>&1 \
+            || echo "cognitrix-sandbox: could not join the tailnet (see /var/log/tailscaled.log)" >&2
+        rm -f "$keys/join-key"
+    fi
+}
+
 if [ "$(id -u)" = "0" ]; then
     if [ "$(stat -c %U /home/agent)" != "agent" ]; then
         chown agent:agent /home/agent
     fi
+    if [ "${COGNITRIX_TAILNET:-}" = "1" ] && command -v tailscaled >/dev/null 2>&1; then
+        start_tailscale || echo "cognitrix-sandbox: Tailscale did not start" >&2
+    elif [ -e "$TAILNET_STATE" ] || [ -L "$TAILNET_STATE" ]; then
+        # This computer no longer joins the tailnet: its saved identity goes too.
+        rm -rf "$TAILNET_STATE"
+    fi
+    unset COGNITRIX_TAILNET_AUTHKEY
     CAPS=+chown,+fowner,+setgid,+setuid
     if [ "${COGNITRIX_SANDBOX_AGENT_USERS:-1}" = "0" ]; then
         CAPS=-all

@@ -25,6 +25,12 @@ How it works (code: `cognitrix/computer/sandbox/fly.py`):
   gone, files and logins are not. With **When idle** set to suspend
   the machine's memory is kept and windows come back, where Fly allows it.
 
+The engine normally has to run on Fly too, to reach the machines over that
+private network. If it doesn't (a home server, the desktop app), the
+computers can join your Tailscale network instead and the engine reaches
+them there: see
+[Agents' computers on your tailnet](tailscale.md#agents-computers-on-your-tailnet).
+
 ## One-time setup
 
 The engine (the `cognitrix` app in `fly.toml`) must run on Fly, in the same

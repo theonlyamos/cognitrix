@@ -11,6 +11,8 @@ person started.
 It never answers:
 - a request for the person to take over the agent's computer (only they can
   do that, a Yes would leave the agent waiting for nobody);
+- a command on a device on the person's tailnet (Run On Tailnet Device): each
+  one runs on a real machine beyond this one, so each is shown to them;
 - a chat a visitor started through a public link (``web_turn_ctx`` carries
   ``auto_approve: False``): strangers must not get the owner's standing Yes.
 
@@ -40,7 +42,7 @@ _CACHE: dict[str, tuple[bool, float]] = {}
 FRESH_FOR = 5.0
 
 # What the setting never answers (see module docstring).
-NEVER_CATEGORIES = frozenset({'person_takeover'})
+NEVER_CATEGORIES = frozenset({'person_takeover', 'tailnet_device'})
 
 
 # Set by the CLI's --dangerously-skip-permissions for this process only.

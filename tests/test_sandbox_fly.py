@@ -425,7 +425,7 @@ def test_restore_replaces_home_then_stops_the_machine(fly, monkeypatch):
     monkeypatch.setattr(mgr, 'exec_in', lambda b, script, src, timeout=3600: (ran.append(script), (0, ''))[1])
     mgr.replace_home('u1', io.BytesIO(b'tgz'))
     assert closed == [('DELETE', '/desktops/main'), ('DELETE', '/desktops/agent-a')]
-    assert 'find . -mindepth 1 -delete' in ran[0] and 'tar -xzf -' in ran[0]
+    assert 'find . -mindepth 1' in ran[0] and '! -name .cognitrix-tailscale' in ran[0] and 'tar -xzf -' in ran[0]
     mid = next(iter(api.machines_))
     assert api.machines_[mid]['state'] == 'stopped'
     assert mgr.sandbox('u1').container_id == mid  # wakes again for the desktops to reopen

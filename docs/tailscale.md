@@ -74,6 +74,56 @@ In an App's **Share** dialog there is a **Your tailnet** section while the priva
 
 See [Pair your own PC](pair-your-pc.md#over-tailscale): a PC on the tailnet can find the server by itself and pair without a code.
 
+## Agents' computers on your tailnet
+
+This is for servers whose agents get a computer on Fly ([the agents' computer on Fly](sandbox-on-fly.md)). With it, each computer joins your tailnet when it starts, as a tagged machine named `cognitrix-sandbox-…`. Two things follow:
+
+- **The server doesn't have to run on Fly.** A home server or the desktop app, on the same tailnet, reaches the computers by their tailnet address. A server that does run on Fly keeps using Fly's own network.
+- **Agents working on their computer can reach your machines**, exactly as far as your tailnet policy opens them to the computers' tag. Nothing is open until you add a line for it.
+
+To set it up, in **Settings › Tailscale**, under **Agents' computers on your tailnet**:
+
+1. Pick whose computers join: nobody (the default), admins' computers or everyone's.
+2. On Tailscale's [Trust credentials](https://console.tailscale.com/admin/settings/trust-credentials) page, make an OAuth credential with write access to **Auth Keys** (`auth_keys`) and **Devices › Core** (`devices:core`), and give it the computers' tag (`tag:cognitrix-sandbox` unless you changed it). Paste its ID and secret into Settings. The secret is stored encrypted and never shown again.
+3. Copy the **lines for your tailnet policy** into your policy file. They say who owns the tag, let this server reach the computers' two ports, and let the computers reach this server's [hidden-keys](sandbox-on-fly.md#hidden-keys-and-snapshots) proxy (ports 8791 to 8798) and nothing else on it. Add one more line for each machine and port the computers may reach, for example a NAS.
+4. Press **Check the connection**. It tries the OAuth client and makes one unused join key.
+
+How a computer joins: the server asks Tailscale for a join key that works once, lasts ten minutes, is already approved and carries the tag. The key is put in the new machine's settings; the computer's start script (running as root) starts Tailscale with it and removes it from the environment before anything of the agents' runs. Tailscale's identity is kept in a root-only folder on the computer's volume, so sleeping and waking keep the same name. That folder is left out of snapshots. Resetting a computer removes it from your tailnet.
+
+Things to know:
+
+- **Commands agents run inside their computer don't ask you first.** So anything your policy opens to the tag, an agent can use on its own. Open ports one at a time, to the tag, never `*`.
+- Computers don't take DNS settings or routes from the tailnet (`--accept-dns=false`, `--accept-routes=false`). Agents reach a machine by its tailnet address or full name.
+- A computer made before you turned this on gets its join key the next time it is used: a server on Fly waits until the computer next wakes, a server elsewhere restarts it once.
+- **Changing who joins takes the others off.** When you switch the choice to admins or nobody, turn Tailscale off, or someone stops being an admin, the computers that no longer qualify are removed from your tailnet right away. Each one also loses its join settings and its saved Tailscale identity the next time it starts.
+- After you change the computers' tag, each computer signs in again with a new key the next time it is used, even if it was still connected under the old tag.
+- The computers' own image needs Tailscale inside it, which the published image has from this version on.
+
+## Devices agents may use
+
+Two tools let an agent work on a real machine on your tailnet:
+
+- **List Tailnet Devices** shows the machines and which of them the agent may use. It only reads.
+- **Run On Tailnet Device** runs one command on one machine, as one login name, and returns what it printed.
+
+Nothing is allowed until an admin sets it up in **Settings › Tailscale**, under **Devices agents may use**:
+
+1. Pick whose agents may use devices: nobody's (the default), admins' or everyone's.
+2. For each machine, press **Allow** and type the login names agents may use there. Pick how the server signs in:
+   - **Tailscale SSH**: the machine has Tailscale SSH on (`tailscale set --ssh`), and the SSH part of your tailnet policy lets this server in as that login. A tagged server can only reach tagged machines this way.
+   - **This server's SSH key**: for any machine with an ordinary SSH server. Copy the key shown in Settings into `~/.ssh/authorized_keys` of each login name on that machine. The server makes this key itself and keeps the private half encrypted.
+3. Add the two tools to each agent that should have them, on the agent's page. No agent gets them by default.
+
+**A person approves every command.** The approval card shows the machine, the login name and the full command, and says it is a real machine and not the agent's sandbox. This holds whatever the agent's permission level is: "Auto-approve everything", the action reviewer and "allow all commands in this chat" never answer for it. **Always allow** on the card remembers the start of a command for that one login on that one machine, nothing wider. Every call is in the audit log.
+
+Other things to know:
+
+- The server remembers each machine's SSH identity the first time and refuses if it later changes. Removing a machine from the list forgets it.
+- If Tailscale asks you to confirm it is you (SSH "check" mode), the agent is given the link to pass on to you, and tries again after you open it.
+- A command gets 60 seconds unless the agent asks for more, 15 minutes at most. A command stopped for time may still be running on the machine.
+- Agents' own computers never appear in this list.
+- The server needs an `ssh` program. The Docker image has one; on a desktop it uses the system's.
+
 ## Passkeys
 
 The private address is https and a real name, so passkeys work there. A passkey belongs to the address it was made at: one made at the Tailscale address does not work at `localhost` or another domain, and the other way round. See [passkeys](passkeys.md#with-tailscale).
@@ -87,6 +137,8 @@ The private address is https and a real name, so passkeys work there. A passkey 
 - `doors.py` opens two extra listeners, on this machine only:
   - the **tailnet door**, which Tailscale Serve forwards the private address to;
   - the **public door**, which Tailscale Funnel forwards the public address to. It holds the allow list above.
+- `api.py` talks to Tailscale's web API with the saved OAuth client (join keys, removing a machine). `computers.py` is the Fly computers' side of joining, and `outbound.py` lets a server on the built-in Tailscale dial a tailnet address.
+- `devices.py` keeps the list of devices agents may use and runs their commands over SSH; the tools are in `cognitrix/tools/tailnet.py`.
 - `service.py` keeps Tailscale matching Settings and writes the addresses to `~/.cognitrix/tailscale/addresses.json`, which `cognitrix/common/addresses.py` reads for every process.
 
 Three rules keep this safe:
