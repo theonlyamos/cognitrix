@@ -203,6 +203,8 @@ async def auth_options(invite: str | None = None):
         'passkeys': _passkeys_on(),
         # The desktop app's window can't use passkeys; it does the step in the browser.
         'passkey_handoff': _passkeys_on() and _desktop_engine(),
+        # Where passkeys work, for a page opened somewhere they can't (an IP address, plain http).
+        'passkey_address': _passkey_address(),
         'server_setup': await _server_setup_pending(),
     }
 
@@ -211,6 +213,11 @@ async def _server_setup_pending() -> bool:
     from cognitrix.api.routes.server_setup import setup_pending
 
     return await setup_pending()
+
+
+def _passkey_address() -> str:
+    from cognitrix.passkeys import passkeys_on, secure_address
+    return secure_address() if passkeys_on() else ''
 
 
 def _passkeys_on() -> bool:

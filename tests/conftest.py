@@ -25,6 +25,25 @@ _secret_box._key_file = lambda: _KEYS_DIR / 'secrets.key'
 (_KEYS_DIR / '.keys-adopted').write_text('test')
 
 
+# Tailscale's files (door ports, last known addresses) too.
+from cognitrix import tailscale as _tailscale  # noqa: E402
+
+_TAILSCALE_DIR = Path(tempfile.mkdtemp(prefix='cognitrix-tailscale-'))
+_tailscale.folder = lambda: _TAILSCALE_DIR
+
+
+@pytest.fixture(autouse=True)
+def _tailscale_per_test():
+    """No Tailscale addresses or remembered ports leak between tests."""
+    from cognitrix.common import addresses
+
+    for path in _TAILSCALE_DIR.glob('*'):
+        if path.is_file():
+            path.unlink()
+    addresses._cache = None
+    yield
+
+
 @pytest.fixture
 def mock_llm_response():
     """Create a mock LLM response."""

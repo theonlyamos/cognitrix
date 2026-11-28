@@ -228,6 +228,33 @@ def _registry() -> list[Setting]:
     add(Setting('COGNITRIX_APPROVAL_AWAY_DELAY', 'notifications', g, 'Count me as away after (seconds)',
                 kind='number', placeholder='60'))
 
+    # ---- Tailscale ------------------------------------------------------------------
+    # Shown by its own page (Settings > Tailscale, cognitrix/tailscale/service.py),
+    # which also acts on a change right away.
+    g = 'Tailscale'
+    add(Setting('COGNITRIX_TAILSCALE', 'tailscale', g, 'Use Tailscale',
+                "Reach this Cognitrix from your own devices over your private Tailscale network.",
+                kind=ON_OFF, default='0'))
+    add(Setting('COGNITRIX_TAILSCALE_HOSTNAME', 'tailscale', g, 'Name on your tailnet',
+                'Used when Cognitrix runs its own Tailscale (a server in Docker or on Fly). A machine that '
+                'already has Tailscale keeps its own name.', placeholder='cognitrix'))
+    add(Setting('COGNITRIX_TAILSCALE_SERVE', 'tailscale', g, 'Private address',
+                'An https address only devices on your tailnet can open.', kind=ON_OFF, default='0'))
+    add(Setting('COGNITRIX_TAILSCALE_SERVE_PORT', 'tailscale', g, 'Private address port', kind='number',
+                placeholder='443'))
+    add(Setting('COGNITRIX_TAILSCALE_FUNNEL', 'tailscale', g, 'Public address',
+                'An https address on the internet (Tailscale Funnel), for services that send webhooks.',
+                kind=ON_OFF, default='0'))
+    add(Setting('COGNITRIX_TAILSCALE_FUNNEL_PORT', 'tailscale', g, 'Public address port', kind='select',
+                default='8443', options=(('443', '443'), ('8443', '8443'), ('10000', '10000'))))
+    add(Setting('COGNITRIX_TAILSCALE_FUNNEL_ALLOW', 'tailscale', g, 'What the public address lets through',
+                'webhooks, links (public links to agents and pages) or app (everything, behind sign-in). '
+                'One per line.', kind='list', placeholder='webhooks'))
+    add(Setting('COGNITRIX_LISTEN_LOCAL', 'tailscale', g, 'Only reachable through Tailscale',
+                "The server stops listening on the local network, so the Tailscale addresses are the only "
+                "way in. Leave off where a hosting platform checks the server's own port (Fly).",
+                kind=ON_OFF, default='0', restart=True))
+
     # ---- Advanced ---------------------------------------------------------------------
     g = 'Web address'
     add(Setting('COGNITRIX_PUBLIC_URL', 'advanced', g, 'Public address',
@@ -374,6 +401,7 @@ ENV_ONLY: dict[str, str] = {
     'COGNITRIX_<CLI>_PATH': 'Developer override for where a coding agent CLI is installed.',
     'COGNITRIX_FLY_API_URL / COGNITRIX_TELEGRAM_API_BASE / COGNITRIX_TWILIO_API_BASE / COGNITRIX_APPS_API_URL / COMPOSIO_BASE_URL':
         'Test doubles for outside APIs.',
+    'COGNITRIX_TAILSCALE_PATH / COGNITRIX_TAILSCALED_PATH': 'Developer override for where Tailscale is installed.',
     'DISABLE_VECTOR_STORE': 'Test switch.',
 }
 
@@ -507,7 +535,7 @@ _WHOLE_NUMBERS = frozenset({
     'COGNITRIX_CODING_AGENT_TIMEOUT', 'COGNITRIX_SWARM_MAX_CONCURRENCY', 'COGNITRIX_SWARM_MAX_WORKERS',
     'COGNITRIX_SWARM_MAX_TOKENS', 'COGNITRIX_AUTOMATION_MAX_RUNS_PER_DAY', 'COGNITRIX_MEDIA_PROCESSING_CONCURRENCY',
     'COGNITRIX_PRODUCED_FILE_MAX_MB', 'COGNITRIX_PRODUCED_PC_FILE_MAX_MB', 'COGNITRIX_PRODUCED_FILES_QUOTA_MB',
-    'TASK_PROVIDER_CONCURRENCY', 'TASK_ACTOR_CONCURRENCY', 'DB_PORT',
+    'TASK_PROVIDER_CONCURRENCY', 'TASK_ACTOR_CONCURRENCY', 'DB_PORT', 'COGNITRIX_TAILSCALE_SERVE_PORT',
 })
 
 

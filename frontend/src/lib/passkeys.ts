@@ -29,6 +29,8 @@ export interface PasskeyList {
   enabled: boolean;
   /** This server is the desktop app's engine: passkey steps go to the browser. */
   handoff: boolean;
+  /** An address of this server where passkeys work ('' when there is none). */
+  secure_address?: string;
 }
 
 interface Ceremony {
@@ -115,6 +117,16 @@ export function localhostAddress(): string {
   const { hostname, port, pathname, protocol } = window.location;
   if (hostname !== '127.0.0.1' && hostname !== '[::1]') return '';
   return `${protocol}//localhost${port ? `:${port}` : ''}${pathname}`;
+}
+
+/** `address` when this page is somewhere else than it, '' otherwise. */
+export function otherAddress(address: string | undefined): string {
+  if (!address || typeof window === 'undefined') return '';
+  try {
+    return new URL(address).hostname === window.location.hostname ? '' : address.replace(/\/$/, '');
+  } catch {
+    return '';
+  }
 }
 
 /** The person closed the prompt or it timed out: not worth an error message. */

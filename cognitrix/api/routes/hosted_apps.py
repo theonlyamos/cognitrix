@@ -136,9 +136,18 @@ async def app_icon(slug: str, t: str = ''):
     return Response(icons.generated_svg(app.title, app.slug), media_type='image/svg+xml', headers=_ICON_HEADERS)
 
 
+def _remember_engine(request: Request) -> None:
+    """Apps call the API where this engine answers on this machine, never at
+    an address Tailscale made (the app's computer may not be on the tailnet)."""
+    from cognitrix.tailscale import doors
+
+    if doors.door_of(request) == doors.DIRECT:
+        store.remember_engine_url(str(request.base_url))
+
+
 @hosted_apps_api.get('')
 async def list_apps(request: Request, ctx: AuthContext = Depends(jwt_only)):
-    store.remember_engine_url(str(request.base_url))
+    _remember_engine(request)
     me = _me(ctx)
     people, agents = await store.names()
     runtime = default_runtime()
@@ -256,7 +265,7 @@ async def reset_icon(ref: str, ctx: AuthContext = Depends(jwt_only)):
 async def open_app(ref: str, request: Request, thumb: bool = False, ctx: AuthContext = Depends(jwt_only)):
     """A link to the running app for me (good for 12 hours). ``thumb``: for the
     small live picture on the Apps page, which never wakes it."""
-    store.remember_engine_url(str(request.base_url))
+    _remember_engine(request)
     app, _ = await _app(ref, ctx)
     return {'url': store.app_path(app.slug, store.open_token(app.slug, _me(ctx), thumb=thumb)), 'status': app.status}
 

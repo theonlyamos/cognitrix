@@ -64,7 +64,9 @@ class Secret(BaseModel):
 async def list_passkeys(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     from cognitrix import passkeys
     return {'passkeys': await passkeys.listing(ctx.user), 'enabled': passkeys.passkeys_on(),
-            'handoff': passkeys.on_desktop_engine()}
+            'handoff': passkeys.on_desktop_engine(),
+            # A passkey works only at the address it was made at; this one always can.
+            'secure_address': passkeys.secure_address() if passkeys.passkeys_on() else ''}
 
 
 @passkeys_api.post('/passkeys/register/options')

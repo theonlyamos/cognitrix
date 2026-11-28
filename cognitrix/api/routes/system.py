@@ -20,10 +20,13 @@ async def system_info(_ctx: AuthContext = Depends(get_auth_context)) -> dict[str
     from cognitrix import celery_worker
     from cognitrix.common import coding_agents
     from cognitrix.providers import harness
+    from cognitrix.common import addresses
     from cognitrix.config import settings
 
     return {
         'version': settings.version,
+        # Which address to show for what (cognitrix/common/addresses.py).
+        'addresses': addresses.view(),
         'desktop': os.environ.get('COGNITRIX_DESKTOP') == '1',
         'data_folder': str(settings.workdir),
         'working_folder': str(settings.tools_root),

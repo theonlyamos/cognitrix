@@ -99,7 +99,11 @@ async def start_web_ui(agent):
         )
 
     # Start the web server
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+    # Settings > Tailscale > Only reachable through Tailscale: the Tailscale
+    # doors (cognitrix/tailscale/doors.py) are then the only way in from outside.
+    from cognitrix.app_settings import get_bool
+    host = "127.0.0.1" if get_bool('COGNITRIX_LISTEN_LOCAL', False) else "0.0.0.0"  # noqa: S104
+    config = uvicorn.Config(app, host=host, port=8000, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()
 

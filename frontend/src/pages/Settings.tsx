@@ -34,6 +34,7 @@ import { ComputersSettings } from '@/components/settings/Computers';
 import { ThisPcLink } from '@/components/settings/ThisPcLink';
 import { SignInsSettings } from '@/components/settings/SignIns';
 import { AppSettings } from '@/components/settings/AppSettings';
+import { TailscaleSettings } from '@/components/settings/Tailscale';
 import { AppIcon } from '@/components/hosted-apps/InstallApp';
 import { openAppWindow } from '@/lib/hostedApps';
 import { installedChanged, useInstalledApps } from '@/lib/installedApps';
@@ -45,7 +46,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'notifications' | 'models' | 'usage' | 'assistant' | 'memory' | 'voice' | 'apps' | 'computers' | 'people' | 'advanced' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'notifications' | 'models' | 'usage' | 'assistant' | 'memory' | 'voice' | 'apps' | 'computers' | 'people' | 'tailscale' | 'advanced' | 'desktop' | 'engine';
 
 /** Menu label key for each section. Typed so a new section can't ship without its label. */
 const SECTION_KEY: Record<SectionId, MessageKey> = {
@@ -54,6 +55,7 @@ const SECTION_KEY: Record<SectionId, MessageKey> = {
   usage: 'settings.section.usage', assistant: 'settings.section.assistant',
   memory: 'settings.section.memory', voice: 'settings.section.voice', apps: 'settings.section.apps',
   computers: 'settings.section.computers', people: 'settings.section.people',
+  tailscale: 'settings.section.tailscale',
   advanced: 'settings.section.advanced', desktop: 'settings.section.desktop', engine: 'settings.section.engine',
 };
 
@@ -78,6 +80,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'apps', get label() { return tr('ui.settings.connectedApps'); }, group: 'AGENTS', keywords: 'connected apps github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp servers tools passwords credentials secrets tokens telegram slack discord teams microsoft whatsapp sms text message twilio phone bot email mail address imap smtp mailbox' },
   { id: 'computers', get label() { return tr('ui.settings.computers'); }, group: 'AGENTS', keywords: 'pc pair pairing my computer laptop desktop device link connect sandbox remote machine working folder files apps agents can use' },
   { id: 'people', get label() { return tr('ui.settings.people'); }, group: 'SERVER', keywords: 'users admin invite invitation members roles disable remove delete accounts email smtp reset spending limit cap budget audit log activity history who did what tool calls approvals sign ins security' },
+  { id: 'tailscale', get label() { return tr('ui.tailscale.tailscale'); }, group: 'SERVER', keywords: 'tailnet vpn private network remote access from my phone away from home magicdns serve funnel public address webhooks https secure address wireguard' },
   { id: 'advanced', get label() { return tr('ui.settings.advanced'); }, group: 'SERVER', keywords: 'environment variables env setup server public url address web address safety reviewer shell allowlist auto approve folders private network webhooks limits timeouts rate limit tool rounds swarm automation sharing public links apps' },
   { id: 'desktop', get label() { return tr('ui.settings.desktopApp'); }, group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
   { id: 'engine', get label() { return tr('ui.settings.engine'); }, group: 'THIS COMPUTER', keywords: 'server status restart log version database queue worker data folder' },
@@ -584,6 +587,8 @@ function SectionBody({ id, desktopApp, admin }: { id: SectionId; desktopApp: boo
           <AuditLog />
         </>
       );
+    case 'tailscale':
+      return <TailscaleSettings />;
     case 'advanced':
       return (<><SectionHeader title={tr('ui.settings.advanced')} description={tr('ui.settings.advancedDescription')} /><AppSettings page="advanced" /></>);
     case 'desktop': return <DesktopSection />;

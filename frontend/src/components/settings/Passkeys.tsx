@@ -4,7 +4,7 @@ import { errorMessage } from '@/lib/api';
 import { desktop, isDesktop } from '@/lib/desktop';
 import {
   addPasskey, browserStepStatus, browserStepUrl, canUsePasskeysHere, cancelBrowserStep, listPasskeys, localhostAddress,
-  removePasskey, renamePasskey, startBrowserStep, wasCanceled, type BrowserStep, type Passkey, type PasskeyList,
+  otherAddress, removePasskey, renamePasskey, startBrowserStep, wasCanceled, type BrowserStep, type Passkey, type PasskeyList,
 } from '@/lib/passkeys';
 import { timeAgo } from '@/lib/agentDraft';
 import { Group, SettingRow, StatusPill, SubHeading, buttonClass, primaryButtonClass } from '@/components/settings/ui';
@@ -157,6 +157,8 @@ export function PasskeysSettings() {
 
   const canAdd = !!data?.enabled && (here || (isDesktop() && data.handoff));
   const list = data?.passkeys ?? [];
+  // The server also answers at an address where passkeys work (its Tailscale or public address).
+  const secure = otherAddress(data?.secure_address);
 
   return (
     <>
@@ -199,7 +201,17 @@ export function PasskeysSettings() {
                   {tr('ui.settings.passkeys.passkeysDonTWorkOn')}{' '}
                   <a href={atLocalhost} className="text-accent-ink hover:underline">{tr('ui.settings.passkeys.openCognitrixAtLocalhost')}</a>
                 </>
+              ) : secure && !isDesktop() ? (
+                <>
+                  {tr('ui.settings.passkeys.passkeysNeedASecureAddress')}{' '}
+                  <a href={secure} className="text-accent-ink hover:underline">{tr('ui.settings.passkeys.openCognitrixAtAddress', { address: secure })}</a>
+                </>
               ) : tr('ui.settings.passkeys.thisBrowserCanTMake')}
+            </p>
+          )}
+          {data.enabled && canAdd && secure && (
+            <p className="px-3.5 py-3 text-[12px] leading-snug text-fg-dim">
+              {tr('ui.settings.passkeys.onePerAddress', { address: secure })}
             </p>
           )}
         </Group>

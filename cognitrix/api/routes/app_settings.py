@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from cognitrix import app_settings
@@ -20,7 +20,7 @@ app_settings_api = APIRouter(
     dependencies=[Depends(crud_scope)],
 )
 
-PAGES = ('models', 'people', 'apps', 'computers', 'notifications', 'advanced')
+PAGES = ('models', 'people', 'apps', 'computers', 'notifications', 'tailscale', 'advanced')
 
 
 def _page(page: str | None) -> str | None:
@@ -42,7 +42,7 @@ class SettingsBody(BaseModel):
 
 
 @app_settings_api.put('')
-async def save_app_settings(body: SettingsBody, page: str | None = None,
+async def save_app_settings(body: SettingsBody, request: Request, page: str | None = None,
                             ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     if not await is_admin(ctx.user):
         raise HTTPException(status_code=403, detail='Only an admin can change these settings.')
@@ -59,5 +59,9 @@ async def save_app_settings(body: SettingsBody, page: str | None = None,
         from cognitrix.computer.sandbox import client
 
         client.forget_fly_manager()
+    if any(n.startswith('COGNITRIX_TAILSCALE') for n in body.values):
+        from cognitrix.tailscale import service as tailscale_service
+
+        await tailscale_service.settings_changed(request.app)
     groups = await asyncio.to_thread(app_settings.describe, _page(page))
     return {'groups': groups, 'can_edit': True}

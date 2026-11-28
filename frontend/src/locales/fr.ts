@@ -62,6 +62,7 @@ const fr: Messages = {
   'settings.section.engine': 'Moteur',
   'settings.section.server': 'Serveur',
   'settings.section.advanced': 'Avancé',
+  'settings.section.tailscale': 'Tailscale',
 
   'appearance.description': "L'apparence et le comportement de Cognitrix. Les thèmes suivent votre compte ; le reste se règle par appareil.",
   'appearance.theme': 'Thème',
