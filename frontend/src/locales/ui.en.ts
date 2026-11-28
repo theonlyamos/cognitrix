@@ -2151,7 +2151,7 @@ const uiEn = {
   "ui.credentialsCard.token": "TOKEN",
   "ui.credentialsCard.tokenOrApiKey": "Token or API key",
   "ui.credentialsCard.type": "TYPE",
-  "ui.credentialsCard.typedInTheBrowser": " · typed in the browser",
+  "ui.credentialsCard.typedOnSites": " · typed into sign-in pages on {sites}",
   "ui.credentialsCard.username": "USERNAME",
   "ui.credentialsCard.usernameAndPassword": "Username and password",
   "ui.credentialsCard.usernamePassword": "username + password",

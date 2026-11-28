@@ -15,8 +15,10 @@ export interface Credential {
   hint: string;
   username: string;
   last_used_at: string | null;
-  /** Agents may type it into sign-in pages on its hosts in their own browser. */
+  /** Agents may type it into sign-in pages in their own browser... */
   use_in_browser?: boolean;
+  /** ...on these sites only (some of allowed_hosts). */
+  browser_hosts?: string[];
   /** What an agent writes to use it, e.g. {{secret:GITHUB_TOKEN}}. */
   placeholder: string;
 }

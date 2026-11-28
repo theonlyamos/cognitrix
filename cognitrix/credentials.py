@@ -154,6 +154,13 @@ async def find_row(owner: str | None, name: str) -> Any | None:
     return None
 
 
+def browser_sites(row: Any) -> list[str]:
+    """The sites a saved sign-in may be typed on in an agent's browser: the
+    person allowed them, and it is still saved for them."""
+    hosts = list(getattr(row, 'allowed_hosts', None) or [])
+    return [h for h in (getattr(row, 'browser_hosts', None) or []) if h in hosts and h != 'sandbox.invalid']
+
+
 def describe(row: Any) -> dict[str, Any]:
     """What the model (and the settings list) may know about a credential."""
     return {
@@ -161,7 +168,8 @@ def describe(row: Any) -> dict[str, Any]:
         'kind': row.kind,
         'description': row.description or '',
         'allowed_hosts': list(row.allowed_hosts or []),
-        'use_in_browser': bool(getattr(row, 'use_in_browser', False)),
+        'browser_hosts': browser_sites(row),
+        'use_in_browser': bool(browser_sites(row)),
     }
 
 

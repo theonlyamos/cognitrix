@@ -516,38 +516,64 @@ async def _let_agent_use(agent: Any, name: str) -> None:
     """An agent limited to some saved sign-ins (agent page, Connections) may
     use the one the person just shared with it through Ask For Sign-in.
 
-    The grant is merged into the agent's list as stored now, not the chat's
-    copy, so a sign-in the person took away (or the switch to "all sign-ins")
-    since the chat loaded the agent stays as they left it."""
+    Always for this chat, and only in this person's turns (it is their saved
+    sign-in: ``tools/access.chat_grants``). Saved on the agent as well only
+    when the person owns it, since its sign-in list is the owner's to set
+    (``api/routes/agents._OWNER_ONLY_FIELDS``); someone it was shared with
+    changes nothing for anyone else. The owner's grant is merged into the
+    list as stored now (not the chat's copy, so a sign-in taken away or a
+    switch to "all sign-ins" stays as the owner left it), and checked after
+    writing so two chats granting at once don't drop one.
+    """
     import logging
 
     from cognitrix.credentials import agent_allowed_credentials
+    from cognitrix.tools import access
+
+    log = logging.getLogger('cognitrix.log')
 
     def merged(allowed: list[str] | None) -> list[str] | None:
         if allowed is None or name in {str(n).upper() for n in allowed}:
             return allowed
         return [*allowed, name]
 
-    current = agent_allowed_credentials(agent)
-    if current is None:
-        return
+    person = access._person(agent)
     agent_id = getattr(agent, 'id', None)
-    updated = merged(current)
-    try:
-        if agent_id:
+    stored_list: list[str] | None = agent_allowed_credentials(agent)
+    read = False
+    if agent_id:
+        try:
             from cognitrix.models import Agent
-            stored = await Agent.find_one({'id': str(agent_id)})
-            if stored is not None:
-                fresh = agent_allowed_credentials(stored)
-                updated = merged(fresh)
-                if updated is not None and updated != fresh:
-                    await Agent.update_one({'id': str(agent_id)}, {'credentials': updated})
-    except Exception:
-        # The chat can still use it this time.
-        logging.getLogger('cognitrix.log').info("Could not add %s to the agent's sign-ins", name, exc_info=True)
-        updated = merged(current)
+
+            for _attempt in range(4):
+                stored = await Agent.find_one({'id': str(agent_id)})
+                if stored is None:
+                    break
+                stored_list, read = agent_allowed_credentials(stored), True
+                updated = merged(stored_list)
+                if updated == stored_list or not access._owns(stored, person):
+                    break
+                await Agent.update_one({'id': str(agent_id)}, {'credentials': updated})
+                check = await Agent.find_one({'id': str(agent_id)})
+                stored_list = agent_allowed_credentials(check) if check is not None else updated
+                if merged(stored_list) == stored_list:
+                    break  # it stuck (or the owner switched to all sign-ins)
+        except Exception:
+            log.info("Could not add %s to the agent's sign-ins", name, exc_info=True)
+    if stored_list is None and (read or agent_allowed_credentials(agent) is None):
+        if read:
+            try:
+                agent.credentials = None  # the owner allowed every sign-in meanwhile
+            except Exception:
+                pass
+        return  # it may use every sign-in already
+    # This chat, this person.
+    sink = access._grant_sink.get()
+    if sink is not None and person:
+        sink('sign_in', f'{person}|{name}')
+    # This turn's copy: from the list as stored now when it could be read.
     try:
-        agent.credentials = updated
+        agent.credentials = merged(stored_list if read else agent_allowed_credentials(agent))
     except Exception:
         pass
 
@@ -575,10 +601,11 @@ async def ask_for_sign_in(name: str, reason: str, kind: str | None = None, allow
         reason (str): One sentence on what it's for, shown to the person.
         kind (str, optional): 'token' (one secret value) or 'basic' (username and password). Default: the
             kind of the saved sign-in with this name, else 'token'.
-        allowed_hosts (list[str], optional): The exact hosts it may be used on: the sign-in page's host as the
-            browser's address bar shows it (like github.com, or accounts.google.com; add '*.google.com' too when
+        allowed_hosts (list[str], optional): The exact hosts it may be used on: the sign-in page's host (like
+            github.com, or accounts.google.com, with :port if the page has one; add '*.google.com' too when
             the site signs in on several subdomains) and hosts Http Request may send it to (like
-            api.github.com). Leave empty when it's only for commands in the sandbox.
+            api.github.com). Leave empty when it's only for commands in the sandbox. With for_browser, every
+            host listed here may get it typed into its sign-in page.
         for_browser (bool, optional): Whether you'll type it into a sign-in page in your browser. Default: yes
             for a username and password with sites, no otherwise. The person sees this on the card.
 

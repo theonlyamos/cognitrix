@@ -146,7 +146,9 @@ export function CredentialsCard() {
                 {c.allowed_hosts.length === 1 && c.allowed_hosts[0] === 'sandbox.invalid'
                   ? tr('ui.credentialsCard.onlyForCommandsInThe')
                   : tr('ui.credentialsCard.onlySentToFilter', { filter: c.allowed_hosts.filter((h) => h !== 'sandbox.invalid').join(', ') })}
-                {c.use_in_browser ? tr('ui.credentialsCard.typedInTheBrowser') : ''}
+                {c.use_in_browser
+                  ? tr('ui.credentialsCard.typedOnSites', { sites: (c.browser_hosts ?? []).join(', ') })
+                  : ''}
                 {c.last_used_at ? tr('ui.credentialsCard.lastUsedLastUsedAt', { last_used_at: c.last_used_at }) : tr('ui.credentialsCard.notUsedYet')}
               </p>
               {c.description && <p className="mt-0.5 text-[12px] text-fg-dim">{c.description}</p>}

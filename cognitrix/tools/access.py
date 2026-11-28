@@ -77,7 +77,9 @@ def _first_line(text: Any, limit: int = 220) -> str:
 # --- the chat's grants ----------------------------------------------------------------
 
 GrantSink = Callable[[str, str], None]
-"""(kind 'tool' | 'app', name) -> saves it on the running chat."""
+"""(kind 'tool' | 'app' | 'sign_in', name) -> saves it on the running chat.
+A sign-in is ``"<person key>|<NAME>"``: it is that person's saved sign-in,
+so it only counts in their turns (sandbox_work._let_agent_use)."""
 
 _grant_sink: contextvars.ContextVar[GrantSink | None] = contextvars.ContextVar('access_grant_sink', default=None)
 
@@ -90,12 +92,17 @@ def reset_grant_sink(token) -> None:
     _grant_sink.reset(token)
 
 
+_GRANT_BUCKETS = {'tool': 'tools', 'app': 'apps', 'sign_in': 'sign_ins'}
+
+
 def merge_grant(granted: dict | None, kind: str, name: str) -> dict:
-    """``granted`` with ``name`` added to its ``tools`` or ``apps`` list."""
-    out = {'tools': list((granted or {}).get('tools') or []), 'apps': list((granted or {}).get('apps') or [])}
-    bucket = out['tools' if kind == 'tool' else 'apps']
+    """``granted`` with ``name`` added to its ``tools``, ``apps`` or ``sign_ins`` list."""
+    out = {key: list((granted or {}).get(key) or []) for key in _GRANT_BUCKETS.values()}
+    bucket = out[_GRANT_BUCKETS.get(kind, 'apps')]
     if name and name not in bucket:
         bucket.append(name)
+    if not out['sign_ins']:
+        del out['sign_ins']  # chats without one keep their old shape
     return out
 
 
@@ -495,7 +502,18 @@ def chat_grants(agent: Any, granted: dict | None, *, request_tool: bool) -> Any:
     if apps:
         for t in _mcp_tools():
             add(t)
-    return agent.model_copy(update={'tools': tools, 'mcp_servers': refs})
+    update: dict[str, Any] = {'tools': tools, 'mcp_servers': refs}
+    # Saved sign-ins the person answering now shared in this chat, for an
+    # agent limited to some sign-ins (None means all already).
+    allowed = getattr(agent, 'credentials', None)
+    if isinstance(allowed, list):
+        person = _person(agent)
+        mine = [str(g).split('|', 1)[1] for g in (granted or {}).get('sign_ins') or []
+                if '|' in str(g) and person and str(g).split('|', 1)[0] == person]
+        if mine:
+            have_names = {str(n).upper() for n in allowed}
+            update['credentials'] = [*allowed, *[n for n in mine if n.upper() not in have_names]]
+    return agent.model_copy(update=update)
 
 
 PROMPT_NOTE = (

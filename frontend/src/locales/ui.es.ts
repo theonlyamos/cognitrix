@@ -2152,7 +2152,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.credentialsCard.token": "TOKEN",
   "ui.credentialsCard.tokenOrApiKey": "Token o clave de API",
   "ui.credentialsCard.type": "TIPO",
-  "ui.credentialsCard.typedInTheBrowser": " · se escribe en el navegador",
+  "ui.credentialsCard.typedOnSites": " · se escribe en las páginas de inicio de sesión de {sites}",
   "ui.credentialsCard.username": "USUARIO",
   "ui.credentialsCard.usernameAndPassword": "Usuario y contraseña",
   "ui.credentialsCard.usernamePassword": "usuario + contraseña",

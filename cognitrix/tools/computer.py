@@ -139,7 +139,7 @@ def _with_saved_sign_ins(driver, window_id: int, text: str, parent: Any, *, elem
     except saved_sign_ins.SignInRefused as exc:
         return ToolOutcome.failure('sign_in', str(exc))
     if target is not None:
-        _filled_fields(driver).setdefault(int(window_id), set()).add((target.role, target.name))
+        _filled_fields(driver).setdefault(int(window_id), set()).add((target.role, target.name, target.page))
     return filled
 
 
@@ -162,8 +162,10 @@ def _sign_in_result(result) -> str:
     return _SIGN_IN_NOT_TYPED.format(status=status or 'failed')
 
 
-def _filled_fields(driver) -> dict[int, set[tuple[str, str]]]:
-    """Fields that got a saved sign-in, by window: (role, normalized name)."""
+def _filled_fields(driver) -> dict[int, set[tuple[str, str, str]]]:
+    """Fields that got a saved sign-in, by window: (role, normalized name,
+    page address without query). The page keeps an Email field on the next
+    page in the same window from being hidden too."""
     fields = getattr(driver, '_sign_in_fields', None)
     if fields is None:
         fields = {}
@@ -194,12 +196,12 @@ def _hidden_controls(driver, window_id: int, elements, secrets: list[str]) -> se
     """Controls whose value must not reach the model: fields a saved sign-in
     was typed into, and any showing a saved value in its value or its name
     (some fields take their accessible name from what they hold)."""
-    from cognitrix.computer.saved_sign_ins import _norm
+    from cognitrix.computer.saved_sign_ins import _norm, page_of
 
     filled = _filled_fields(driver).get(int(window_id)) or set()
     hidden = set()
     for index, el in enumerate(elements or []):
-        key = (str(getattr(el, 'role', '')).lower(), _norm(getattr(el, 'name', '')))
+        key = (str(getattr(el, 'role', '')).lower(), _norm(getattr(el, 'name', '')), page_of(el))
         if key in filled or _secret_overlap(str(getattr(el, 'value', '') or ''), secrets) \
                 or _secret_overlap(str(getattr(el, 'name', '') or ''), secrets):
             hidden.add(index)

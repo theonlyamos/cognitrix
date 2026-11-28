@@ -11,7 +11,7 @@ requests to that key's approved sites. Anywhere else the placeholder stays a
 useless string.
 
 One exception, by the person's choice: a saved sign-in with "Agents may type
-it into sign-in pages" on (``Credential.use_in_browser``) is typed into its
+it into sign-in pages" on (``Credential.browser_hosts``) is typed into its
 sites' sign-in pages in the sandbox browser (cognitrix/computer/
 saved_sign_ins.py), so that value is inside the container afterwards.
 

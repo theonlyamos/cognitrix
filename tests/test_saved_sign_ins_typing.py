@@ -13,7 +13,7 @@ from cognitrix.credentials import Resolver
 
 def _row(name, kind='basic', hosts=('github.com',), browser=True, **values):
     return SimpleNamespace(id=name, name=name, kind=kind, allowed_hosts=list(hosts), header='', values=values,
-                           use_in_browser=browser)
+                           browser_hosts=list(hosts) if browser is True else list(browser or []))
 
 
 @pytest.fixture
@@ -34,16 +34,16 @@ def test_fills_on_the_site_it_was_saved_for(resolver):
     assert ssi.fill(resolver, '{{secret:GITHUB.password}}\n', browser=True, host='github.com') == 'hunter2-pass\n'
     # Subdomains only where the person saved *.google.com, like Http Request.
     assert ssi.fill(resolver, '{{secret:GOOGLE.password}}', browser=True, host='accounts.google.com') == 'g-secret-1'
-    with pytest.raises(ssi.SignInRefused, match='this page is on login.example.org'):
+    with pytest.raises(ssi.SignInRefused, match='this field is on login.example.org'):
         ssi.fill(resolver, '{{secret:BARE.password}}', browser=True, host='login.example.org')
 
 
 def test_refuses_another_site(resolver):
-    with pytest.raises(ssi.SignInRefused, match='saved for github.com, but this page is on evil.example'):
+    with pytest.raises(ssi.SignInRefused, match='may be typed on github.com, but this field is on evil.example'):
         ssi.fill(resolver, '{{secret:GITHUB.password}}', browser=True, host='evil.example')
-    with pytest.raises(ssi.SignInRefused, match='saved for github.com'):
+    with pytest.raises(ssi.SignInRefused, match='may be typed on github.com'):
         ssi.fill(resolver, '{{secret:GITHUB.password}}', browser=True, host='github.com.evil.example')
-    with pytest.raises(ssi.SignInRefused, match="Couldn't read this browser window's address"):
+    with pytest.raises(ssi.SignInRefused, match="Couldn't tell which site this field is on"):
         ssi.fill(resolver, '{{secret:GITHUB.password}}', browser=True, host='')
 
 
@@ -92,29 +92,6 @@ def test_one_value_per_call():
         assert not ssi.one_placeholder(text), text
 
 
-def test_the_address_comes_from_the_browser_not_the_page():
-    page = _el('document web', 'Jobs', (0, 30, 800, 600))
-    fake = _el('entry', 'Location', (100, 60, 400, 90), value='github.com')
-    bar = _el('entry', 'Address and search bar', (0, 0, 800, 30), value='evil.example/login')
-    assert ssi.browser_address([page, fake, bar]) == 'evil.example/login'
-    assert ssi.browser_address([page, fake]) == ''
-    # Without the page in the look there is no telling them apart.
-    assert ssi.browser_address([fake, bar]) == ''
-    # A page field poking out above the page is still the page's.
-    poking = _el('entry', 'Address and search bar', (100, 20, 400, 50), value='github.com')
-    assert ssi.browser_address([page, poking, bar]) == 'evil.example/login'
-    assert ssi.browser_address([page, poking]) == ''
-
-
-def test_not_secure_mark_counts_as_http():
-    page = _el('document web', 'Jobs', (0, 30, 800, 600))
-    chip = _el('push button', 'Not secure', (0, 0, 60, 30))
-    assert ssi.not_secure([page, chip])
-    assert not ssi.not_secure([page, _el('push button', 'View site information', (0, 0, 60, 30))])
-    # The page saying it doesn't count.
-    assert not ssi.not_secure([page, _el('label', 'Not secure', (100, 100, 200, 130))])
-
-
 def test_is_browser():
     assert ssi.is_browser(SimpleNamespace(kind='chromium', app='chromium'))
     assert ssi.is_browser(SimpleNamespace(kind='win32', app='firefox-esr'))
@@ -128,10 +105,19 @@ def _el(role, name, rect, value=None):
     return Element(role=role, name=name, value=value, rect=rect)
 
 
+def _on(field, url):
+    """``field`` as the browser reports it on the page at ``url``."""
+    import dataclasses
+    return dataclasses.replace(field, state={**field.state, '_page_url': url})
+
+
 def _snap(sid, address, fields, origin=(0, 0), chrome=()):
+    """A browser look: the address bar, the page's fields (on ``address``
+    unless they say otherwise) and the page."""
     from cognitrix.computer import Snapshot
     bar = _el('entry', 'Address and search bar', (0, 0, 800, 30), value=address)
-    page = _el('document web', 'Sign in', (0, 30, 800, 600))
+    page = _on(_el('document web', 'Sign in', (0, 30, 800, 600)), address)
+    fields = [f if '_page_url' in f.state or f.role not in ssi.TEXT_ROLES else _on(f, address) for f in fields]
     return Snapshot(sid, 7, [bar, *fields, *chrome, page], origin, (800, 600), 1.0)
 
 
@@ -149,10 +135,12 @@ class _Driver:
         self.backend = SimpleNamespace(window=lambda wid: win)
         # What the agent saw, then what a fresh look shows.
         self._snapshots = {7: _snap('s1', address, [EMAIL, PASSWORD])}
+        self._seen = {(None, 7): 's1'}
         self._after = after or _snap('s2', address, [EMAIL, PASSWORD])
 
     def look(self, window_id, query=None, limit=60, viewer=None):
         self._snapshots[7] = self._after
+        self._seen[(viewer, 7)] = self._after.id
         return None, self._after, [], ''
 
     status = CONFIRMED
@@ -196,7 +184,8 @@ async def test_types_the_saved_value_into_the_field(monkeypatch, tools):
     await tools.set_text.run(window_id=7, text='{{secret:GITHUB.username}}', element=1)
     assert driver.set == [(1, 'amos@example.com')]
     # Both fields are remembered and hidden in later looks.
-    assert tools._filled_fields(driver)[7] == {('password text', 'password'), ('entry', 'email')}
+    assert tools._filled_fields(driver)[7] == {('password text', 'password', 'https://github.com/login'),
+                                               ('entry', 'email', 'https://github.com/login')}
 
 
 async def test_wrong_site_types_nothing(monkeypatch, tools):
@@ -348,58 +337,175 @@ def test_take_over_reasons_are_read_closely():
 
 
 async def test_agent_limited_to_some_sign_ins_may_use_the_one_it_asked_for(monkeypatch):
-    from cognitrix.tools import sandbox_work
+    from cognitrix.tools import access, sandbox_work
 
-    stored = {'credentials': ['GITHUB']}
+    stored = {'credentials': ['GITHUB'], 'owner_id': 'u1'}
     saved = []
+    chat = []
 
     class FakeAgent:
         id = 'a1'
         credentials = ['GITHUB', 'REVOKED']  # the chat's older copy
 
     async def find_one(query):
-        return SimpleNamespace(id='a1', credentials=stored['credentials'])
+        return SimpleNamespace(id='a1', credentials=stored['credentials'], owner_id=stored['owner_id'])
 
     async def update_one(query, changes):
         saved.append((query, changes))
         stored.update(changes)
 
+    person = {'id': 'u1'}
     monkeypatch.setattr('cognitrix.models.Agent.find_one', find_one)
     monkeypatch.setattr('cognitrix.models.Agent.update_one', update_one)
-    agent = FakeAgent()
-    await sandbox_work._let_agent_use(agent, 'NOTION')
-    # Merged into the list as stored now: what the person took away stays away.
-    assert saved == [({'id': 'a1'}, {'credentials': ['GITHUB', 'NOTION']})]
-    assert agent.credentials == ['GITHUB', 'NOTION']
-    # The person switched the agent to every sign-in meanwhile: left that way.
-    stored['credentials'] = None
-    agent.credentials = ['GITHUB']
-    await sandbox_work._let_agent_use(agent, 'SLACK')
-    assert len(saved) == 1 and agent.credentials is None
-    # Agents that may use every sign-in are left alone.
-    await sandbox_work._let_agent_use(agent, 'NOTION')
-    assert len(saved) == 1
+    monkeypatch.setattr('cognitrix.tools.utils.current_execution_context',
+                        lambda: SimpleNamespace(user_id=person['id'], agent_id='a1', session_id='s1'))
+    token = access.set_grant_sink(lambda kind, name: chat.append((kind, name)))
+    try:
+        agent = FakeAgent()
+        await sandbox_work._let_agent_use(agent, 'NOTION')
+        # The owner: merged into the list as stored now (what they took away stays away), and the chat has it.
+        assert saved == [({'id': 'a1'}, {'credentials': ['GITHUB', 'NOTION']})]
+        assert agent.credentials == ['GITHUB', 'NOTION'] and chat == [('sign_in', 'u1|NOTION')]
+        # The owner switched the agent to every sign-in meanwhile: left that way.
+        stored['credentials'] = None
+        agent.credentials = ['GITHUB']
+        await sandbox_work._let_agent_use(agent, 'SLACK')
+        assert len(saved) == 1 and agent.credentials is None
 
-    # The stored agent can't be read: the chat still gets it this time.
-    async def broken(query):
-        raise RuntimeError('db down')
+        # Someone the agent is shared with: this chat and their turns only, the agent is left alone.
+        stored['credentials'] = ['GITHUB']
+        person['id'] = 'u2'
+        chat.clear()
+        agent.credentials = ['GITHUB']
+        await sandbox_work._let_agent_use(agent, 'JIRA')
+        assert len(saved) == 1 and stored['credentials'] == ['GITHUB']
+        assert agent.credentials == ['GITHUB', 'JIRA'] and chat == [('sign_in', 'u2|JIRA')]
 
-    monkeypatch.setattr('cognitrix.models.Agent.find_one', broken)
-    agent.credentials = ['GITHUB']
-    await sandbox_work._let_agent_use(agent, 'JIRA')
-    assert agent.credentials == ['GITHUB', 'JIRA'] and len(saved) == 1
+        # The stored agent can't be read: the chat still gets it.
+        async def broken(query):
+            raise RuntimeError('db down')
+
+        monkeypatch.setattr('cognitrix.models.Agent.find_one', broken)
+        agent.credentials = ['GITHUB']
+        await sandbox_work._let_agent_use(agent, 'LINEAR')
+        assert agent.credentials == ['GITHUB', 'LINEAR'] and len(saved) == 1
+    finally:
+        access.reset_grant_sink(token)
+
+
+async def test_two_grants_at_once_both_stick(monkeypatch):
+    """Another chat's write lands between this one's read and write: it is
+    read back, and written again with both."""
+    from cognitrix.tools import sandbox_work
+
+    stored = {'credentials': ['GITHUB']}
+    writes = []
+
+    async def find_one(query):
+        return SimpleNamespace(id='a1', credentials=list(stored['credentials']), owner_id='u1')
+
+    async def update_one(query, changes):
+        writes.append(changes['credentials'])
+        stored['credentials'] = changes['credentials']
+        if len(writes) == 1:
+            stored['credentials'] = ['GITHUB', 'OTHER']  # the other chat's write wins the race
+
+    monkeypatch.setattr('cognitrix.models.Agent.find_one', find_one)
+    monkeypatch.setattr('cognitrix.models.Agent.update_one', update_one)
+    monkeypatch.setattr('cognitrix.tools.utils.current_execution_context',
+                        lambda: SimpleNamespace(user_id='u1', agent_id='a1', session_id='s1'))
+    await sandbox_work._let_agent_use(SimpleNamespace(id='a1', credentials=['GITHUB']), 'MINE')
+    assert stored['credentials'] == ['GITHUB', 'OTHER', 'MINE']
+
+
+def test_chat_grants_of_sign_ins_count_only_for_that_person(monkeypatch):
+    from cognitrix.tools import access
+
+    assert access.merge_grant(None, 'tool', 'bash') == {'tools': ['bash'], 'apps': []}
+    granted = access.merge_grant(access.merge_grant(None, 'tool', 'bash'), 'sign_in', 'u2|JIRA')
+    assert granted == {'tools': ['bash'], 'apps': [], 'sign_ins': ['u2|JIRA']}
+    assert access.merge_grant(granted, 'app', 'srv')['sign_ins'] == ['u2|JIRA']
+
+    class A(SimpleNamespace):
+        def model_copy(self, update):
+            return A(**{**self.__dict__, **update})
+
+    agent = A(id='a1', tools=[], mcp_servers=[], credentials=['GITHUB'], owner_id='u1')
+    who = {'id': 'u2'}
+    monkeypatch.setattr('cognitrix.tools.utils.current_execution_context',
+                        lambda: SimpleNamespace(user_id=who['id'], agent_id='a1', session_id='s1'))
+    assert access.chat_grants(agent, granted, request_tool=False).credentials == ['GITHUB', 'JIRA']
+    who['id'] = 'u1'
+    assert access.chat_grants(agent, granted, request_tool=False).credentials == ['GITHUB']
+    # An agent that may use every sign-in stays that way.
+    agent.credentials = None
+    assert access.chat_grants(agent, granted, request_tool=False).credentials is None
 
 
 async def test_plain_http_pages_get_nothing(monkeypatch, tools):
     driver = _use(monkeypatch, tools, _Driver(address='http://github.com/login'))
     out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=200, y=160)).content
-    assert 'plain http' in out and driver.typed == []
-    # Chromium hides "http://" and shows "Not secure" instead.
-    chip = _el('push button', 'Not secure', (0, 0, 60, 30))
-    after = _snap('s2', 'github.com/login', [EMAIL, PASSWORD], chrome=[chip])
-    driver = _use(monkeypatch, tools, _Driver(address='github.com/login', after=after))
+    assert 'not https' in out and driver.typed == []
+
+
+async def test_the_site_is_the_fields_own_page(monkeypatch, tools):
+    # The address bar says github.com, but the password field is in a frame
+    # from another site: that site is what counts.
+    framed = _on(PASSWORD, 'https://evil.example/frame.html')
+    after = _snap('s2', 'https://github.com/login', [EMAIL, framed])
+    driver = _use(monkeypatch, tools, _Driver(after=after))
+    driver._snapshots[7] = _snap('s1', 'https://github.com/login', [EMAIL, framed])
     out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=200, y=160)).content
-    assert 'plain http' in out and driver.typed == []
+    assert 'this field is on evil.example' in out and driver.typed == []
+    # A field whose page the browser doesn't report gets nothing.
+    from cognitrix.computer import Snapshot
+    bare = Snapshot('s3', 7, [_el('entry', 'Address and search bar', (0, 0, 800, 30), value='https://github.com'),
+                             EMAIL, PASSWORD], (0, 0), (800, 600), 1.0)
+    driver = _use(monkeypatch, tools, _Driver(after=bare))
+    driver._snapshots[7] = bare
+    out = (await tools.type_in_window.run(window_id=7, text='{{secret:GITHUB.password}}', x=200, y=160)).content
+    assert "didn't say which site" in out and driver.typed == []
+
+
+def test_page_addresses():
+    assert ssi.site_of_page('https://GitHub.com/login?x=1') == 'github.com'
+    assert ssi.site_of_page('https://staging.example:8443/login') == 'staging.example:8443'
+    assert ssi.site_of_page('https://staging.example:443/') == 'staging.example'
+    for bad in ('http://github.com/', 'github.com/login', 'file:///etc/passwd', 'https://', ''):
+        assert ssi.site_of_page(bad) == '', bad
+    assert ssi.page_of(_on(EMAIL, 'https://a.example/login?next=/x#y')) == 'https://a.example/login'
+
+
+def test_a_saved_port_is_kept(resolver):
+    resolver.rows['STAGE'] = _row('STAGE', hosts=('staging.example:8443',), username='me', password='stage-pass')
+    assert ssi.fill(resolver, '{{secret:STAGE.password}}', browser=True, host='staging.example:8443',
+                    field_role='password text') == 'stage-pass'
+    with pytest.raises(ssi.SignInRefused):
+        ssi.fill(resolver, '{{secret:STAGE.password}}', browser=True, host='staging.example',
+                 field_role='password text')
+
+
+def test_only_the_sites_allowed_for_the_browser(resolver):
+    # Saved for the API and the site, but typed only on the site the person allowed.
+    resolver.rows['GH'] = _row('GH', hosts=('api.github.com', 'github.com'), browser=['github.com'],
+                               username='me', password='gh-pass-1')
+    assert ssi.fill(resolver, '{{secret:GH.password}}', browser=True, host='github.com',
+                    field_role='password text') == 'gh-pass-1'
+    with pytest.raises(ssi.SignInRefused, match='may be typed on github.com, but this field is on api.github.com'):
+        ssi.fill(resolver, '{{secret:GH.password}}', browser=True, host='api.github.com',
+                 field_role='password text')
+    # A browser site it is no longer saved for doesn't count.
+    resolver.rows['OLD'] = _row('OLD', hosts=('new.example',), browser=['old.example'], password='old-pass-1')
+    with pytest.raises(ssi.SignInRefused, match="isn't allowed in the browser"):
+        ssi.fill(resolver, '{{secret:OLD.password}}', browser=True, host='old.example', field_role='password text')
+
+
+def test_someone_elses_look_is_refused():
+    driver = _Driver()
+    driver._seen = {('agent-a', 7): 's1'}
+    with pytest.raises(ssi.SignInRefused, match='looked at again since your last look'):
+        ssi.check_page(driver, 7, 'agent-b', point=(200, 160))
+    assert ssi.check_page(driver, 7, 'agent-a', point=(200, 160)).host == 'github.com'
 
 
 async def test_typing_that_failed_says_so_without_the_value(monkeypatch, tools):
@@ -413,26 +519,25 @@ async def test_typing_that_failed_says_so_without_the_value(monkeypatch, tools):
 
 
 async def test_looks_hide_filled_fields_and_saved_values(monkeypatch, tools):
+    import dataclasses
+
     from PIL import Image
 
     token = _el('entry', 'API key', (100, 200, 400, 230), value='glpat-not-for-browsers-abcdef'[:20])
     after = _snap('s2', 'https://github.com/login', [EMAIL, PASSWORD, token])
     driver = _use(monkeypatch, tools, _Driver(after=after))
-    EMAIL.value = 'amos@example.com'
-    try:
-        await tools.set_text.run(window_id=7, text='{{secret:GITHUB.username}}', element=1)
+    await tools.set_text.run(window_id=7, text='{{secret:GITHUB.username}}', element=1)
+    after.elements[1] = dataclasses.replace(after.elements[1], value='amos@example.com')
 
-        def look(window_id, query=None, limit=60, viewer=None):
-            driver._snapshots[7] = after
-            return Image.new('RGB', (800, 600), (255, 255, 255)), after, list(enumerate(after.elements)), ''
+    def look(window_id, query=None, limit=60, viewer=None):
+        driver._snapshots[7] = after
+        return Image.new('RGB', (800, 600), (255, 255, 255)), after, list(enumerate(after.elements)), ''
 
-        driver.look = look
-        shown = []
-        monkeypatch.setattr(tools, 'queue_image', lambda url: shown.append(url) or True)
-        monkeypatch.setattr(tools, '_saved_values', lambda: ['glpat-not-for-browsers', 'hunter2-pass'])
-        out = (await tools.look_at_window.run(window_id=7)).content
-    finally:
-        EMAIL.value = None
+    driver.look = look
+    shown = []
+    monkeypatch.setattr(tools, 'queue_image', lambda url: shown.append(url) or True)
+    monkeypatch.setattr(tools, '_saved_values', lambda: ['glpat-not-for-browsers', 'hunter2-pass'])
+    out = (await tools.look_at_window.run(window_id=7)).content
     # The email field got a saved sign-in; the key field shows the start of a saved value.
     assert 'amos@example.com' not in out and 'glpat' not in out, out
     assert out.count('[saved sign-in hidden]') == 2
@@ -470,7 +575,7 @@ def test_page_body_is_not_a_field():
     page = _el('document web', 'GitHub', (0, 30, 800, 600))
     snap = _snap('s', 'https://github.com', [page])
     assert ssi._field_at(snap, (500, 400)) is None
-    assert ssi._field_at(_snap('s', 'https://github.com', [page, PASSWORD]), (200, 160)) is PASSWORD
+    assert ssi._field_at(_snap('s', 'https://github.com', [page, PASSWORD]), (200, 160)).name == 'Password'
 
 
 
@@ -488,37 +593,85 @@ async def test_browser_use_is_off_unless_the_person_turns_it_on(monkeypatch):
     ada = await _user('Ada', 'ada@example.com')
     made = await routes.add_credential(routes.CredentialBody(
         name='gitlab', value='glpat-0123456789abcdef', allowed_hosts=['gitlab.com']), _ctx(ada))
-    assert made['use_in_browser'] is False
-    row = await Credential.find_one({'name': 'GITLAB'})
-    assert row.use_in_browser is False
+    assert made['use_in_browser'] is False and made['browser_hosts'] == []
+    assert (await Credential.find_one({'name': 'GITLAB'})).browser_hosts == []
     turned_on = await routes.update_credential(made['id'], routes.CredentialUpdate(use_in_browser=True), _ctx(ada))
-    assert turned_on['use_in_browser'] is True
-    assert (await Credential.find_one({'name': 'GITLAB'})).use_in_browser is True
+    assert turned_on['use_in_browser'] is True and turned_on['browser_hosts'] == ['gitlab.com']
+    assert (await Credential.find_one({'name': 'GITLAB'})).browser_hosts == ['gitlab.com']
+    # A host added for requests later isn't a browser site...
+    more = await routes.update_credential(made['id'], routes.CredentialUpdate(
+        allowed_hosts=['gitlab.com', 'api.gitlab.com']), _ctx(ada))
+    assert more['browser_hosts'] == ['gitlab.com']
+    # ...a removed one stops being one, and turning it off clears them.
+    fewer = await routes.update_credential(made['id'], routes.CredentialUpdate(allowed_hosts=['api.gitlab.com']),
+                                           _ctx(ada))
+    assert fewer['browser_hosts'] == [] and fewer['use_in_browser'] is False
+    await routes.update_credential(made['id'], routes.CredentialUpdate(allowed_hosts=['gitlab.com'],
+                                                                       use_in_browser=True), _ctx(ada))
+    off = await routes.update_credential(made['id'], routes.CredentialUpdate(use_in_browser=False), _ctx(ada))
+    assert off['browser_hosts'] == []
 
-    # Answering an agent's Ask For Sign-in for a website turns it on; for commands only, not.
+    # Answering an agent's Ask For Sign-in: only the sites on that card become browser sites.
     from cognitrix.questions import broker
     answered = []
-    for name, hosts, browser in (('SITE_LOGIN', ['github.com'], True), ('BOX_ONLY', ['sandbox.invalid'], False)):
-        monkeypatch.setattr(broker, 'pending_secret', lambda rid, key, n=name, h=hosts, b=browser: {
-            'name': n, 'kind': 'basic', 'hosts': h, 'browser': b})
 
-        async def resolve(*args, **kwargs):
-            answered.append(args)
+    async def resolve(*args, **kwargs):
+        answered.append(args)
 
-        monkeypatch.setattr(broker, 'resolve_question', resolve)
+    monkeypatch.setattr(broker, 'resolve_question', resolve)
+
+    async def answer(name, hosts, browser):
+        monkeypatch.setattr(broker, 'pending_secret', lambda rid, key: {
+            'name': name, 'kind': 'basic', 'hosts': hosts, 'browser': browser})
         await routes.answer_sign_in_request('r1', routes.SignInAnswer(username='me', password='pw-123456'), _ctx(ada))
-    assert (await Credential.find_one({'name': 'SITE_LOGIN'})).use_in_browser is True
-    assert (await Credential.find_one({'name': 'BOX_ONLY'})).use_in_browser is False
-    assert len(answered) == 2
+        return await Credential.find_one({'name': name})
+
+    assert (await answer('SITE_LOGIN', ['github.com'], True)).browser_hosts == ['github.com']
+    assert (await answer('BOX_ONLY', ['sandbox.invalid'], False)).browser_hosts == []
+    # Saved for the API before; the card asks for the browser on github.com only.
+    await routes.add_credential(routes.CredentialBody(name='gh', kind='basic', username='me', password='pw-1234567',
+                                                      allowed_hosts=['api.github.com']), _ctx(ada))
+    row = await answer('GH', ['github.com'], True)
+    assert row.allowed_hosts == ['api.github.com', 'github.com'] and row.browser_hosts == ['github.com']
+    # And a later card for another API host leaves the browser sites as they were.
+    row = await answer('GH', ['uploads.github.com'], False)
+    assert row.browser_hosts == ['github.com'] and 'uploads.github.com' in row.allowed_hosts
+    assert len(answered) == 4
 
 
 def test_old_rows_read_back_off():
     from cognitrix.models.credential import Credential
 
-    for raw in (None, '', '0', 'false', 0):
-        assert Credential(owner_id='u', name='A', use_in_browser=raw).use_in_browser is False
-    for raw in ('1', 'true', 1, True):
-        assert Credential(owner_id='u', name='A', use_in_browser=raw).use_in_browser is True
+    for raw in (None, '', '[]'):
+        assert Credential(owner_id='u', name='A', browser_hosts=raw).browser_hosts == []
+    assert Credential(owner_id='u', name='A', browser_hosts='["a.example"]').browser_hosts == ['a.example']
+
+
+async def test_relational_databases_get_the_new_column():
+    from cognitrix import config
+
+    statements = []
+
+    class FakeDb:
+        dbms = 'postgresql'
+
+        async def query(self, sql, *args):
+            statements.append(sql)
+            return []
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    mp.setattr(config, '_reconcile_task_event_sequences', nothing)
+    mp.setattr(config, '_backfill_taskrun_counters', nothing)
+    mp.setattr(config, '_verify_relational_event_index', nothing)
+    try:
+        await config._migrate_relational_task_schema(FakeDb())
+    finally:
+        mp.undo()
+    assert 'ALTER TABLE credentials ADD COLUMN IF NOT EXISTS browser_hosts TEXT' in statements
 
 
 async def test_ask_for_sign_in_says_when_it_goes_into_the_browser(monkeypatch):
@@ -586,3 +739,17 @@ async def test_asking_again_keeps_the_saved_kind(monkeypatch):
     await sandbox_work.ask_for_sign_in.run(name='github', reason='Just the token', kind='token',
                                            allowed_hosts=['api.github.com'])
     assert asked[0].secret['kind'] == 'token'
+
+
+def test_a_filled_field_is_only_hidden_on_its_own_page():
+    from cognitrix.tools import computer as tools_mod
+
+    driver = SimpleNamespace(_sign_in_fields={7: {('entry', 'email', 'https://github.com/login')}})
+    same = _on(_el('entry', 'Email', (0, 0, 10, 10), value='amos@example.com'), 'https://github.com/login?x=1')
+    other = _on(_el('entry', 'Email', (0, 0, 10, 10), value='friend@example.com'), 'https://github.com/settings')
+    assert tools_mod._hidden_controls(driver, 7, [same, other], []) == {0}
+
+
+def test_driver_notes_stay_out_of_control_lists():
+    el = _on(_el('entry', 'Email', (0, 0, 10, 10)), 'https://github.com/login')
+    assert '_page_url' not in el.describe() and 'github.com' not in el.describe()
