@@ -1,73 +1,25 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import { api, errorMessage } from '@/lib/api';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { AudioLines, ChevronDown, FlaskConical, Settings2, Upload, Video } from 'lucide-react';
+import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
 import { Button } from '@/lib/components/ui/button';
-import { Input } from '@/lib/components/ui/input';
-import { Select } from '@/lib/components/ui/select';
-import { ComputerPanel } from '@/components/ComputerPanel';
-import MarkdownMessage from '@/components/MarkdownMessage';
-import { UpcomingCalls } from '@/components/UpcomingCalls';
-import { CallControls, MeetingSearch, MeetingSettingsPanel, MeetingTabs, SeenOnJoin, type ShareLevel } from '@/components/MeetingExtras';
-import { Textarea } from '@/lib/components/ui/textarea';
-import { PageHeader, LoadingState, ErrorState, EmptyState } from '@/components/list-ui';
+import { UpNext, useCalendar } from '@/components/UpcomingCalls';
+import { MeetingSearch, MeetingSettingsSheet } from '@/components/MeetingExtras';
+import { MeetingDetail } from '@/components/meetings/MeetingDetail';
+import { JoinCallDialog } from '@/components/meetings/JoinCallDialog';
+import { Menu, MenuItem } from '@/components/meetings/Overlay';
+import { Badge } from '@/components/meetings/PaneHeader';
+import {
+  IN_CALL, PLATFORM, clock, day, dayGroup, length, working,
+  type AgentLite, type LiveReadiness, type Meeting, type MeetingSummary,
+} from '@/components/meetings/types';
+import { PageHeader, LoadingState, ErrorState } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
-import { tr, dateLocale } from '@/lib/i18n';
+import { tr } from '@/lib/i18n';
 
-type Status = 'queued' | 'transcribing' | 'writing' | 'done' | 'error' | 'joining' | 'waiting' | 'live';
-type ReplyMode = 'chat' | 'voice' | 'off';
+export type { MeetingSummary } from '@/components/meetings/types';
 
-export interface MeetingSummary {
-  id: string;
-  title: string;
-  filename: string;
-  agent_id: string;
-  status: Status;
-  progress: string;
-  seconds: number;
-  error: string;
-  created_at: string;
-  has_transcript: boolean;
-  /** 'live': an agent sat in a call; 'recording': an upload. */
-  kind?: 'recording' | 'live';
-  url?: string;
-  platform?: string;
-  bot_name?: string;
-  reply_mode?: ReplyMode;
-  answers?: number;
-  /** The live meeting worker is running, including while it writes notes after the call. */
-  in_call?: boolean;
-  /** What answers in the call may use. */
-  share?: ShareLevel;
-  /** Off the record: nothing said is kept until someone resumes. */
-  paused?: boolean;
-  /** The agent asked the person this during the call and is waiting for the answer. */
-  owner_question?: string;
-  rejoins?: number;
-  /** A practice call on the agent's own computer. */
-  test?: boolean;
-}
-interface Meeting extends MeetingSummary {
-  transcript: string;
-  notes: string;
-  context?: string;
-  watch_words?: string[];
-  guidance?: string[];
-  /** Running notes, while the call goes on. */
-  live_notes?: string;
-  /** The whole call again with the speakers told apart. */
-  speaker_transcript?: string;
-  action_items?: { owner: string; what: string }[];
-  /** What the agent could read on its screen when joining failed. */
-  seen?: string;
-  has_seen_image?: boolean;
-}
-interface LiveReadiness {
-  /** The agents' sandboxed computer is on: calls run in its browser. */
-  computer: boolean;
-  /** A read-aloud provider has a key, so answers can be spoken. */
-  speech: boolean;
-}
 interface MeetingList {
   meetings: MeetingSummary[];
   /** A speech-to-text provider with a key is set under Settings, Voice input. */
@@ -78,389 +30,50 @@ interface MeetingList {
   max_seconds: number;
   live?: LiveReadiness;
 }
-interface AgentLite { id: string; name: string }
+
+type Filter = 'all' | 'calls' | 'recordings';
+type Group = 'live' | 'today' | 'yesterday' | 'earlier';
 
 const ACCEPT = 'audio/*,video/*,.mp3,.m4a,.wav,.mp4,.webm,.ogg,.opus,.flac,.aac,.mov,.mkv';
-const IN_CALL: Status[] = ['joining', 'waiting', 'live'];
-const working = (status: Status) => status === 'queued' || status === 'transcribing' || status === 'writing'
-  || IN_CALL.includes(status);
-const PLATFORM: Record<string, string> = { meet: 'Google Meet', teams: 'Teams', zoom: 'Zoom' };
+const UPLOAD_AGENT = 'cognitrix.meetings.uploadAgent';
+const GROUPS: Group[] = ['live', 'today', 'yesterday', 'earlier'];
 
-function length(seconds: number): string {
-  if (!seconds) return '';
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 1) return tr('ui.meetings.roundSec', { round: Math.round(seconds) });
-  return minutes >= 60 ? tr('ui.meetings.floorHValueMin', { floor: Math.floor(minutes / 60), value: minutes % 60 }) : tr('ui.meetings.minutesMin', { minutes });
+const readUploadAgent = () => { try { return localStorage.getItem(UPLOAD_AGENT) ?? ''; } catch { return ''; } };
+
+/** The second line of a list row: where it happened, who was there, how long. */
+function rowMeta(m: MeetingSummary): string {
+  if (m.kind !== 'live') return ['Recording', length(m.seconds)].filter(Boolean).join(' · ');
+  const where = m.test ? 'Test call' : PLATFORM[m.platform ?? ''] ?? 'Call';
+  return [where, m.bot_name, length(m.seconds)].filter(Boolean).join(' · ');
 }
 
-function day(stamp: string): string {
-  const date = new Date(stamp.includes('T') ? stamp : `${stamp.replace(' ', 'T')}Z`);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function statusText(meeting: MeetingSummary): string {
-  if (meeting.status === 'error') return 'failed';
-  if (meeting.status === 'live' && meeting.owner_question) return 'has a question for you';
-  if (meeting.status === 'live' && meeting.paused) return ['off the record', length(meeting.seconds)].filter(Boolean).join(' · ');
-  if (meeting.status === 'live') return ['in the call', length(meeting.seconds)].filter(Boolean).join(' · ');
-  if (meeting.status === 'waiting') return meeting.progress || 'waiting to be let in';
-  if (meeting.status === 'joining') return meeting.progress || 'joining';
-  if (meeting.status === 'done') return [day(meeting.created_at), length(meeting.seconds)].filter(Boolean).join(' · ');
-  return meeting.progress || (meeting.status === 'queued' ? 'waiting to start' : meeting.status);
-}
-
-/** What an agent in a call shows: where it is, what it hears as it comes in,
- *  its screen on demand, and Leave. */
-function LiveCall({ meeting, agents, onChanged, onReload }: {
-  meeting: Meeting; agents: AgentLite[]; onChanged: () => void; onReload: () => Promise<unknown>;
-}) {
-  const [watching, setWatching] = useState(false);
-  const [say, setSay] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const end = useRef<HTMLDivElement>(null);
-  const lines = meeting.transcript.split('\n').filter((l) => l.trim());
-
-  useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [lines.length]);
-
-  const leave = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      await api.post(`/meetings/${meeting.id}/leave`);
-      await onReload();
-      onChanged();
-    } catch (e) {
-      setError(errorMessage(e, tr('ui.meetings.couldNotReachTheAgent')));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const send = async (event: FormEvent) => {
-    event.preventDefault();
-    const text = say.trim();
-    if (!text) return;
-    setError('');
-    try {
-      await api.post(`/meetings/${meeting.id}/say`, { text });
-      setSay('');
-    } catch (e) {
-      setError(errorMessage(e, tr('ui.meetings.couldNotSendThatTo')));
-    }
-  };
-  const where = PLATFORM[meeting.platform ?? ''] ?? 'the call';
-  const state = meeting.status === 'live' ? `In ${where} as ${meeting.bot_name}`
-    : meeting.status === 'waiting' ? `Waiting for someone in ${where} to let ${meeting.bot_name} in`
-      : `Joining ${where}`;
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="flex min-w-0 flex-1 items-center gap-2 text-[13px]" aria-live="polite">
-          <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-accent" aria-hidden />
-          <span className="truncate">{state}{meeting.progress && meeting.status !== 'live' ? ` · ${meeting.progress}` : ''}</span>
-        </p>
-        <Button type="button" size="sm" variant="ghost" aria-pressed={watching} onClick={() => setWatching((v) => !v)}>
-          {watching ? tr('ui.meetings.hideScreen') : tr('ui.meetings.watch')}
-        </Button>
-        <Button type="button" size="sm" variant="outline" disabled={busy || meeting.progress === 'leaving the call'} onClick={() => void leave()}>
-          {meeting.progress === 'leaving the call' ? tr('ui.meetings.leaving') : tr('ui.meetings.leaveCall')}
-        </Button>
-      </div>
-      {watching && (
-        <div className="h-[420px] overflow-hidden rounded-[10px] border border-line">
-          <ComputerPanel agents={agents} focusAgentId={meeting.agent_id} onClose={() => setWatching(false)} />
-        </div>
-      )}
-      <div className="max-h-[360px] overflow-y-auto rounded-[10px] border border-line bg-bg px-3 py-2 text-[13px] leading-relaxed" aria-label={tr('ui.meetings.liveTranscript')}>
-        {lines.length === 0 ? (
-          <p className="text-fg-dim">{meeting.status === 'live' ? tr('ui.meetings.listeningWhatPeopleSayShows') : tr('ui.meetings.nothingHeardYet')}</p>
-        ) : lines.map((line, i) => {
-          const match = /^\[([\d:]+)\]\s*(.*)$/.exec(line);
-          const mine = match && meeting.bot_name && match[2].startsWith(`${meeting.bot_name} (`);
-          return (
-            <p key={i} className={cn('flex gap-2 py-0.5', mine && 'text-accent-ink')}>
-              {match && <span className="flex-none font-mono text-[11px] leading-[1.9] text-fg-dim">{match[1]}</span>}
-              <span className="min-w-0 break-words">{match ? match[2] : line}</span>
-            </p>
-          );
-        })}
-        <div ref={end} />
-      </div>
-      {meeting.status === 'live' && !meeting.test && (
-        <CallControls meetingId={meeting.id} botName={meeting.bot_name || 'The agent'} paused={!!meeting.paused}
-          question={meeting.owner_question || ''} guidance={meeting.guidance ?? []} liveNotes={meeting.live_notes || ''} />
-      )}
-      {meeting.status === 'live' && (
-        <form onSubmit={(e) => void send(e)} className="flex gap-2">
-          <Input value={say} onChange={(e) => setSay(e.target.value)} maxLength={600}
-            placeholder={meeting.reply_mode === 'voice' ? tr('ui.meetings.haveBotNameSaySomething', { bot_name: meeting.bot_name }) : tr('ui.meetings.haveBotNameWriteIn', { bot_name: meeting.bot_name })}
-            aria-label={tr('ui.meetings.sayInTheCall')} className="h-9 flex-1" />
-          <Button type="submit" size="sm" disabled={!say.trim()}>{tr('ui.meetings.send')}</Button>
-        </form>
-      )}
-      {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
-    </div>
-  );
-}
-
-function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLite[]; onChanged: () => void }) {
-  const [meeting, setMeeting] = useState<Meeting | null>(null);
-  const [tab, setTab] = useState<'notes' | 'transcript' | 'speakers'>('notes');
-  const [error, setError] = useState('');
-  const [copied, setCopied] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const load = () => api.get<Meeting>(`/meetings/${id}`).then((r) => setMeeting(r.data))
-    .catch((e) => setError(errorMessage(e, tr('ui.meetings.couldNotLoadThisMeeting'))));
-
-  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
-
-  const busyOnServer = meeting ? working(meeting.status) : false;
-  useEffect(() => {
-    if (!busyOnServer) return;
-    const timer = window.setInterval(() => { void load().then(onChanged); }, 2500);
-    return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busyOnServer, id]);
-
-  if (!meeting) return <p className="px-4 py-3 text-[13px] text-fg-dim">{error || tr('ui.meetings.loading')}</p>;
-
-  const text = tab === 'notes' ? meeting.notes : tab === 'speakers' ? meeting.speaker_transcript || '' : meeting.transcript;
-  const tabs = meeting.speaker_transcript ? (['notes', 'transcript', 'speakers'] as const) : (['notes', 'transcript'] as const);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch { /* clipboard blocked: the text can be selected by hand */ }
-  };
-  const download = () => {
-    const body = `# ${meeting.title}\n\n${meeting.notes}\n\n---\n\n## Transcript\n\n${meeting.transcript}\n`;
-    const url = URL.createObjectURL(new Blob([body], { type: 'text/markdown' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${meeting.title.replace(/[^\w\- ]+/g, '').trim() || 'meeting'}.md`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-  const act = async (work: () => Promise<unknown>, fallback: string) => {
-    setBusy(true);
-    setError('');
-    try {
-      await work();
-      await load();
-      onChanged();
-    } catch (e) {
-      setError(errorMessage(e, fallback));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const again = (agentId?: string) => act(
-    () => api.post(`/meetings/${id}/notes`, agentId === undefined ? {} : { agent_id: agentId }),
-    tr('ui.meetings.couldNotWriteTheNotes'),
-  );
-  const remove = async () => {
-    if (!window.confirm(tr('ui.meetings.deleteTitleItsNotesAnd', { title: meeting.title }))) return;
-    setBusy(true);
-    try {
-      await api.delete(`/meetings/${id}`);
-      onChanged();
-    } catch (e) {
-      setError(errorMessage(e, tr('ui.meetings.couldNotDeleteTheMeeting')));
-      setBusy(false);
-    }
-  };
-
-  if (IN_CALL.includes(meeting.status)) {
-    return (
-      <div className="border-t border-line px-4 py-3">
-        <LiveCall meeting={meeting} agents={agents} onChanged={onChanged} onReload={load} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="border-t border-line px-4 py-3">
-      {busyOnServer ? (
-        <p className="flex items-center gap-2 text-[13px] text-fg-dim" aria-live="polite">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden />
-          {tr('ui.meetings.progressYouCanLeaveThis', { progress: meeting.progress || tr('ui.meetings.working') })}
-        </p>
-      ) : (
-        <>
-          {meeting.status === 'error' && <p role="alert" className="mb-2 text-[13px] text-danger-ink">{meeting.error}</p>}
-          {meeting.status === 'error' && meeting.kind === 'live' && (
-            <SeenOnJoin meetingId={meeting.id} seen={meeting.seen || ''} hasImage={!!meeting.has_seen_image} />
-          )}
-          {meeting.context && (
-            <details className="mb-3 rounded-[10px] border border-line px-3 py-2">
-              <summary className="cursor-pointer text-[12.5px] font-medium">{tr('ui.meetings.backgroundTheAgentHad')}</summary>
-              <p className="mt-2 whitespace-pre-wrap text-[12.5px] leading-relaxed text-fg-dim">{meeting.context}</p>
-            </details>
-          )}
-          {(meeting.notes || meeting.transcript) && (
-            <>
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <MeetingTabs tabs={tabs} value={tab} onChange={setTab}
-                  labels={{ notes: 'Notes', transcript: 'Transcript', speakers: 'By speaker' }} />
-                <span className="flex-1" />
-                <Button type="button" size="sm" variant="ghost" onClick={copy} disabled={!text}>{copied ? tr('ui.meetings.copied') : tr('ui.meetings.copy')}</Button>
-                <Button type="button" size="sm" variant="ghost" onClick={download}>{tr('ui.meetings.download')}</Button>
-              </div>
-              {tab === 'notes' ? (
-                meeting.notes ? <div className="md break-words text-[14px]"><MarkdownMessage content={meeting.notes} /></div>
-                  : <p className="text-[13px] text-fg-dim">{tr('ui.meetings.noNotesYetTheTranscript')}</p>
-              ) : (
-                <p className="max-h-[420px] overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-fg-dim">{text}</p>
-              )}
-            </>
-          )}
-          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-[12.5px]">
-            {meeting.has_transcript && (
-              <>
-                <span className="text-fg-dim">{tr('ui.meetings.notesWrittenBy')}</span>
-                <Select value={meeting.agent_id} disabled={busy} aria-label={tr('ui.meetings.agentThatWritesTheNotes')}
-                  className="h-9 w-auto min-w-[150px]" onChange={(e) => void again(e.target.value)}>
-                  {!agents.some((a) => a.id === meeting.agent_id) && <option value={meeting.agent_id}>{tr('ui.meetings.yourMainAgent')}</option>}
-                  {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </Select>
-                <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void again()}>{tr('ui.meetings.writeAgain')}</Button>
-              </>
-            )}
-            <span className="flex-1" />
-            <button type="button" disabled={busy} onClick={() => void remove()} className="min-h-9 px-2 text-danger-ink hover:underline disabled:opacity-60">{tr('ui.meetings.delete')}</button>
-          </div>
-        </>
-      )}
-      {error && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{error}</p>}
-    </div>
-  );
-}
-
-function JoinCall({ agents, live, onJoined, onCancel }: {
-  agents: AgentLite[]; live?: LiveReadiness; onJoined: (id: string) => void; onCancel: () => void;
-}) {
-  const [url, setUrl] = useState('');
-  const [agentId, setAgentId] = useState('');
-  const [name, setName] = useState('');
-  const [reply, setReply] = useState<ReplyMode>('chat');
-  const [announce, setAnnounce] = useState(true);
-  const [context, setContext] = useState('');
-  const [watch, setWatch] = useState('');
-  const [share, setShare] = useState<ShareLevel | ''>('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError('');
-    try {
-      const res = await api.post<Meeting>('/meetings/live', {
-        url: url.trim(), agent_id: agentId || null, name: name.trim() || null, reply_mode: reply, announce,
-        context: context.trim() || null, watch_words: watch.trim() || null, share: share || null,
-      });
-      onJoined(res.data.id);
-    } catch (e) {
-      setError(errorMessage(e, tr('ui.meetings.couldNotSendTheAgent')));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (live && !live.computer) {
-    return (
-      <div className="rounded-[10px] border border-line bg-panel px-3 py-2.5 text-[13px] leading-relaxed">
-        {tr('ui.meetings.agentsJoinCallsFromThe')}{' '}
-        <Link to="/settings/access" className="text-accent-ink hover:underline">{tr('ui.meetings.turnItOnUnderSettings')}</Link>{tr('ui.meetings.thenComeBack')}
-        <button type="button" onClick={onCancel} className="ml-2 text-fg-dim hover:underline">{tr('ui.meetings.close')}</button>
-      </div>
-    );
-  }
-
-  return (
-    <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-3 rounded-[10px] border border-line bg-panel px-4 py-3.5">
-      <div>
-        <p className="text-[14px] font-medium">{tr('ui.meetings.sendAnAgentIntoA_d72a')}</p>
-        <p className="text-[12.5px] leading-relaxed text-fg-dim">
-          {tr('ui.meetings.itJoinsFromTheBrowser')}
-        </p>
-      </div>
-      <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
-        {tr('ui.meetings.meetingLink')}
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} required type="url" inputMode="url"
-          placeholder="https://meet.google.com/abc-defg-hij" className="h-9" autoFocus />
-      </label>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
-          {tr('ui.meetings.agent')}
-          <Select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="h-9">
-            <option value="">{tr('ui.meetings.yourMainAgent')}</option>
-            {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </Select>
-        </label>
-        <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
-          {tr('ui.meetings.nameInTheCall')}
-          <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} placeholder={tr('ui.meetings.theAgentSName')} className="h-9" />
-        </label>
-        <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
-          {tr('ui.meetings.whenSomeoneSaysItsName')}
-          <Select value={reply} onChange={(e) => setReply(e.target.value as ReplyMode)} className="h-9">
-            <option value="chat">{tr('ui.meetings.answerInTheCallS')}</option>
-            <option value="voice" disabled={live ? !live.speech : false}>{tr('ui.meetings.answerOutLoud')}{live && !live.speech ? tr('ui.meetings.needsAVoiceKey') : ''}</option>
-            <option value="off">{tr('ui.meetings.donTAnswerOnlyTake')}</option>
-          </Select>
-        </label>
-        <label className="flex items-center gap-2 self-end pb-2 text-[12.5px]">
-          <input type="checkbox" checked={announce} onChange={(e) => setAnnounce(e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
-          {tr('ui.meetings.sayInTheChatThat')}
-        </label>
-        <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim sm:col-span-2">
-          {tr('ui.meetings.backgroundForTheAgentOptional')}
-          <Textarea value={context} onChange={(e) => setContext(e.target.value)} rows={3} maxLength={6000}
-            placeholder={tr('ui.meetings.theAgendaWhoIsIn')} />
-        </label>
-        <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
-          {tr('ui.meetings.alertMeIfTheseCome')}
-          <Input value={watch} onChange={(e) => setWatch(e.target.value)} maxLength={2000} placeholder={tr('ui.meetings.budgetMyName')} className="h-9" />
-        </label>
-        <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
-          {tr('ui.meetings.answersMayUse')}
-          <Select value={share} onChange={(e) => setShare(e.target.value as ShareLevel | '')} className="h-9">
-            <option value="">{tr('ui.meetings.yourMeetingSetting')}</option>
-            <option value="call">{tr('ui.meetings.onlyTheCallAndIts')}</option>
-            <option value="work">{tr('ui.meetings.alsoYourMemoryKnowledgeAnd')}</option>
-          </Select>
-        </label>
-      </div>
-      <p className="text-[12px] leading-relaxed text-fg-dim">
-        {tr('ui.meetings.letPeopleKnowAnAi')}
-      </p>
-      {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
-      <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={busy || !url.trim()}>{busy ? tr('ui.meetings.sending') : tr('ui.meetings.joinTheCall')}</Button>
-        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>{tr('ui.meetings.cancel')}</Button>
-      </div>
-    </form>
-  );
+/** The right end of a list row: a badge when it needs a look, else the time. */
+function RowEnd({ m, group }: { m: MeetingSummary; group: Group }) {
+  if (m.status === 'error') return <Badge tone="fail">{m.kind === 'live' ? tr('ui.meetings.couldnTJoin') : tr('ui.meetings.failed')}</Badge>;
+  if (m.status === 'live' && m.owner_question) return <Badge tone="warn" pulse={false}>{tr('ui.meetings.question')}</Badge>;
+  if (m.status === 'live' && m.paused) return <Badge tone="plain">{tr('ui.meetingExtras.offTheRecord')}</Badge>;
+  if (m.status === 'waiting') return <Badge tone="plain" pulse>{tr('ui.meetings.waiting')}</Badge>;
+  if (m.status === 'joining') return <Badge tone="plain" pulse>{tr('ui.meetings.joining')}</Badge>;
+  if (m.status === 'live') return null;
+  if (working(m.status)) return <Badge tone="plain" pulse>{m.status === 'queued' ? tr('ui.meetings.queued') : m.status === 'transcribing' ? tr('ui.meetings.transcribing') : tr('ui.meetings.writing')}</Badge>;
+  return <span className="flex-none font-mono text-[11px] text-fg-dim">{group === 'earlier' ? day(m.created_at).replace(/,? \d{4}$/, '') : clock(m.created_at)}</span>;
 }
 
 export default function Meetings() {
   const { data, loading, error, refetch } = useResource<MeetingList>('/meetings');
   const [agents, setAgents] = useState<AgentLite[]>([]);
-  const [agentId, setAgentId] = useState('');
   const [params, setParams] = useSearchParams();
   const [open, setOpen] = useState<string | null>(params.get('open'));
   const [callId] = useState<string | null>(params.get('call'));
+  const [filter, setFilter] = useState<Filter>('all');
   const [joining, setJoining] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testError, setTestError] = useState('');
-  const [uploading, setUploading] = useState('');
-  const [uploadError, setUploadError] = useState('');
+  const [uploadAgent, setUploadAgent] = useState(readUploadAgent);
+  const [uploading, setUploading] = useState(false);
+  const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const calendar = useCalendar();
   const meetings = data?.meetings ?? [];
 
   // An Inbox alert links here with ?open=<id> (a meeting) or ?call=<id> (a
@@ -487,137 +100,198 @@ export default function Meetings() {
     return () => window.clearInterval(timer);
   }, [anyWorking, refetch]);
 
+  const show = (id: string) => { setOpen(id); refetch({ silent: true }); };
+  const changeUploadAgent = (id: string) => {
+    setUploadAgent(id);
+    try { localStorage.setItem(UPLOAD_AGENT, id); } catch { /* private window: kept for this visit only */ }
+  };
+
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    setUploadError('');
     if (data && file.size > data.max_bytes) {
-      setUploadError(tr('ui.meetings.thatRecordingIsTooLarge'));
+      setNotice({ text: tr('ui.meetings.thatRecordingIsTooLarge'), error: true });
       return;
     }
     const form = new FormData();
     form.append('file', file, file.name);
-    if (agentId) form.append('agent_id', agentId);
-    setUploading(tr('ui.meetings.uploadingName', { name: file.name }));
+    if (uploadAgent && agents.some((a) => a.id === uploadAgent)) form.append('agent_id', uploadAgent);
+    setNotice({ text: tr('ui.meetings.uploadingName', { name: file.name }) });
+    setUploading(true);
     try {
       const res = await api.post<Meeting>('/meetings', form, {
         onUploadProgress: (p) => {
-          if (p.total) setUploading(tr('ui.meetings.uploadingNameRound', { name: file.name, round: Math.round((p.loaded / p.total) * 100) }));
+          if (p.total) setNotice({ text: tr('ui.meetings.uploadingNameRound', { name: file.name, round: Math.round((p.loaded / p.total) * 100) }) });
         },
       });
-      setOpen(res.data.id);
-      refetch({ silent: true });
+      setNotice(null);
+      show(res.data.id);
     } catch (e) {
-      setUploadError(errorMessage(e, tr('ui.meetings.couldNotUploadTheRecording')));
+      setNotice({ text: errorMessage(e, tr('ui.meetings.couldNotUploadTheRecording')), error: true });
     } finally {
-      setUploading('');
+      setUploading(false);
     }
   };
 
-  const testCall = async () => {
+  const testCall = async (agentId = '') => {
     setTesting(true);
-    setTestError('');
+    setNotice(null);
     try {
       const res = await api.post<Meeting>('/meetings/test', { agent_id: agentId || null });
-      setOpen(res.data.id);
-      refetch({ silent: true });
+      setJoining(false);
+      show(res.data.id);
     } catch (e) {
-      setTestError(errorMessage(e, tr('ui.meetings.couldNotStartTheTest')));
+      setNotice({ text: errorMessage(e, tr('ui.meetings.couldNotStartTheTest')), error: true });
+      setJoining(false);
     } finally {
       setTesting(false);
     }
   };
 
+  const voiceReady = !!data?.voice_ready;
+  const computer = !!data?.live?.computer;
+  const shown = meetings.filter((m) => filter === 'all' || (filter === 'calls' ? m.kind === 'live' : m.kind !== 'live'));
+  const groupOf = (m: MeetingSummary): Group => (IN_CALL.includes(m.status) ? 'live' : dayGroup(m.created_at));
+  const groupLabel: Record<Group, string> = { live: 'Live now', today: 'Today', yesterday: 'Yesterday', earlier: 'Earlier' };
+  const counts = { calls: meetings.filter((m) => m.kind === 'live').length, recordings: meetings.filter((m) => m.kind !== 'live').length };
+
+  const newMenu = (
+    <Menu label={tr('ui.meetings.new')} trigger={({ open: menuOpen, toggle }) => (
+      <div className="flex">
+        <Button type="button" size="sm" className="rounded-r-none pl-3 pr-2.5" disabled={!voiceReady} onClick={() => setJoining(true)}>
+          <Video size={15} aria-hidden /><span className="hidden sm:inline">{tr('ui.meetings.sendAgentToACall')}</span><span className="sm:hidden">{tr('ui.meetings.join')}</span>
+        </Button>
+        <Button type="button" size="sm" aria-label={tr('ui.meetings.moreWaysToAddA')} aria-expanded={menuOpen} disabled={!voiceReady}
+          className="rounded-l-none border-l border-black/15 px-2" onClick={toggle}>
+          <ChevronDown size={15} aria-hidden />
+        </Button>
+      </div>
+    )}>
+      {(close) => (
+        <>
+          <MenuItem icon={<Video size={15} />} title={tr('ui.meetings.sendAgentToACall')} hint={tr('ui.meetings.meetTeamsOrZoomLink')} onSelect={() => { close(); setJoining(true); }} />
+          <MenuItem icon={<Upload size={15} />} title={tr('ui.meetings.uploadRecording')} hint={tr('ui.meetings.audioOrVideoNotesAfter')} disabled={uploading}
+            onSelect={() => { close(); fileInput.current?.click(); }} />
+          <MenuItem icon={<FlaskConical size={15} />} title={tr('ui.meetings.testCall')} hint={tr('ui.meetings.checkJoiningHearingAndThe')}
+            disabled={testing || !computer || !voiceReady} onSelect={() => { close(); void testCall(); }} />
+        </>
+      )}
+    </Menu>
+  );
+
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title={tr('ui.meetings.meetings')} subtitle={meetings.length > 0 ? tr('ui.meetings.sendAnAgentIntoA') : undefined}>
-        <Button type="button" size="sm" variant="ghost" aria-pressed={settingsOpen} onClick={() => setSettingsOpen((v) => !v)}>
-          {tr('ui.meetings.settings')}
-        </Button>
-        <Button type="button" size="sm" variant="ghost" title={tr('ui.meetings.checkJoiningTheCallChat')}
-          disabled={testing || !data?.voice_ready || (data?.live ? !data.live.computer : true)} onClick={() => void testCall()}>
-          {testing ? tr('ui.meetings.starting') : tr('ui.meetings.testCall')}
-        </Button>
-        <Button type="button" size="sm" variant="outline" disabled={joining || (data ? !data.voice_ready : true)} onClick={() => setJoining(true)}>
-          {tr('ui.meetings.joinACall')}
-        </Button>
-        <input ref={fileInput} type="file" accept={ACCEPT} className="hidden" aria-label={tr('ui.meetings.meetingRecording')} onChange={upload} />
-        <Button type="button" size="sm" disabled={!!uploading || (data ? !data.voice_ready : true)} onClick={() => fileInput.current?.click()}>
-          {uploading ? tr('ui.meetings.uploading') : tr('ui.meetings.uploadRecording')}
-        </Button>
+      <PageHeader title={tr('ui.meetings.meetings')}>
+        <MeetingSearch className="hidden w-[300px] md:block lg:w-[340px]" onOpen={show} />
+        <button type="button" onClick={() => setSettingsOpen(true)} aria-label={tr('ui.meetingExtras.meetingSettings')} title={tr('ui.meetingExtras.meetingSettings')}
+          className="flex h-10 w-10 items-center justify-center rounded-lg text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8 md:w-8">
+          <Settings2 size={17} aria-hidden />
+        </button>
+        {newMenu}
+        <input ref={fileInput} type="file" accept={ACCEPT} className="hidden" aria-label={tr('ui.meetings.meetingRecording')} onChange={(e) => void upload(e)} />
       </PageHeader>
-      <div className="flex-1 overflow-y-auto">
-        {loading && !data ? (
-          <LoadingState label={tr('ui.meetings.loadingMeetings')} />
-        ) : error ? (
-          <ErrorState message={error} onRetry={refetch} />
-        ) : (
-          <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-5 md:px-6">
-            {data && !data.voice_ready && (
-              <p className="rounded-[10px] border border-line bg-panel px-3 py-2.5 text-[13px] leading-relaxed">
-                {tr('ui.meetings.meetingNotesUseYourSpeech')}{' '}
-                <Link to="/settings/voice" className="text-accent-ink hover:underline">{tr('ui.meetings.addAKeyUnderSettings')}</Link>{' '}{tr('ui.meetings.first')}
-              </p>
-            )}
-            {data && data.voice_ready && !data.ffmpeg && (
-              <p className="rounded-[10px] border border-line bg-panel px-3 py-2.5 text-[12.5px] leading-relaxed text-fg-dim">
-                {tr('ui.meetings.ffmpegIsnTInstalledWhere')}
-              </p>
-            )}
-            {settingsOpen && <MeetingSettingsPanel onClose={() => setSettingsOpen(false)} />}
-            {testError && <p role="alert" className="text-[12.5px] text-danger-ink">{testError}</p>}
-            {joining && (
-              <JoinCall agents={agents} live={data?.live} onCancel={() => setJoining(false)}
-                onJoined={(id) => { setJoining(false); setOpen(id); refetch({ silent: true }); }} />
-            )}
-            <UpcomingCalls agents={agents} highlight={callId}
-              onOpenMeeting={(id) => { setOpen(id); refetch({ silent: true }); }} />
-            {agents.length > 1 && (
-              <label className="flex flex-wrap items-center gap-2 text-[12.5px] text-fg-dim">
-                {tr('ui.meetings.notesWrittenBy')}
-                <Select value={agentId} onChange={(e) => setAgentId(e.target.value)} aria-label={tr('ui.meetings.agentForNewRecordings')} className="h-9 w-auto min-w-[160px]">
-                  <option value="">{tr('ui.meetings.yourMainAgent')}</option>
-                  {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </Select>
-              </label>
-            )}
-            {meetings.length > 0 && <MeetingSearch onOpen={(id) => setOpen(id)} />}
-            <div aria-live="polite" className="min-h-0 text-[12.5px]">
-              {uploading && <p className="text-fg-dim">{uploading}</p>}
-              {uploadError && <p role="alert" className="text-danger-ink">{uploadError}</p>}
+      {loading && !data ? (
+        <LoadingState label={tr('ui.meetings.loadingMeetings')} />
+      ) : error ? (
+        <ErrorState message={error} onRetry={refetch} />
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          <div className={cn('min-h-0 w-full flex-col overflow-y-auto md:flex md:w-[340px] md:flex-none md:border-r md:border-line lg:w-[360px]', open ? 'hidden' : 'flex')}>
+            <div className="flex flex-col gap-3 px-3 pb-2 pt-3">
+              <MeetingSearch className="md:hidden" onOpen={show} />
+              {data && !data.voice_ready && (
+                <p className="rounded-[10px] border border-line bg-panel px-3 py-2 text-[12.5px] leading-relaxed">
+                  {tr('ui.meetings.meetingNotesUseYourSpeech')}{' '}
+                  <Link to="/settings/voice" className="text-accent-ink hover:underline">{tr('ui.meetings.addAKeyUnderSettings')}</Link>{' '}{tr('ui.meetings.first')}
+                </p>
+              )}
+              {data && data.voice_ready && !data.ffmpeg && (
+                <p className="rounded-[10px] border border-line bg-panel px-3 py-2 text-[12px] leading-relaxed text-fg-dim">{tr('ui.meetings.ffmpegIsnTInstalledWhere')}</p>
+              )}
+              {notice && (
+                <p role={notice.error ? 'alert' : 'status'} className={cn('text-[12.5px]', notice.error ? 'text-danger-ink' : 'text-fg-dim')}>{notice.text}</p>
+              )}
+              <UpNext calendar={calendar} agents={agents} highlight={callId} onOpenMeeting={show} onOpenSettings={() => setSettingsOpen(true)} />
+              {meetings.length > 0 && (
+                <div role="tablist" aria-label={tr('ui.meetings.show')} className="flex self-start rounded-lg border border-line bg-panel p-0.5 text-[12.5px]">
+                  {(['all', 'calls', 'recordings'] as const).map((f) => (
+                    <button key={f} type="button" role="tab" aria-selected={filter === f} onClick={() => setFilter(f)}
+                      className={cn('flex min-h-9 items-center gap-1.5 rounded-md px-3 md:min-h-7', filter === f ? 'bg-panel-2 font-medium text-fg' : 'text-fg-dim hover:text-fg')}>
+                      {f === 'all' ? tr('ui.meetings.all') : f === 'calls' ? tr('ui.meetings.calls') : tr('ui.meetings.recordings')}
+                      {f !== 'all' && counts[f] > 0 && <span className="font-mono text-[10.5px] opacity-70">{counts[f]}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             {meetings.length === 0 ? (
-              <EmptyState
-                icon={<span aria-hidden className="font-mono text-lg">◉</span>}
-                title={tr('ui.meetings.noMeetingsYet')}
-                desc={tr('ui.meetings.sendAnAgentIntoA_c840')}
-              />
+              <div className="flex flex-col items-start gap-2 px-4 py-6">
+                <p className="text-[14px] font-medium">{tr('ui.meetings.noMeetingsYet')}</p>
+                <p className="text-[12.5px] leading-relaxed text-fg-dim">{tr('ui.meetings.sendAnAgentIntoA_c840')}</p>
+              </div>
+            ) : shown.length === 0 ? (
+              <p className="px-4 py-4 text-[12.5px] text-fg-dim">{tr('ui.meetings.nothingHereYet')}</p>
             ) : (
-              <ul className="divide-y divide-line rounded-[10px] border border-line bg-panel">
-                {meetings.map((m) => (
-                  <li key={m.id}>
-                    <button type="button" aria-expanded={open === m.id} onClick={() => setOpen(open === m.id ? null : m.id)}
-                      className="flex min-h-12 w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-4 py-2.5 text-left hover:bg-panel-2">
-                      <span className="min-w-0 flex-1 basis-[180px] truncate text-[14px] font-medium">
-                        {m.title}
-                        {m.kind === 'live' && <span className="ml-2 rounded bg-panel-2 px-1.5 py-0.5 align-middle font-mono text-[10.5px] font-normal text-fg-dim">{m.test ? tr('ui.meetings.test') : tr('ui.meetings.call')}</span>}
-                      </span>
-                      <span className={cn('flex items-center gap-1.5 font-mono text-[11px]', m.status === 'error' ? 'text-danger-ink' : 'text-fg-dim')}>
-                        {working(m.status) && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden />}
-                        {statusText(m)}
-                      </span>
-                    </button>
-                    {open === m.id && (
-                      <MeetingDetail id={m.id} agents={agents} onChanged={() => refetch({ silent: true })} />
-                    )}
-                  </li>
-                ))}
-              </ul>
+              <nav aria-label={tr('ui.meetings.meetings')} className="pb-4">
+                {GROUPS.map((group) => {
+                  const rows = shown.filter((m) => groupOf(m) === group);
+                  if (rows.length === 0) return null;
+                  return (
+                    <div key={group}>
+                      <h3 className="px-4 pb-1 pt-3 text-[10.5px] font-medium uppercase tracking-[.08em] text-fg-dim">{groupLabel[group]}</h3>
+                      <ul className="flex flex-col gap-0.5 px-2">
+                        {rows.map((m) => {
+                          const Icon = m.kind === 'live' ? (m.test ? FlaskConical : Video) : AudioLines;
+                          const hot = group === 'live';
+                          return (
+                            <li key={m.id}>
+                              <button type="button" aria-current={open === m.id ? 'true' : undefined} onClick={() => setOpen(m.id)}
+                                className={cn('flex min-h-14 w-full items-center gap-3 rounded-[9px] px-2.5 py-2 text-left', open === m.id ? 'bg-panel-2' : 'hover:bg-panel-2/60')}>
+                                <span className={cn('flex h-8 w-8 flex-none items-center justify-center rounded-lg', hot ? 'bg-accent text-accent-foreground' : 'bg-panel-2 text-fg-dim')}>
+                                  <Icon size={15} aria-hidden />
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-[13.5px] font-medium">{m.title}</span>
+                                  <span className="block truncate text-[12px] text-fg-dim">{rowMeta(m)}</span>
+                                </span>
+                                <RowEnd m={m} group={group} />
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </nav>
             )}
           </div>
-        )}
-      </div>
+          <main className={cn('min-h-0 min-w-0 flex-1 flex-col', open ? 'flex' : 'hidden md:flex')} aria-label={tr('ui.meetings.meeting')}>
+            {open ? (
+              <MeetingDetail key={open} id={open} agents={agents} onBack={() => setOpen(null)} onOpen={show}
+                onChanged={() => refetch({ silent: true })} />
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-panel-2 text-fg-dim"><AudioLines size={20} aria-hidden /></span>
+                <p className="text-[14px] font-medium">{meetings.length ? tr('ui.meetings.pickAMeetingToSee') : tr('ui.meetings.noMeetingsYet')}</p>
+                <p className="max-w-[420px] text-[12.5px] leading-relaxed text-fg-dim">
+                  {tr('ui.meetings.sendAnAgentIntoA_9dd3')}
+                </p>
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" variant="outline" disabled={!voiceReady} onClick={() => setJoining(true)}><Video size={14} aria-hidden />{' '}{tr('ui.meetings.sendAgentToACall')}</Button>
+                  <Button type="button" size="sm" variant="ghost" disabled={!voiceReady || uploading} onClick={() => fileInput.current?.click()}><Upload size={14} aria-hidden /> {tr('ui.meetings.uploadRecording')}</Button>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      )}
+      <JoinCallDialog open={joining} agents={agents} live={data?.live} testing={testing}
+        onTest={(agentId) => void testCall(agentId)} onClose={() => setJoining(false)}
+        onJoined={(id) => { setJoining(false); show(id); }} />
+      <MeetingSettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} calendar={calendar} agents={agents}
+        uploadAgent={uploadAgent} onUploadAgent={changeUploadAgent} />
     </div>
   );
 }
