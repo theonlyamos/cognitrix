@@ -6,7 +6,12 @@ What happens (``run``):
 1. The browser on the agent's desktop opens the meeting link, and ``join``
    gets through the platform's join screen: it types the name the agent
    joins as and presses "Ask to join" / "Join now". If the host has to let
-   it in, it waits in the lobby (``LOBBY_WAIT_S`` at most).
+   it in, it waits in the lobby (``LOBBY_WAIT_S`` at most). The browser uses
+   the agent's own profile on that desktop, so a Google account the person
+   signed in to there is used. When Google wants a signed-in account and
+   there is none, it opens Google's sign-in page, tells the person (Inbox)
+   and waits for them to sign in on the agent's computer
+   (``SIGN_IN_WAIT_S``); where the host lets guests in, it joins as a guest.
 2. Once in, it can say in the meeting chat that it is taking notes
    (``announce``, on by default).
 3. It listens. The desktop's own speaker is recorded in the container
@@ -22,6 +27,9 @@ What happens (``run``):
    from the transcript, as for an uploaded recording, and the person gets an
    Inbox alert.
 
+What the agent gets from the call is sound only: no video, shared screens,
+captions or chat messages are read. It writes in the chat and speaks, though.
+
 The page-reading part (``Screen``) only uses the computer driver's look and
 click calls, the same ones agents use, so the person watching the desktop
 sees each step and can take over (a meeting that needs a sign-in, say).
@@ -35,7 +43,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from cognitrix.meetings import notes as meeting_notes
 from cognitrix.meetings.notes import MeetingError, MeetingNote
@@ -48,6 +56,9 @@ REPLY_MODES = ('chat', 'voice', 'off')
 
 JOIN_TIMEOUT_S = 120  # getting through the join screen
 LOBBY_WAIT_S = 15 * 60  # waiting for the host to let it in
+SIGN_IN_WAIT_S = 15 * 60  # waiting for the person to sign in on the agent's computer
+SIGNED_IN_LOOKS = 3  # looks in a row away from the sign-in pages that mean it is done
+MAX_SAME_CLICKS = 3  # a join-screen button pressed this often without effect is skipped
 QUIET_LEAVE_S = 15 * 60  # nothing heard for this long: the call is over
 MAX_MEETING_S = 4 * 3600
 POLL_S = 1.5
@@ -104,18 +115,34 @@ JOIN_BUTTONS = (
     'i agree', 'agree', 'accept all', 'got it', 'dismiss',
     # Meet's "do you want people to hear you" dialog
     'use microphone', 'continue without camera',
+    # Meet, signed out, when the host lets guests in (a signed-in browser
+    # skips this screen)
+    'continue as guest',
     # the join buttons themselves
     'ask to join', 'join now', 'join anyway', 'join meeting', 'join',
 )
+ENTER_BUTTONS = ('ask to join', 'join now', 'join anyway', 'join meeting')
 AUDIO_BUTTONS = ('join audio by computer', 'join with computer audio', 'join audio')
 NAME_FIELDS = ('your name', 'type your name', 'enter your name', 'enter name', 'name')
 LEAVE_BUTTONS = ('leave call', 'leave meeting', 'leave', 'hang up', 'end call')
-LOBBY = ('asking to be let in', 'waiting for the host', 'someone in the meeting should let you in',
-         'when the meeting starts', 'let you in soon', 'please wait', 'waiting to be admitted',
-         'host will let you in', 'lobby')
+# Signs of being in the call besides a Leave button (which a long page can
+# push past what one look reads): Meet's and Teams' call controls.
+IN_CALL = ("you're the only one here", 'raise hand', 'chat with everyone', 'meeting details', 'call controls',
+           'turn on captions', 'turn off captions', 'show everyone', 'meeting chat')
+LOBBY = ('asking to be let in', 'asking to join', 'waiting for the host', 'someone in the meeting should let you in',
+         'when someone lets you in', 'waiting for someone to let you in', 'when the meeting starts',
+         'let you in soon', 'please wait', 'waiting to be admitted', 'host will let you in', 'lobby')
 REFUSED = ("you can't join this video call", 'denied your request', 'no one responded to your request',
            "you've been removed", 'you have been removed', 'removed you from', 'meeting has been locked',
-           'invalid meeting id', 'this meeting link is invalid', 'check your meeting code', 'sign in to join')
+           'invalid meeting id', 'this meeting link is invalid', 'check your meeting code',
+           'we encountered a problem joining this video call')
+# Google wants a signed-in browser for this call: Meet's "You can't join"
+# page with a Sign in button, or Google's own sign-in pages.
+SIGN_IN_BUTTONS = ('sign in with google', 'sign in')
+GOOGLE_SIGN_IN = 'https://accounts.google.com/ServiceLogin?continue='
+SIGN_IN_PAGES = ('sign in - google accounts', 'to continue to google meet', 'to continue to meet', 'email or phone',
+                 'enter your password',
+                 'choose an account', 'verify it’s you', "verify it's you", '2-step verification')
 ENDED = ('you left the meeting', 'you left the call', 'the call has ended', 'the meeting has ended',
          'meeting has ended', 'call ended', 'return to home screen', 'rejoin', 'this meeting has been ended')
 CHAT_BUTTONS = ('chat with everyone', 'open chat', 'show conversation', 'chat')
@@ -167,6 +194,13 @@ class View:
                     return index
         return None
 
+    def url(self) -> str:
+        """The address bar's text, when the browser shows one."""
+        for el in self.elements:
+            if el.role.lower() in TEXT_ROLES and 'address' in _norm(el.name):
+                return str(el.value or '').strip()
+        return ''
+
     def point(self, index: int) -> tuple[float, float]:
         """Where a control is, in the screenshot's pixels (what type_text takes)."""
         r = self.elements[index].rect
@@ -214,30 +248,82 @@ class Screen:
                 logger.debug('Could not close the call window', exc_info=True)
 
 
-def join_step(screen: Screen, name: str, typed: set[int]) -> str:
-    """One look at the join screen and one action. Returns what it saw:
-    'live', 'lobby', 'refused: <why>', 'ended', or 'working'."""
+def needs_sign_in(view: View) -> bool:
+    """Google wants a signed-in browser before it lets the agent in."""
+    host = (urlsplit(view.url() if '://' in view.url() else f'https://{view.url()}').hostname or '').lower()
+    if host == 'accounts.google.com' or host.endswith('.accounts.google.com'):
+        return True
+    if view.says(SIGN_IN_PAGES) and view.find(ENTER_BUTTONS + ('continue as guest',)) is None:
+        return True
+    if not view.says(("you can't join this video call",)):
+        return False
+    # Meet turns away a signed-out browser with this page when the host
+    # doesn't let guests in; signed in, Google's pages show the account.
+    signed_in = any(_norm(el.name).startswith('google account:') for el in view.elements)
+    return not signed_in or view.find(SIGN_IN_BUTTONS) is not None
+
+
+def in_call(view: View) -> bool:
+    if view.find(ENTER_BUTTONS + ('continue as guest',)) is not None:
+        return False
+    return view.find(LEAVE_BUTTONS) is not None or len([p for p in IN_CALL if p in view.text()]) >= 2
+
+
+def join_step(screen: Screen, name: str, typed: set[int], clicks: dict[str, int] | None = None,
+              act: bool = True) -> str:
+    """One look at the join screen and one action (none when ``act`` is off,
+    while the person signs in). Returns what it saw: 'live', 'lobby',
+    'sign in', 'refused: <why>', 'ended', or 'working'."""
     view = screen.look()
+    if needs_sign_in(view):
+        return 'sign in'
     refused = view.says(REFUSED)
     if refused:
         return f'refused: {refused}'
-    if view.find(LEAVE_BUTTONS) is not None and view.find(('ask to join', 'join now')) is None:
+    if in_call(view):
         audio = view.find(AUDIO_BUTTONS)
         if audio is not None:  # Zoom asks how to join the sound
             screen.click(view, audio)
         return 'live'
     if view.says(LOBBY):
         return 'lobby'
+    if view.says(ENDED) and view.find(ENTER_BUTTONS) is None:
+        return 'ended'
+    if not act:
+        return 'working'
     name_field = view.field(NAME_FIELDS)
     if name_field is not None and name_field not in typed and not _norm(view.elements[name_field].value):
         typed.add(name_field)
         screen.type_into(view, name_field, name)
         return 'working'
-    button = view.find(JOIN_BUTTONS)
+    clicks = {} if clicks is None else clicks
+    for label in JOIN_BUTTONS:
+        # A button that didn't move things on after a few presses (a tip that
+        # comes back, a greyed-out choice) is left alone, so the real join
+        # button further down the list still gets pressed.
+        if clicks.get(label, 0) >= MAX_SAME_CLICKS:
+            continue
+        button = view.find((label,))
+        if button is not None:
+            clicks[label] = clicks.get(label, 0) + 1
+            screen.click(view, button)
+            return 'working'
+    return 'working'
+
+
+def open_sign_in(screen: Screen, url: str) -> None:
+    """Put Google's sign-in page in front of the person: Meet's own Sign in
+    button when its page has one, else Google's page, which comes back to
+    the call once they are signed in."""
+    view = screen.look()
+    if needs_sign_in(view) and view.says(SIGN_IN_PAGES):
+        return  # already there
+    button = view.find(SIGN_IN_BUTTONS)
     if button is not None:
         screen.click(view, button)
-        return 'working'
-    return 'working'
+        return
+    screen.close()
+    screen.open(GOOGLE_SIGN_IN + quote(url, safe=''))
 
 
 def post_chat(screen: Screen, text: str) -> bool:
@@ -446,19 +532,25 @@ async def deliver(desk: _Desk, row: MeetingNote, text: str, mode: str) -> str:
     return ''
 
 
+SIGN_IN_PROGRESS = 'waiting for you to sign in to Google on its computer'
+
+
 async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
     from cognitrix.computer import HumanControl
 
     await _set(item.meeting_id, progress='opening the meeting')
     await desk.do(desk.screen.open, row.url)
     typed: set[int] = set()
+    clicks: dict[str, int] = {}
     deadline = time.monotonic() + JOIN_TIMEOUT_S
     lobby_until = 0.0
+    sign_in_until = 0.0
+    signed_out_looks = 0
     while True:
         if item.leave.is_set():
             raise MeetingError('Stopped before it got in.')
         try:
-            seen = await desk.do(join_step, desk.screen, row.bot_name, typed)
+            seen = await desk.do(join_step, desk.screen, row.bot_name, typed, clicks, not sign_in_until)
         except HumanControl:
             seen = 'held'
         except MeetingError:
@@ -466,22 +558,63 @@ async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
         except Exception as exc:  # a page still loading, a stale look: try again
             logger.info('Meeting %s join step: %s', row.id, exc)
             seen = 'working'
+        if seen != 'working':
+            logger.info('Meeting %s join step: %s', row.id, seen)
         if seen == 'live':
             return
         if seen.startswith('refused'):
             raise MeetingError(f"It couldn't join: the call says {seen.split(': ', 1)[-1]!r}.")
+        if seen == 'ended':
+            raise MeetingError('The call had ended before it got in.')
+        if seen == 'sign in':
+            signed_out_looks = 0
+            if not sign_in_until:
+                sign_in_until = time.monotonic() + SIGN_IN_WAIT_S
+                await _set(item.meeting_id, status=WAITING, progress=SIGN_IN_PROGRESS)
+                await _alert(row, f'Sign in to Google for {row.title}',
+                             f"{PLATFORM_LABELS.get(row.platform, 'The call')} wants a signed-in Google account. "
+                             "Open the agent's computer, take over, and sign in in its browser. It keeps the "
+                             'sign-in for later calls, and joins as soon as you hand the computer back.')
+                try:
+                    await desk.do(open_sign_in, desk.screen, row.url)
+                except Exception:
+                    logger.info('Meeting %s: could not open the sign-in page', row.id, exc_info=True)
+            if time.monotonic() > sign_in_until:
+                raise MeetingError("Google wanted a signed-in account and nobody signed in. Open the agent's "
+                                   'computer, sign in to Google in its browser, then send it again.')
+        elif sign_in_until and seen in ('working', 'lobby'):
+            # A few looks in a row away from Google's sign-in pages (not one
+            # page loading in between): signed in, and Google has sent the
+            # browser on, normally back to the call.
+            signed_out_looks += 1
+            if signed_out_looks >= SIGNED_IN_LOOKS or seen == 'lobby':
+                sign_in_until = 0.0
+                deadline = time.monotonic() + JOIN_TIMEOUT_S
+                await _set(item.meeting_id, status=JOINING, progress='signed in; joining')
+                if seen == 'working':
+                    view = await desk.do(desk.screen.look)
+                    where = view.url()
+                    if where and (urlsplit(row.url).hostname or '') not in where:
+                        await desk.do(desk.screen.close)
+                        await desk.do(desk.screen.open, row.url)
+                        typed.clear()
+                        clicks.clear()
         if seen == 'lobby':
             if not lobby_until:
                 lobby_until = time.monotonic() + LOBBY_WAIT_S
                 await _set(item.meeting_id, status=WAITING, progress='waiting for someone to let it in')
             if time.monotonic() > lobby_until:
                 raise MeetingError('Nobody let it in.')
-        elif seen == 'held':
-            await _set(item.meeting_id, progress='you have control of its computer')
+            # Let in, it gets the usual time to find its way past what comes next.
             deadline = time.monotonic() + JOIN_TIMEOUT_S
-        elif not lobby_until and time.monotonic() > deadline:
+        elif seen == 'held':
+            await _set(item.meeting_id, progress='you have control of its computer; it carries on when you hand it back')
+            deadline = time.monotonic() + JOIN_TIMEOUT_S
+            if sign_in_until:
+                sign_in_until = max(sign_in_until, time.monotonic() + SIGN_IN_WAIT_S)
+        elif seen == 'working' and not sign_in_until and time.monotonic() > deadline:
             raise MeetingError("It couldn't find its way into the call. Open the agent's computer to see the "
-                               'page, or take over and join it yourself, then try again.')
+                               'page, or take over and join it yourself, then hand it back.')
         await asyncio.sleep(JOIN_POLL_S)
 
 

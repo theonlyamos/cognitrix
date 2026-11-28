@@ -362,3 +362,196 @@ async def test_stopping_in_the_lobby_closes_the_page():
 
     await live._cleanup(Desk(), joined=False)
     assert calls[-1] == 'close'
+
+
+# --- what went wrong in a real Google Meet test (Nov 28) ------------------------
+
+
+class _Atspi:
+    """Just enough of AT-SPI for LinuxBackend._frame: one Chromium process
+    with its frames, in the order Chromium made them."""
+
+    def __init__(self, pid, names):
+        self.desktop = 'desktop'
+        self.app = SimpleNamespace(ptr='app')
+        self.frames = [SimpleNamespace(ptr=f'f{i}', name=n) for i, n in enumerate(names)]
+        self.lib = SimpleNamespace(atspi_accessible_get_process_id=lambda ptr, _err: pid)
+
+    def pump(self):
+        pass
+
+    def children(self, acc, limit):
+        return [self.app] if acc == self.desktop else self.frames
+
+    def role(self, acc):
+        return 'frame'
+
+    def name(self, acc):
+        return acc.name
+
+    def states(self, acc):
+        from cognitrix.computer import linux
+
+        return {linux._ST_SHOWING}
+
+
+def _backend(names, windows):
+    from cognitrix.computer import WindowInfo, linux
+
+    backend = object.__new__(linux.LinuxBackend)
+    backend.atspi = _Atspi(42, names)
+    infos = {wid: WindowInfo(id=wid, title=title, app='chromium', pid=42, minimized=False, rect=(0, 0, 1280, 800))
+             for wid, title in windows}
+    backend._client_windows = lambda: list(infos)
+    backend._info = infos.get
+    return backend, infos
+
+
+def test_a_browser_window_using_the_microphone_can_still_be_read():
+    """Chromium names a window that records sound "Meet - Microphone recording
+    - Chromium" for screen readers while its title stays "Meet - Chromium".
+    The driver lost the window (no controls at all), so the meeting engine
+    never saw Meet's join screen or the call: it sat on "Joining"."""
+    from cognitrix.computer.linux import title_key
+
+    assert title_key('Meet - Microphone recording - Chromium') == title_key('Meet - Chromium')
+    assert title_key('Meet - abc-defg-hij - Camera or microphone recording - Audio playing - Chromium') == \
+        'meet - abc-defg-hij - chromium'
+    assert title_key('Recording studio - Chromium') == 'recording studio - chromium'
+
+    backend, infos = _backend(['Meet - Microphone recording - Chromium', '', ''], [(7, 'Meet - Chromium')])
+    assert backend._frame(infos[7]).name == 'Meet - Microphone recording - Chromium'
+
+
+def test_two_windows_with_the_same_title_each_read_their_own_page():
+    """An earlier Meet window (or the one the person signed in from) has the
+    same title: each window gets its own frame, in the order they were made."""
+    backend, infos = _backend(['Meet - Chromium', '', 'Meet - Microphone recording - Chromium', ''],
+                              [(9, 'Meet - Chromium'), (12, 'Meet - Chromium')])
+    assert backend._frame(infos[9]).ptr == 'f0'
+    assert backend._frame(infos[12]).ptr == 'f2'
+    backend, infos = _backend(['Mail - Chromium', 'Meet - Chromium'], [(9, 'Mail - Chromium'), (12, 'Meet - Chromium')])
+    assert backend._frame(infos[12]).ptr == 'f1'
+
+
+class _Page:
+    """A screen that shows fixed controls and records what was pressed."""
+
+    def __init__(self, *elements):
+        self.elements = list(elements)
+        self.clicked = []
+        self.typed = []
+
+    def look(self):
+        from cognitrix.meetings import live
+
+        return live.View(1, 's1', self.elements)
+
+    def click(self, view, index):
+        self.clicked.append(view.elements[index].name)
+
+    def type_into(self, view, index, text, submit=False):
+        self.typed.append(text)
+
+
+def test_join_screens_seen_in_meet():
+    from cognitrix.meetings import live
+
+    # Signed out, guests allowed: it joins as a guest (Meet then asks its name).
+    guest = _Page(_el('push button', 'Continue as guest'), _el('static', 'Or sign in to join'),
+                  _el('push button', 'Sign in with Google'))
+    assert live.join_step(guest, 'Ada', set()) == 'working' and guest.clicked == ['Continue as guest']
+    # Signed out, guests not allowed: the person is asked to sign in.
+    turned_away = _Page(_el('heading', "You can't join this video call"), _el('push button', 'Return to home screen'))
+    assert live.join_step(turned_away, 'Ada', set()) == 'sign in'
+    # Signed in and still turned away: that is the host's choice.
+    signed_in = _Page(_el('heading', "You can't join this video call"),
+                      _el('push button', 'Google Account: Ada (ada@example.com)'))
+    assert live.join_step(signed_in, 'Ada', set()).startswith('refused')
+    # Google's sign-in page itself.
+    google = _Page(_el('page tab', 'Sign in - Google Accounts - Memory usage - 88.4 MB'),
+                   _el('entry', 'Email or phone'), _el('push button', 'Next'))
+    assert live.join_step(google, 'Ada', set()) == 'sign in' and not google.typed and not google.clicked
+    # Meet's current wording while the host decides.
+    asking = _Page(_el('heading', 'Asking to join…'), _el('static', "You'll join the call when someone lets you in"))
+    assert live.join_step(asking, 'Ada', set()) == 'lobby'
+    # In the call even when the Leave button is past what one look reads.
+    inside = _Page(_el('static', "You're the only one here"), _el('toggle button', 'Raise hand'))
+    assert live.join_step(inside, 'Ada', set()) == 'live'
+    ended = _Page(_el('heading', 'You left the meeting'), _el('push button', 'Rejoin'))
+    assert live.join_step(ended, 'Ada', set()) == 'ended'
+
+
+def test_a_button_that_does_nothing_is_not_pressed_forever():
+    from cognitrix.meetings import live
+
+    page = _Page(_el('push button', 'Got it'), _el('push button', 'Join now'))
+    clicks: dict[str, int] = {}
+    for _ in range(live.MAX_SAME_CLICKS + 1):
+        live.join_step(page, 'Ada', set(), clicks)
+    assert page.clicked == ['Got it'] * live.MAX_SAME_CLICKS + ['Join now']
+
+
+async def test_it_waits_for_the_person_to_sign_in_then_joins(monkeypatch):
+    from cognitrix.computer import HumanControl
+    from cognitrix.meetings import live
+
+    pages = {
+        'meet-out': [_el('heading', "You can't join this video call")],
+        'google': [_el('page tab', 'Sign in - Google Accounts'), _el('entry', 'Email or phone')],
+        'prejoin': [_el('push button', 'Join now')],
+        'call': [_el('push button', 'Leave call')],
+    }
+    state = {'page': 'meet-out', 'looks': 0}
+    opened, clicked = [], []
+
+    class Screen:
+        def open(self, url):
+            opened.append(url)
+            state['page'] = 'google' if 'accounts.google.com' in url else 'meet-out'
+
+        def close(self):
+            pass
+
+        def look(self):
+            state['looks'] += 1
+            if state['page'] == 'google' and state['looks'] in (4, 5):
+                raise HumanControl('Ama has taken over this computer.')  # the person signs in
+            if state['page'] == 'google' and state['looks'] > 5:
+                state['page'] = 'prejoin'  # Google sends the browser back to the call
+            return live.View(1, f's{state["looks"]}', pages[state['page']])
+
+        def click(self, view, index):
+            clicked.append(view.elements[index].name)
+            state['page'] = 'call'
+
+        def type_into(self, view, index, text, submit=False):
+            pass
+
+    class Desk:
+        screen = Screen()
+
+        async def do(self, fn, *args):
+            return fn(*args)
+
+    updates, alerts = [], []
+
+    async def fake_set(_id, **fields):
+        updates.append(fields)
+
+    async def alert(row, title, message):
+        alerts.append(title)
+
+    monkeypatch.setattr(live, '_set', fake_set)
+    monkeypatch.setattr(live, '_alert', alert)
+    monkeypatch.setattr(live, 'JOIN_POLL_S', 0)
+    row = SimpleNamespace(id='m1', url='https://meet.google.com/abc-defg-hij', bot_name='Ada', title='Standup',
+                          platform='meet')
+    await asyncio.wait_for(live._join(live.Live('m1'), Desk(), row), 5)
+
+    assert opened[0] == row.url and opened[1].startswith(live.GOOGLE_SIGN_IN)
+    assert 'meet.google.com%2Fabc-defg-hij' in opened[1]
+    assert alerts == ['Sign in to Google for Standup']
+    assert {'status': live.WAITING, 'progress': live.SIGN_IN_PROGRESS} in updates
+    assert any(u.get('progress') == 'signed in; joining' for u in updates)
+    assert clicked == ['Join now']

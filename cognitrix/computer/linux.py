@@ -483,6 +483,26 @@ def _number(value: float) -> str:
 
 # --------------------------------------------------------------- backend
 
+# What browsers add to a window's accessible name (for screen readers) but
+# not to its title: "Meet - Microphone recording - Chromium".
+_NAME_ADDITIONS = re.compile(
+    r' - (?:audio playing|audio muted|site muted|microphone recording|camera recording|'
+    r'camera and microphone recording|camera or microphone recording|sharing (?:screen|window|tab|this tab)|'
+    r'(?:screen|window|tab) sharing|recording|picture in picture|bluetooth device connected|'
+    r'usb device connected|serial port connected|hid device connected|connected to a (?:bluetooth|usb|serial|hid) '
+    r'device|network error|crashed|unresponsive|memory usage - [\d.,]+ ?[kmgt]?b|'
+    r'pinned|this tab is using your (?:camera|microphone|camera and microphone))(?= - |$)', re.I)
+
+
+def title_key(name: str) -> str:
+    """A window's title or accessible name without the browser's additions."""
+    previous = None
+    name = (name or '').strip()
+    while previous != name:
+        previous, name = name, _NAME_ADDITIONS.sub('', name)
+    return name.strip().lower()
+
+
 class LinuxBackend:
     """See the module docstring. One lock guards both libraries."""
 
@@ -682,7 +702,14 @@ class LinuxBackend:
 
     # -- controls -------------------------------------------------------
     def _frame(self, info: WindowInfo) -> _Acc | None:
-        """The accessibility object of an X window: same process, same title."""
+        """The accessibility object of an X window: same process, same title.
+
+        Chromium names its frames for screen readers, so a frame's name can
+        carry more than the window's title ("Meet - Microphone recording -
+        Chromium" for the window "Meet - Chromium"), and one process owns all
+        its windows, often with the same title (two Meet windows). Names are
+        compared without those additions, and windows that still look alike
+        are matched in the order they were made."""
         a = self.atspi
         if a is None or not info.pid:
             return None
@@ -696,12 +723,23 @@ class LinuxBackend:
                     frames.append((top, a.name(top)))
         if not frames:
             return None
-        for frame, name in frames:
-            if name == info.title:
-                return frame
         if len(frames) == 1:
             return frames[0][0]
-        showing = [f for f, _ in frames if _ST_SHOWING in a.states(f)]
+        key = title_key(info.title)
+        alike = [f for f, name in frames if key and title_key(name) == key]
+        if len(alike) == 1:
+            return alike[0]
+        if len(alike) > 1:
+            # Windows of one process are made, and listed by AT-SPI, in the
+            # same order as their X ids grow.
+            twins = sorted(w for w in self._client_windows() if (other := self._info(w)) is not None
+                           and other.pid == info.pid and title_key(other.title) == key)
+            if len(twins) == len(alike) and info.id in twins:
+                return alike[twins.index(info.id)]
+        exact = [f for f, name in frames if name == info.title]
+        if len(exact) == 1:
+            return exact[0]
+        showing = [f for f, name in frames if name and _ST_SHOWING in a.states(f)]
         return showing[0] if len(showing) == 1 else None
 
     def _describe(self, ref: _Ref, rects: bool = True) -> Element | None:

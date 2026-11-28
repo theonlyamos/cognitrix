@@ -76,7 +76,7 @@ function day(stamp: string): string {
 function statusText(meeting: MeetingSummary): string {
   if (meeting.status === 'error') return 'failed';
   if (meeting.status === 'live') return ['in the call', length(meeting.seconds)].filter(Boolean).join(' · ');
-  if (meeting.status === 'waiting') return 'waiting to be let in';
+  if (meeting.status === 'waiting') return meeting.progress || 'waiting to be let in';
   if (meeting.status === 'joining') return meeting.progress || 'joining';
   if (meeting.status === 'done') return [day(meeting.created_at), length(meeting.seconds)].filter(Boolean).join(' · ');
   return meeting.progress || (meeting.status === 'queued' ? 'waiting to start' : meeting.status);
@@ -122,16 +122,19 @@ function LiveCall({ meeting, agents, onChanged, onReload }: {
     }
   };
   const where = PLATFORM[meeting.platform ?? ''] ?? 'the call';
+  // The engine waits for the person to sign in to Google on the agent's computer.
+  const signIn = meeting.status === 'waiting' && meeting.progress.includes('sign in');
   const state = meeting.status === 'live' ? `In ${where} as ${meeting.bot_name}`
-    : meeting.status === 'waiting' ? `Waiting for someone in ${where} to let ${meeting.bot_name} in`
-      : `Joining ${where}`;
+    : signIn ? `${where} wants a signed-in Google account: watch, take over and sign in on the agent's computer`
+      : meeting.status === 'waiting' ? `Waiting for someone in ${where} to let ${meeting.bot_name} in`
+        : `Joining ${where}`;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <p className="flex min-w-0 flex-1 items-center gap-2 text-[13px]" aria-live="polite">
           <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-accent" aria-hidden />
-          <span className="truncate">{state}{meeting.progress && meeting.status !== 'live' ? ` · ${meeting.progress}` : ''}</span>
+          <span className="truncate">{state}{meeting.progress && meeting.status !== 'live' && !signIn ? ` · ${meeting.progress}` : ''}</span>
         </p>
         <Button type="button" size="sm" variant="ghost" aria-pressed={watching} onClick={() => setWatching((v) => !v)}>
           {watching ? tr('ui.meetings.hideScreen') : tr('ui.meetings.watch')}

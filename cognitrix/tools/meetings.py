@@ -73,8 +73,11 @@ async def join_meeting(url: str, reply_mode: str = 'chat', name: str = '', title
     except MeetingError as exc:
         return ToolOutcome.failure('meeting', str(exc))
     return (f'Joining "{row.title}" as {row.bot_name} (meeting {row.id}). It takes a minute or two to get in; '
-            'if the host has to let you in, you wait in the lobby for up to 15 minutes. Check with Meeting '
-            'Transcript. The person can watch on your computer.')
+            'if the host has to let you in, you wait in the lobby for up to 15 minutes. Your browser uses the '
+            'Google account signed in on your computer; if Google Meet wants one and none is signed in, the '
+            'person is asked to sign in there and you wait for them. Check with Meeting Transcript. The person '
+            'can watch on your computer. In the call you only hear it (a transcript of the sound): you do not '
+            "see video, shared screens, captions or the call's chat.")
 
 
 @tool(category=MEETING_TOOL_CATEGORY, supported_interfaces=['web', 'ws', 'task'])
