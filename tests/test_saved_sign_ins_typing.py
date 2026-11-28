@@ -659,7 +659,8 @@ async def test_browser_use_is_off_unless_the_person_turns_it_on(monkeypatch):
     assert row.allowed_hosts == ['api.github.com', 'github.com'] and row.browser_hosts == ['github.com']
     # And a later card for another API host leaves the browser sites as they were.
     row = await answer('GH', ['uploads.github.com'], False)
-    assert row.browser_hosts == ['github.com'] and 'uploads.github.com' in row.allowed_hosts
+    assert row.browser_hosts == ['github.com']
+    assert row.allowed_hosts == ['api.github.com', 'github.com', 'uploads.github.com']
     assert len(answered) == 4
 
 
