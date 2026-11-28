@@ -88,6 +88,7 @@ _KNOWN_LOW = frozenset({
     # looking at tasks, and starting or stopping a run (a stopped run can be
     # resumed; the run's own risky tool calls still ask)
     'list_tasks', 'get_task', 'start_task', 'cancel_task_run',
+    'list_tailnet_devices',  # reads the tailnet's machine list (Run On Tailnet Device always asks, below)
     'run_mcp_tool',  # the MCP action itself is checked in the agent loop
     # always-on agents: notes and alerts go to the run's own owner
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
@@ -398,6 +399,10 @@ class DestructiveOpDetector:
             # Lands the sandbox's changes on the person's computer: always theirs to approve.
             from cognitrix.tools.sandbox_work import copy_back_details
             return RiskAssessment(RiskLevel.HIGH, ['sandbox_copy_back', 'file_overwrite'], copy_back_details(params))
+        if name == 'run_on_tailnet_device':
+            # A command on a real machine on the person's tailnet: theirs to approve, every one.
+            from cognitrix.tools.tailnet import RISK_CATEGORY, run_details
+            return RiskAssessment(RiskLevel.HIGH, [RISK_CATEGORY], run_details(params))
         if name in _SANDBOX_CODE_TOOLS and _turn_in_sandbox():
             # Run in sandbox: the agent's own container, which can't reach this machine.
             # Handing it saved sign-ins is the person's call.

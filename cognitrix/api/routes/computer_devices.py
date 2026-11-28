@@ -287,8 +287,12 @@ async def relay_call(request: Request) -> dict[str, Any]:
     body = await request.body()
     if not relay.verify(body, request.headers.get(relay.HEADER, '')):
         raise HTTPException(status_code=403, detail='Not allowed')
-    hub.serving = True
     data = json.loads(body or b'{}')
+    if str(data.get('op') or '').startswith('tailnet_'):
+        # A worker without Tailscale of its own (cognitrix/tailscale/devices.py).
+        from cognitrix.tailscale import devices as tailnet_devices
+        return await tailnet_devices.serve(str(data['op']), data)
+    hub.serving = True
     device_id = str(data.get('device_id') or '')
     if data.get('op') == 'status':
         return await status(device_id) or {'online': False}

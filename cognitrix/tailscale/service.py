@@ -416,6 +416,8 @@ async def _watch() -> None:
     while True:
         try:
             await asyncio.to_thread(reconcile)
+            from cognitrix.tailscale import computers
+            await computers.refresh_members()
         except Exception:  # noqa: BLE001 - keep watching
             logger.exception('Tailscale check failed')
         if not tailscale.enabled():
@@ -438,6 +440,8 @@ async def settings_changed(app) -> dict[str, Any]:
     """Settings were saved: act on them now."""
     if tailscale.enabled():
         await start(app)
+        from cognitrix.tailscale import computers
+        await computers.refresh_members()
     snap = await asyncio.to_thread(reconcile)
     if not tailscale.enabled():
         await doors.close()

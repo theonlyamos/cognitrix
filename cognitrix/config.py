@@ -906,6 +906,7 @@ async def _ensure_schema():
     from cognitrix.meetings.notes import MeetingNote
     from cognitrix.models.paired_device import MODELS as PAIRED_DEVICE_MODELS
     from cognitrix.models.sign_in import MODELS as SIGN_IN_MODELS
+    from cognitrix.models.tailnet_device import MODELS as TAILNET_DEVICE_MODELS
     from cognitrix.payments.models import MODELS as PAYMENT_MODELS
     from cognitrix.produced_files.models import MODELS as PRODUCED_FILE_MODELS
     from cognitrix.projects.models import MODELS as PROJECT_MODELS
@@ -939,6 +940,7 @@ async def _ensure_schema():
         *PR_WATCH_MODELS,
         *PAIRED_DEVICE_MODELS,
         *SIGN_IN_MODELS,
+        *TAILNET_DEVICE_MODELS,
         *PROJECT_MODELS,
         *COMMAND_RULE_MODELS,
         *FILE_CHANGE_MODELS,

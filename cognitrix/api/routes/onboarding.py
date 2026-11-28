@@ -235,7 +235,9 @@ async def _create_assistant(user: User, name: str, llm: LLM) -> Agent:
         system_prompt=default_assistant_prompt(getattr(user, 'name', None)),
         description=DEFAULT_ASSISTANT_DESCRIPTION,
         # Publish Brief is given to morning-brief runs only (tasks/orchestrator.py).
-        tools=[t for t in ToolManager.list_all_tools() if t.name != 'Publish Brief'],
+        # The tailnet device tools are added by hand to the agents that should have them.
+        tools=[t for t in ToolManager.list_all_tools()
+               if t.name != 'Publish Brief' and t.category != 'tailnet'],
         owner_id=agent_access.owner_key(user),
         memory={'save_global': True},
         # Run Code and tools on demand are on by default (tools/code_mode.py):

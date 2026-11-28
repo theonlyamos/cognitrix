@@ -22,7 +22,8 @@ logger = logging.getLogger('cognitrix.log')
 # Tools a person must answer even with a turn's bypass flag on: giving an
 # agent a new folder or write access widens what it can touch. The person's
 # own "Auto-approve everything" setting does answer them (auto_approve_all.py).
-_NEVER_AUTO_APPROVED = frozenset({'request_folder', 'copy_back_from_sandbox', 'request_access'})
+_NEVER_AUTO_APPROVED = frozenset({'request_folder', 'copy_back_from_sandbox', 'request_access',
+                                  'run_on_tailnet_device'})
 
 # Risk categories only a person answers, every time: no remembered answer,
 # bypass or reviewer stands in. Only the person's own "Auto-approve
@@ -513,7 +514,7 @@ class ApprovalGate:
 
     @staticmethod
     def _command(tool_call: ToolCall) -> str | None:
-        if _normal_name(tool_call.tool_name) != 'bash':
+        if _normal_name(tool_call.tool_name) not in ('bash', 'run_on_tailnet_device'):
             return None
         command = (tool_call.params or {}).get('command')
         return command if isinstance(command, str) and command.strip() else None
@@ -527,13 +528,30 @@ class ApprovalGate:
         except Exception:
             return computer_key(None)
 
+    async def _computer_of(self, tool_call: ToolCall) -> str | None:
+        """The computer a saved command rule is for: this machine, a paired
+        PC, or one tailnet device with one login name (never a name alone:
+        the rule follows the machine, not whatever is called that later)."""
+        if _normal_name(tool_call.tool_name) != 'run_on_tailnet_device':
+            return self._computer()
+        from cognitrix.safety.command_rules import tailnet_key
+        from cognitrix.tailscale import devices
+        params = tool_call.params or {}
+        try:
+            machine, row = await devices.resolve(str(params.get('device') or ''))
+        except Exception:
+            return None
+        user = str(params.get('user') or '').strip()
+        return tailnet_key(machine['node'], user) if user and user in (row.users or []) else None
+
     async def _command_allowed(self, tool_call: ToolCall, interface: str) -> bool:
         command = self._command(tool_call)
         owner = self._app_owner(interface)
         if not command or not owner or owner == 'local':
             return False
         from cognitrix.safety import command_rules
-        return await command_rules.allowed(owner, self._computer(), command)
+        computer = await self._computer_of(tool_call)
+        return bool(computer) and await command_rules.allowed(owner, computer, command)
 
     def _always_offer(self, tool_call: ToolCall, scope: str | None, person_only: bool,
                       must_ask: bool) -> dict | None:
@@ -546,6 +564,10 @@ class ApprovalGate:
             prefix = prefix_for(command) if command else None
             if not prefix:
                 return None
+            if _normal_name(tool_call.tool_name) == 'run_on_tailnet_device':
+                params = tool_call.params or {}
+                device, user = str(params.get('device') or '')[:60], str(params.get('user') or '')[:64]
+                return {'kind': 'command', 'label': f'{prefix} ({user}@{device})', 'computer': f'tailnet:{device}'}
             computer = self._computer()
             return {'kind': 'command', 'label': prefix, 'computer': computer}
         if not scope or ':' in str(tool_call.tool_name) or _normal_name(tool_call.tool_name) in _NEVER_AUTO_APPROVED:
@@ -562,8 +584,9 @@ class ApprovalGate:
             if person_only:
                 from cognitrix.safety import command_rules
                 command = self._command(tool_call)
-                if command:
-                    await command_rules.add(owner, self._computer(), command)
+                computer = await self._computer_of(tool_call) if command else None
+                if command and computer:
+                    await command_rules.add(owner, computer, command)
                 return False
             if not scope:
                 return False
