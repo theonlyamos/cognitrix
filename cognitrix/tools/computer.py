@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import re
 import time
 from typing import Any
 
@@ -44,7 +45,17 @@ COMPUTER_NOTE = (
     'that do (such as agent-browser, Playwright or Puppeteer scripts run with Bash) or the full-screen tools. '
     "When they do ask, pass computer='person' to the window tools. Just reading a page's text with WebFetch "
     'is fine. Only when the person asks to see your screen, or a picture of it is the answer (how a page '
-    'you made looks), show them one with show_screenshot.')
+    'you made looks), show them one with show_screenshot.\n\n'
+    'Work on your own and do as much of the task as you can before involving the person. When a site or app '
+    'needs an email, username, password, API key or token, never ask the person to take over or to type it: '
+    'call list_credentials and type a saved one with type_in_window or set_text, writing '
+    '{{secret:NAME.username}}, {{secret:NAME.password}} or {{secret:NAME}} as the text. It is filled in only on '
+    "the sites it was saved for, and you never see it. If none fits, ask for it with ask_for_sign_in "
+    "(kind='basic' for a username and password, allowed_hosts=[the site, e.g. 'github.com']), then type it the "
+    'same way. Use ask_to_take_over only for a step you truly cannot do yourself: a CAPTCHA you cannot pass, a '
+    "code sent to the person's phone, a passkey or security key, or approving something in their bank or "
+    'authenticator app. Say exactly what they need to do, and carry on with the rest of the task once they '
+    'hand back.')
 
 
 def computer_note() -> str:
@@ -108,6 +119,23 @@ def _viewer(parent: Any) -> Any:
     return getattr(parent, 'id', None) or id(parent)
 
 
+def _with_saved_sign_ins(driver, window_id: int, text: str, parent: Any):
+    """``text`` with saved sign-ins filled in for this window, or a refusal
+    (cognitrix/computer/saved_sign_ins.py)."""
+    from cognitrix.computer import saved_sign_ins
+    from cognitrix.credentials import agent_allowed_credentials
+    from cognitrix.tools.utils import current_execution_context
+
+    if not saved_sign_ins.has_secrets(text):
+        return text
+    owner = current_execution_context().user_id
+    try:
+        return saved_sign_ins.prepare(driver, window_id, text, owner=owner,
+                                      allowed=agent_allowed_credentials(parent), viewer=_viewer(parent))
+    except saved_sign_ins.SignInRefused as exc:
+        return ToolOutcome.failure('sign_in', str(exc))
+
+
 def _image_point(driver, window_id: int, x: float, y: float) -> tuple[float, float]:
     """Model coordinates -> pixels of the image it was shown."""
     if coords_normalized.get():
@@ -165,6 +193,23 @@ def open_app(target: str, computer: str = AGENT):
     return _run(go, computer=computer)
 
 
+SIGN_IN_HINT = (
+    'This window asks for a sign-in. Do it yourself: call list_credentials and type the saved one with '
+    '{{secret:NAME.username}} and {{secret:NAME.password}} (type_in_window or set_text). If none fits, ask for '
+    "it with ask_for_sign_in (kind='basic', allowed_hosts=[this site]). Don't ask the person to take over for "
+    'this.')
+
+
+def _asks_for_password(elements) -> bool:
+    """Whether a window's controls include a password field."""
+    for el in elements or []:
+        role = str(getattr(el, 'role', '') or '').lower()
+        if role in ('password text', 'password', 'passwordbox'):
+            return True
+        if role in ('entry', 'text', 'textbox', 'edit') and 'password' in str(getattr(el, 'name', '') or '').lower():
+            return True
+    return False
+
 @tool(category='system')
 def look_at_window(window_id: int, find: str | None = None, max_elements: int = 60, computer: str = AGENT, *, parent: Any | None = None):
     """Look at one app window: you get its screenshot (attached after this result, even if other windows
@@ -210,6 +255,8 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
             lines.append('(none match; try without find)')
         elif not total:
             lines.append('(no readable controls; use the screenshot and click_in_window)')
+        if getattr(driver, 'sandbox', False) and _asks_for_password(snap.elements):
+            lines.append(SIGN_IN_HINT)
         return '\n'.join(lines)
     return _run(go, parent, computer)
 
@@ -310,11 +357,18 @@ def set_text(window_id: int, text: str, element: int | None = None, computer: st
     """Put text into a text field in the background, replacing what it holds. Prefer this over typing.
     Args:
         window_id (int): Window id.
-        text (str): The full text the field should contain.
+        text (str): The full text the field should contain. For a sign-in write {{secret:NAME.username}},
+            {{secret:NAME.password}} or {{secret:NAME}} (see list_credentials); it is filled in only on the
+            sites that sign-in is saved for, and you never see the value.
         element (int, optional): Control number of the field from look_at_window; default is the focused field.
         computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
-    return _run(lambda d: _done(d.set_text(window_id, text, element, viewer=_viewer(parent))), parent, computer)
+    def go(driver):
+        filled = _with_saved_sign_ins(driver, window_id, text, parent)
+        if isinstance(filled, ToolOutcome):
+            return filled
+        return _done(driver.set_text(window_id, filled, element, viewer=_viewer(parent)))
+    return _run(go, parent, computer)
 
 
 @tool(category='system')
@@ -347,7 +401,9 @@ def type_in_window(window_id: int, text: str, x: int | None = None, y: int | Non
     use_screen=true to type; end the text with a new line (or press_key_in_window "enter") to submit.
     Args:
         window_id (int): Window id.
-        text (str): Text to type.
+        text (str): Text to type. For a sign-in write {{secret:NAME.username}}, {{secret:NAME.password}} or
+            {{secret:NAME}} (see list_credentials); it is filled in only on the sites that sign-in is saved for,
+            and you never see the value.
         x (int, optional): Click here first (screenshot coordinates) to focus the field.
         y (int, optional): Click here first (screenshot coordinates) to focus the field.
         use_screen (bool, optional): Only after a result said this needs the screen: bring the window to the front
@@ -355,10 +411,15 @@ def type_in_window(window_id: int, text: str, x: int | None = None, y: int | Non
         computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
     def go(driver):
+        # Saved sign-ins first: reading the page's address looks at the
+        # window again, and the click point below uses the latest look.
+        filled = _with_saved_sign_ins(driver, window_id, text, parent)
+        if isinstance(filled, ToolOutcome):
+            return filled
         ix = iy = None
         if x is not None and y is not None:
             ix, iy = _image_point(driver, window_id, x, y)
-        return _done(driver.type_text(window_id, text, ix, iy, viewer=_viewer(parent), use_screen=use_screen))
+        return _done(driver.type_text(window_id, filled, ix, iy, viewer=_viewer(parent), use_screen=use_screen))
     return _run(go, parent, computer)
 
 
@@ -429,14 +490,54 @@ async def wait_for_hand_back(held_by: Any, *, handed_back: Any = None, wait_s: f
         await asyncio.sleep(poll_s)
 
 
+# Ask To Take Over is a last resort. A request that is only about typing a
+# sign-in (an email, a password, a key) is sent back once per chat with how
+# to do it with saved sign-ins; asked again, it goes to the person.
+_SIGN_IN_WORDS = re.compile(
+    r'\b(sign(ed|ing)?[ -]?in|log(ged|ging)?[ -]?in|password|passcode|credentials?|e-?mail|username|user name|'
+    r'api[ -]?key|access key|token|secret key)\b', re.I)
+_ONLY_THE_PERSON = re.compile(
+    r'(captcha|recaptcha|hcaptcha|i.?m not a robot|robot|2fa|two[- ]factor|2[- ]step|mfa|multi[- ]factor|'
+    r'verif|one[- ]time|otp|\bcode\b|passkey|security key|yubikey|authenticator|phone|sms|text message|'
+    r'push notification|approve|face ?id|fingerprint|biometric|payment|pay\b|card|bank|identity|selfie|'
+    r'\bid\b|consent|legal|terms|agree)', re.I)
+_TAKEOVER_SENT_BACK: dict[str, float] = {}
+_SENT_BACK_KEEP_S = 6 * 3600
+
+
+def takeover_precheck(args: dict[str, Any], session_id: Any) -> str | None:
+    """A reply instead of a Take over card, for a request that is only about
+    typing a sign-in the agent can type itself. None: ask the person."""
+    reason = str((args or {}).get('reason') or '')
+    if not _SIGN_IN_WORDS.search(reason) or _ONLY_THE_PERSON.search(reason):
+        return None
+    now = time.monotonic()
+    for key, when in list(_TAKEOVER_SENT_BACK.items()):
+        if now - when > _SENT_BACK_KEEP_S:
+            _TAKEOVER_SENT_BACK.pop(key, None)
+    key = str(session_id or '')
+    if not key or key in _TAKEOVER_SENT_BACK:
+        return None  # it tried already (or there's no chat to remember it by): the person's call
+    _TAKEOVER_SENT_BACK[key] = now
+    return ('The person was not asked. Sign in yourself instead: call list_credentials, and if a saved sign-in '
+            'fits this site, type it with type_in_window or set_text using {{secret:NAME.username}} and '
+            "{{secret:NAME.password}} (or {{secret:NAME}} for a key). If none fits, call ask_for_sign_in "
+            "(kind='basic' for a username and password, allowed_hosts=[the site's host]) so the person saves it "
+            'without taking over, then type it. Only if the site then needs something only the person can do (a '
+            "CAPTCHA, a code sent to their phone, a passkey), call ask_to_take_over again and say exactly that.")
+
 # Waits on a person, so it holds no execution slot (like Ask User).
 @tool(category='system', occupies_execution_slot=False)
 async def ask_to_take_over(reason: str, *, parent: Any | None = None):
-    """Ask the person to take over your computer for a step only they should do: signing in, a 2FA code, a
-    CAPTCHA, a payment or anything private. They see your reason with a Take over button, do it on your screen,
-    and this returns once they hand the computer back (or say they'll skip it). Only for the sandboxed computer.
+    """Last resort: ask the person to take over your computer for a step only they can do, such as a CAPTCHA
+    you can't pass, a code sent to their phone, a passkey or security key, or approving something in their bank
+    or authenticator app. Don't use it for typing an email, username, password, API key or token: type a saved
+    sign-in with {{secret:NAME...}} (list_credentials), or ask for one with ask_for_sign_in. Do every step you
+    can first. They see your reason with a Take over button, do it on your screen, and this returns once they
+    hand the computer back (or say they'll skip it); then carry on. Only for the sandboxed computer.
     Args:
-        reason (str): What you need them to do, in one short sentence, e.g. "Sign in to your bank".
+        reason (str): Exactly what you need them to do, in one short sentence, e.g. "Solve the CAPTCHA on the
+            GitHub sign-in page".
     """
     from cognitrix.computer.sandbox.client import sandbox_mode
 

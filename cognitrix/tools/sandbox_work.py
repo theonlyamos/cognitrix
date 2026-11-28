@@ -519,19 +519,23 @@ SANDBOX_ONLY_HOST = sw.SANDBOX_ONLY_HOST
 @tool(category='system', retryable=False, max_attempts=1, supported_interfaces=['web'],
       occupies_execution_slot=False, approval_mode='assigned_only')
 async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_hosts: list[str] | None = None):
-    """Ask the person for a token, API key or username and password you need (for example to run tests
-    against a real service in the sandbox, or to call an API). They type it into a masked field in the chat
-    and it is saved to their Saved sign-ins under `name`; you never see the value, only that it was saved.
+    """Ask the person for a token, API key or username and password you need (to sign in to a website in
+    the browser on your computer, to run tests against a real service in the sandbox, or to call an API). They
+    type it into a masked field in the chat and it is saved to their Saved sign-ins under `name`; you never see
+    the value, only that it was saved. Use this instead of asking them to take over your computer to sign in.
 
     Use List Credentials first: if a sign-in you can use already exists, use it instead of asking.
-    Then pass the name in Bash or Run Tests `credentials` (sandbox) or Http Request `credential`.
+    Then type it on the site with type_in_window or set_text ({{secret:NAME.username}},
+    {{secret:NAME.password}}, {{secret:NAME}}), or pass the name in Bash or Run Tests `credentials` (sandbox)
+    or Http Request `credential`.
 
     Args:
         name (str): A name like GITHUB_TOKEN or STAGING_DB (letters, numbers, _).
         reason (str): One sentence on what it's for, shown to the person.
         kind (str, optional): 'token' (one secret value, default) or 'basic' (username and password).
-        allowed_hosts (list[str], optional): Hosts Http Request may send it to, like api.github.com. Leave
-            empty when it's only for commands in the sandbox.
+        allowed_hosts (list[str], optional): Sites it may be used on: the website you sign in to in your
+            browser (like github.com, which also covers its subdomains there) and hosts Http Request may send it
+            to (like api.github.com). Leave empty when it's only for commands in the sandbox.
 
     Returns:
         str: Whether it was saved.
@@ -589,7 +593,13 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
         use = f'{clean}_USERNAME and {clean}_PASSWORD'
     else:
         use = clean
+    if kind == 'basic':
+        typed = f'{{{{secret:{clean}.username}}}} and {{{{secret:{clean}.password}}}}'
+    else:
+        typed = f'{{{{secret:{clean}}}}}'
+    browser = ('' if hosts == [SANDBOX_ONLY_HOST] else
+               f" To sign in on {', '.join(hosts)} in your browser, type {typed} with type_in_window or set_text.")
     return ToolOutcome.success(
-        f"Saved {clean}. In the sandbox pass credentials=['{clean}'] to Bash or Run Tests and read it from the "
-        f"variable{'s' if kind == 'basic' else ''} {use}" +
+        f"Saved {clean}.{browser} In the sandbox pass credentials=['{clean}'] to Bash or Run Tests and read it "
+        f"from the variable{'s' if kind == 'basic' else ''} {use}" +
         ('' if hosts == [SANDBOX_ONLY_HOST] else f"; with Http Request use credential='{clean}'") + '.')

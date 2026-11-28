@@ -223,7 +223,10 @@ async def list_credentials(*, parent: Any | None = None):
 
     Each entry has a name, a kind (token, basic or oauth), a description and
     the hosts it may be sent to. Use a name with Http Request (`credential`, or
-    {{secret:NAME}} inside the request). You can't read the values themselves.
+    {{secret:NAME}} inside the request), or type it on one of those sites in the
+    browser on your computer with type_in_window or set_text
+    ({{secret:NAME.username}}, {{secret:NAME.password}}, {{secret:NAME}}).
+    You can't read the values themselves.
 
     Returns:
         str: One line per saved credential, or a note that there are none.
