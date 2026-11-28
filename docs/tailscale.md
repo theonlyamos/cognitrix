@@ -95,6 +95,8 @@ Things to know:
 - **Commands agents run inside their computer don't ask you first.** So anything your policy opens to the tag, an agent can use on its own. Open ports one at a time, to the tag, never `*`.
 - Computers don't take DNS settings or routes from the tailnet (`--accept-dns=false`, `--accept-routes=false`). Agents reach a machine by its tailnet address or full name.
 - A computer made before you turned this on gets its join key the next time it is used: a server on Fly waits until the computer next wakes, a server elsewhere restarts it once.
+- **Changing who joins takes the others off.** When you switch the choice to admins or nobody, turn Tailscale off, or someone stops being an admin, the computers that no longer qualify are removed from your tailnet right away. Each one also loses its join settings and its saved Tailscale identity the next time it starts.
+- After you change the computers' tag, each computer signs in again with a new key the next time it is used, even if it was still connected under the old tag.
 - The computers' own image needs Tailscale inside it, which the published image has from this version on.
 
 ## Devices agents may use

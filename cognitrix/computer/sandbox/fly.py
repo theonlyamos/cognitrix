@@ -311,10 +311,13 @@ class FlyManager(SandboxManager):
 
     def _join_tailnet(self, user_id: Any, machine: dict, again: bool = False) -> dict:
         """Give a machine made before the tailnet was turned on (or one that
-        fell off it, ``again``) a join key. Fly restarts it with the new settings."""
+        fell off it, ``again``) a join key. Fly restarts it with the new settings.
+        A machine that joined and is no longer meant to is taken off instead."""
+        from cognitrix.tailscale import computers
+        if _meta(machine).get(META_TAILNET) == '1' and not computers.wanted_for(user_key(user_id)):
+            return self._leave_tailnet(user_id, machine)
         if _meta(machine).get(META_TAILNET) == '1' and not again:
             return machine
-        from cognitrix.tailscale import computers
         if machine.get('state') == 'started' and not again and not computers.dial_over_tailnet():
             return machine  # in use and reachable as it is: it joins the next time it wakes
         tailnet = self._tailnet_env(user_id)
@@ -325,6 +328,23 @@ class FlyManager(SandboxManager):
         config['metadata'] = {**(config.get('metadata') or {}), META_TAILNET: '1'}
         self.api.update(machine['id'], {'config': config})
         self._boxes.pop(self.machine_name(user_id), None)
+        return self._settle(self.api.machine(machine['id']) or machine)
+
+    def _leave_tailnet(self, user_id: Any, machine: dict) -> dict:
+        """The computer joined, and its owner's computers no longer do (the choice
+        in Settings changed, or they stopped being an admin): take what it joins
+        with out of its settings, so its start script drops the saved Tailscale
+        identity, and take the machine off the tailnet. Fly restarts it."""
+        from cognitrix.tailscale import computers
+
+        config = dict(machine.get('config') or {})
+        gone = (computers.ENV_ON, computers.ENV_NAME, computers.ENV_KEY)
+        config['env'] = {k: v for k, v in (config.get('env') or {}).items() if k not in gone}
+        config['metadata'] = {k: v for k, v in (config.get('metadata') or {}).items() if k != META_TAILNET}
+        self.api.update(machine['id'], {'config': config})
+        self._boxes.pop(self.machine_name(user_id), None)
+        self._rejoined.discard(machine['id'])
+        computers.forget(user_key(user_id))
         return self._settle(self.api.machine(machine['id']) or machine)
 
     @staticmethod

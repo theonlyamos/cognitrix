@@ -417,7 +417,9 @@ async def _watch() -> None:
         try:
             await asyncio.to_thread(reconcile)
             from cognitrix.tailscale import computers
-            await computers.refresh_members()
+            if await computers.refresh_members():
+                # Someone stopped being an admin: their computer leaves the tailnet.
+                await asyncio.to_thread(computers.remove_unwanted)
         except Exception:  # noqa: BLE001 - keep watching
             logger.exception('Tailscale check failed')
         if not tailscale.enabled():
@@ -438,10 +440,15 @@ async def start(app) -> None:
 
 async def settings_changed(app) -> dict[str, Any]:
     """Settings were saved: act on them now."""
+    from cognitrix.tailscale import computers
     if tailscale.enabled():
         await start(app)
-        from cognitrix.tailscale import computers
         await computers.refresh_members()
+    try:
+        # Computers the new choice leaves out lose their place on the tailnet now.
+        await asyncio.to_thread(computers.remove_unwanted)
+    except Exception:  # noqa: BLE001 - the settings are saved; each computer is also checked when next used
+        logger.exception("Couldn't take computers off the tailnet")
     snap = await asyncio.to_thread(reconcile)
     if not tailscale.enabled():
         await doors.close()

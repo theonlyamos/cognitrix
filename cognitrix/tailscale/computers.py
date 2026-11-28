@@ -74,10 +74,10 @@ def _members() -> set[str]:
     return {str(k) for k in data.get('admins', [])} if isinstance(data, dict) else set()
 
 
-async def refresh_members() -> None:
-    """Write down whose computers join while the choice is "admins"."""
+async def refresh_members() -> bool:
+    """Write down whose computers join while the choice is "admins". True when the list changed."""
     if tailscale.sandbox_scope() != tailscale.ADMINS:
-        return
+        return False
     from cognitrix.agents.access import is_admin, owner_key
     from cognitrix.computer.sandbox.client import user_key
     from cognitrix.models.user import User
@@ -86,7 +86,7 @@ async def refresh_members() -> None:
         users = list(await User.all() or [])
     except Exception:  # noqa: BLE001 - keep what was written before
         logger.debug("Couldn't list accounts for the tailnet computers", exc_info=True)
-        return
+        return False
     admins = sorted({user_key(owner_key(u)) for u in users if await is_admin(u)} | {user_key(None)})
     try:
         path = _members_file()
@@ -94,8 +94,10 @@ async def refresh_members() -> None:
         text = json.dumps({'admins': admins})
         if not path.exists() or path.read_text(encoding='utf-8') != text:
             path.write_text(text, encoding='utf-8')
+            return True
     except OSError:
         logger.debug("Couldn't save whose computers join the tailnet", exc_info=True)
+    return False
 
 
 def wanted_for(key: str) -> bool:
@@ -252,6 +254,34 @@ def forget(key: str) -> bool:
                 removed = True
     except api.ApiError as exc:
         logger.info("Couldn't remove %s from the tailnet: %s", want, exc)
+    return removed
+
+
+def remove_unwanted() -> list[str]:
+    """Take off the tailnet every computer that is no longer meant to be on it:
+    the choice went from everyone to admins or nobody, Tailscale was turned off,
+    or someone stopped being an admin. Removing the machine there ends its
+    access at once, whatever the computer itself still has saved. Returns the
+    names removed. (Each machine's own settings are cleaned the next time it is
+    used: ``FlyManager._leave_tailnet``.)"""
+    scope = tailscale.sandbox_scope()
+    if scope == tailscale.EVERYONE or not api.configured():
+        return []
+    if scope == tailscale.ADMINS and not _members_file().exists():
+        return []   # who the admins are isn't written down yet: remove nobody by mistake
+    keep = {node_name(k) for k in _members()} if scope == tailscale.ADMINS else set()
+    tag, removed = tailscale.sandbox_tag(), []
+    try:
+        for row in api.devices():
+            name = str(row.get('hostname') or '').lower()
+            if not name.startswith(NAME_PREFIX) or name in keep or tag not in [str(t) for t in (row.get('tags') or [])]:
+                continue
+            api.remove_device(str(row.get('nodeId') or row.get('id') or ''))
+            removed.append(name)
+    except api.ApiError as exc:
+        logger.info("Couldn't take computers off the tailnet: %s", exc)
+    if removed:
+        logger.info('Took %d computer(s) off the tailnet: they are no longer meant to join', len(removed))
     return removed
 
 

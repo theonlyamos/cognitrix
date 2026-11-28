@@ -4,10 +4,14 @@ client and Fly are stand-ins; nothing here needs a tailnet."""
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import socket
 import socketserver
 import struct
+import subprocess
 import threading
+from pathlib import Path
 from urllib.parse import parse_qs
 
 import httpx
@@ -283,6 +287,131 @@ def test_a_computer_that_fell_off_the_tailnet_gets_one_new_key(fly, tailnet, ts_
     with pytest.raises(DriverError, match='tailnet policy'):
         mgr.sandbox('u1')
     assert len(ts_api.keys) == 2
+
+
+def test_a_computer_that_no_longer_joins_is_taken_off_the_tailnet(fly, tailnet, ts_api, monkeypatch):
+    """The choice went from everyone to nobody: a computer that joined before loses
+    its join settings (its start script then deletes the saved identity) and its
+    place on the tailnet, the next time it is needed."""
+    mgr, fake = fly
+    _turn_on()
+    name = computers.node_name(user_key('u1'))
+    tailnet.add(name, '100.64.0.21')
+    mgr.sandbox('u1')
+    monkeypatch.setattr(fake, 'update', lambda mid, body: (fake.calls.append(('update', mid, body['config'])),
+                                                           fake.machines_[mid].update(config=body['config']))[0])
+    ts_api.devices_ = [{'nodeId': 'nAAA', 'hostname': name, 'tags': [TAG]}]
+    monkeypatch.setenv('FLY_PRIVATE_IP', 'fdaa:0:1::2')      # the engine still reaches it on Fly's own network
+    _turn_on('nobody')
+    box = mgr.sandbox('u1')
+    (update,) = (c for c in fake.calls if c[0] == 'update')
+    assert not {computers.ENV_ON, computers.ENV_NAME, computers.ENV_KEY} & set(update[2]['env'])
+    assert update[2]['env']['COGNITRIX_SANDBOX_TOKEN'] and META_TAILNET not in update[2]['metadata']
+    assert ts_api.removed == ['nAAA'] and len(ts_api.keys) == 1
+    assert box.api.startswith('http://[fdaa::') and mgr.tailnet_info('u1') is None
+    # Once is enough: the next use changes nothing more.
+    mgr.sandbox('u1')
+    assert len([c for c in fake.calls if c[0] == 'update']) == 1 and ts_api.removed == ['nAAA']
+
+
+def test_changing_who_joins_takes_the_others_off_at_once(tailnet, ts_api, tmp_path, monkeypatch):
+    """Saving the choice removes the machines it leaves out from the tailnet there
+    and then, whatever those computers still have saved."""
+    monkeypatch.setattr(tailscale, 'folder', lambda: tmp_path)
+    mine, theirs = computers.node_name(user_key('admin-1')), computers.node_name(user_key('u2'))
+    ts_api.devices_ = [{'nodeId': 'nMINE', 'hostname': mine, 'tags': [TAG]},
+                       {'nodeId': 'nTHEIRS', 'hostname': theirs, 'tags': [TAG]},
+                       {'nodeId': 'nNAME', 'hostname': theirs, 'tags': []},                 # took the name, not a computer
+                       {'nodeId': 'nOTHER', 'hostname': 'build-box', 'tags': [TAG]}]        # tagged, not a computer
+    _turn_on()
+    assert computers.remove_unwanted() == [] and ts_api.removed == []
+
+    # Admins only, before anyone wrote down who the admins are: nobody is removed by mistake.
+    _turn_on('admins')
+    assert computers.remove_unwanted() == []
+    (tmp_path / 'members.json').write_text(json.dumps({'admins': [user_key('admin-1')]}))
+    assert computers.remove_unwanted() == [theirs] and ts_api.removed == ['nTHEIRS']
+
+    _turn_on('nobody')
+    assert computers.remove_unwanted() == [mine, theirs]
+    # Tailscale itself turned off counts as nobody.
+    ts_api.removed.clear()
+    _turn_on('everyone', COGNITRIX_TAILSCALE=False)
+    assert computers.remove_unwanted() == [mine, theirs] and ts_api.removed == ['nMINE', 'nTHEIRS']
+    # No OAuth client: nothing to ask.
+    _turn_on('nobody', COGNITRIX_TAILSCALE_OAUTH_ID='')
+    assert computers.remove_unwanted() == []
+
+
+ROOT_SCRIPT = Path(__file__).resolve().parents[1] / 'sandbox' / 'desktop' / 'bin' / 'cognitrix-sandbox-root'
+
+
+@pytest.mark.skipif(os.name == 'nt' or not shutil.which('sh'), reason='the start script is a POSIX shell script')
+def test_the_start_script_uses_a_replacement_key_and_forgets_an_identity_it_no_longer_needs(tmp_path):
+    """The computer's start script with stand-in tailscale programs: an ordinary wake
+    leaves a working identity alone, a key it has not tried is used even then
+    (the tag changed), and a computer that no longer joins deletes what it saved."""
+    home, run, fake = tmp_path / 'home', tmp_path / 'run', tmp_path / 'fake'
+    for folder in (home, run, fake):
+        folder.mkdir()
+    text = ROOT_SCRIPT.read_text()
+    for old, new in (('/home/agent', str(home)), ('/run/tailscale', str(run / 'tailscale')),
+                     ('/run/cognitrix-tailnet', str(run / 'keys')), ('/var/log/tailscaled.log', str(tmp_path / 'log'))):
+        assert old in text
+        text = text.replace(old, new)
+    # Only the Tailscale part: what follows hands over to the sandbox itself.
+    head, rest = text.split('if [ "$(id -u)" = "0" ]; then', 1)
+    part = rest.split('    unset COGNITRIX_TAILNET_AUTHKEY', 1)[0]
+    assert 'start_tailscale' in part and 'chown agent:agent' in part
+    part = part.split('    fi\n', 1)[1]               # past handing the home folder to the agent user
+    script = tmp_path / 'start'
+    script.write_text(head + part)
+    (fake / 'state').write_text('NeedsLogin')
+    programs = {
+        'tailscaled': 'for a in "$@"; do case "$a" in --socket=*) python3 -c "import socket,sys; '
+                      's=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" "${a#--socket=}";; esac; done',
+        'tailscale': f'''case " $* " in
+  *" status "*) printf '{{"BackendState": "%s"}}' "$(cat {fake}/state)" ;;
+  *" up "*) for a in "$@"; do case "$a" in --auth-key=file:*) key=$(cat "${{a#--auth-key=file:}}");; esac; done
+            echo "$key $*" >> {fake}/ups; printf Running > {fake}/state ;;
+esac''',
+        'chown': 'exit 0',
+        'stat': 'echo 0',        # root's own folder, as on the real machine
+    }
+    for name, body in programs.items():
+        (fake / name).write_text('#!/bin/sh\n' + body + '\n')
+        (fake / name).chmod(0o755)
+
+    def start(**env):
+        for sock in (run / 'tailscale').glob('*.sock'):
+            sock.unlink()
+        subprocess.run(['sh', str(script)], check=True, timeout=60,
+                       env={'PATH': f"{fake}{os.pathsep}{os.environ['PATH']}", **env})
+        return (fake / 'ups').read_text().splitlines() if (fake / 'ups').exists() else []
+
+    joining = {'COGNITRIX_TAILNET': '1', 'COGNITRIX_TAILNET_NAME': 'cognitrix-sandbox-u1'}
+    state = home / '.cognitrix-tailscale'
+    ups = start(**joining, COGNITRIX_TAILNET_AUTHKEY='tskey-auth-1')
+    assert len(ups) == 1 and ups[0].startswith('tskey-auth-1 ') and '--force-reauth' not in ups[0]
+    assert '--hostname=cognitrix-sandbox-u1' in ups[0] and not (run / 'keys' / 'join-key').exists()
+    assert 'tskey-auth-1' not in (state / 'cognitrix-join-key.sha256').read_text()
+    # A stop and a wake: the same, used key and a working identity. Nothing to do.
+    assert len(start(**joining, COGNITRIX_TAILNET_AUTHKEY='tskey-auth-1')) == 1
+    # The engine sends another key (the tag changed): signed in again with it, though the old identity works.
+    ups = start(**joining, COGNITRIX_TAILNET_AUTHKEY='tskey-auth-2')
+    assert len(ups) == 2 and ups[1].startswith('tskey-auth-2 ') and '--force-reauth' in ups[1]
+    assert len(start(**joining, COGNITRIX_TAILNET_AUTHKEY='tskey-auth-2')) == 2
+    # Signed in with nothing remembered about its key: left alone, and the key is remembered from now on.
+    (state / 'cognitrix-join-key.sha256').unlink()
+    assert len(start(**joining, COGNITRIX_TAILNET_AUTHKEY='tskey-auth-2')) == 2
+    assert (state / 'cognitrix-join-key.sha256').exists()
+    # The identity stopped working (removed from the tailnet) and the key is the old one: tried, as before.
+    (fake / 'state').write_text('NeedsLogin')
+    ups = start(**joining, COGNITRIX_TAILNET_AUTHKEY='tskey-auth-2')
+    assert len(ups) == 3 and '--force-reauth' not in ups[2]
+    # No longer meant to join: the saved identity is deleted and Tailscale isn't started.
+    assert state.is_dir()
+    assert len(start()) == 3 and not state.exists()
 
 
 def test_a_computer_left_off_the_tailnet_says_who_can_change_that(fly, tailnet, ts_api):
