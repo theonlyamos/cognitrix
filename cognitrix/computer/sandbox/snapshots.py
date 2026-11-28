@@ -41,10 +41,14 @@ _NAME = re.compile(r'^[^\x00-\x1f]{1,80}$')
 _ID = re.compile(r'^[a-z0-9]{12}$')
 # Never worth keeping: job logs, the key proxy's files (made again on use),
 # browser caches and the locks a running browser holds.
-_EXCLUDES = ('--exclude=./.cognitrix-sandbox/jobs', '--exclude=./.cognitrix-sandbox/proxy',
+_EXCLUDES = ('--exclude=./.cognitrix-tailscale',  # root-only: a Fly computer's Tailscale identity
+             '--exclude=./.cognitrix-sandbox/jobs', '--exclude=./.cognitrix-sandbox/proxy',
              '--exclude=./.cognitrix-sandbox/staging',
              '--exclude=Cache_Data', '--exclude=Code Cache', '--exclude=GPUCache', '--exclude=GrShaderCache',
              '--exclude=SingletonLock', '--exclude=SingletonSocket', '--exclude=SingletonCookie')
+# Empties the home folder before a whole-computer restore, leaving the
+# root-only Tailscale folder (the agent user couldn't remove it anyway).
+EMPTY_HOME = 'find . -mindepth 1 -maxdepth 1 ! -name .cognitrix-tailscale -exec rm -rf {} +'
 _AGENT_PARTS = (('work', 'agent/work'), ('.profiles', 'agent/profiles'),
                 ('.cognitrix-sandbox/baselines', 'agent/baselines'))
 

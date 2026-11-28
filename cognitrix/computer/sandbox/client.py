@@ -622,11 +622,12 @@ class SandboxManager:
             self._boxes.pop(name, None)
         # A throwaway container on the same home volume, without network,
         # empties it and unpacks the snapshot as the agent user.
+        from cognitrix.computer.sandbox.snapshots import EMPTY_HOME
         code, err = self._run_with_input(
             [self.docker, 'run', '--rm', '-i', '--network', 'none', '--cap-drop', 'ALL',
              '--security-opt', 'no-new-privileges', '-u', 'agent',
              '-v', f'cognitrix-sandbox-home-{user_key(user_id)}:/home/agent', '--entrypoint', 'sh', self.image,
-             '-c', 'cd /home/agent && find . -mindepth 1 -delete && tar -xzf - --no-same-owner'], source, 3600)
+             '-c', f'cd /home/agent && {EMPTY_HOME} && tar -xzf - --no-same-owner'], source, 3600)
         if code != 0:
             raise DriverError(f"Couldn't restore the snapshot: {err.strip()[-300:]}")
 

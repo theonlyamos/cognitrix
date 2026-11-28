@@ -15,6 +15,10 @@ browser logins). Inside it, each agent still gets its own desktop.
 - **Private.** Machines get no public address. The engine reaches them over
   Fly's private network (6PN), so the engine must run on Fly in the same
   organisation. Every call still needs the machine's own token.
+- **Or over Tailscale.** With "Fly computers on your tailnet" turned on
+  (Settings > Tailscale, ``cognitrix/tailscale/computers.py``) a computer
+  joins the owner's tailnet when it starts, and an engine that is not on Fly
+  (a home server, the desktop app) reaches it at its tailnet address.
 
 Settings (Settings > Computers; names as in cognitrix/app_settings.py):
 
@@ -55,6 +59,7 @@ logger = logging.getLogger('cognitrix.sandbox.fly')
 API_URL = os.environ.get('COGNITRIX_FLY_API_URL', 'https://api.machines.dev/v1')
 META_USER = 'cognitrix_user'
 META_ROLE = 'cognitrix_sandbox'
+META_TAILNET = 'cognitrix_tailnet'  # the machine was given what it needs to join the tailnet
 HOME = '/home/agent'
 # Started as root so the volume (mounted owned by root) can be handed to the
 # agent user; everything after that runs as 'agent' with no privileges.
@@ -205,6 +210,7 @@ class FlyManager(SandboxManager):
         self.api = api
         self._ids: dict[str, str] = {}  # user key -> machine id
         self._last_used: dict[str, float] = {}  # machine id -> time.time(), the engine's own view
+        self._rejoined: set[str] = set()  # machine ids given a second join key by this manager
         self._reaper: threading.Thread | None = None
         self._stop_reaper = threading.Event()
         if start_reaper and api is not None and idle_minutes() > 0:
@@ -251,14 +257,15 @@ class FlyManager(SandboxManager):
                 return vol
         return api.create_volume(name, region, _int_env('COGNITRIX_SANDBOX_FLY_VOLUME_GB', 10))
 
-    def machine_config(self, user_id: Any, token: str, volume_id: str) -> dict:
+    def machine_config(self, user_id: Any, token: str, volume_id: str, tailnet: dict[str, str] | None = None) -> dict:
         return {
             'image': self.image,
             'env': {
                 TOKEN_ENV: token,
-                # Fly's private network is IPv6.
+                # Fly's private network is IPv6 (the tailnet's addresses are reached there too).
                 'COGNITRIX_SANDBOX_LISTEN': '::',
                 'COGNITRIX_SANDBOX_VIEWER_LISTEN': f'[::]:{VIEWER_PORT}',
+                **(tailnet or {}),
             },
             'guest': {
                 'cpu_kind': app_setting('COGNITRIX_SANDBOX_FLY_CPU_KIND', 'shared') or 'shared',
@@ -268,7 +275,7 @@ class FlyManager(SandboxManager):
             'mounts': [{'volume': volume_id, 'path': HOME}],
             'processes': [{'name': 'sandbox', 'entrypoint': ENTRYPOINT, 'user': 'root'}],
             'restart': {'policy': 'on-failure', 'max_retries': 3},
-            'metadata': {META_USER: user_key(user_id), META_ROLE: '1'},
+            'metadata': {META_USER: user_key(user_id), META_ROLE: '1', **({META_TAILNET: '1'} if tailnet else {})},
             'auto_destroy': False,
             # No services: the machine has no public address at all.
         }
@@ -282,22 +289,90 @@ class FlyManager(SandboxManager):
         volume = self._volume(user_id, region)
         token = secrets.token_urlsafe(24)
         machine = api.create({'name': self.machine_name(user_id), 'region': volume.get('region') or region,
-                              'config': self.machine_config(user_id, token, volume['id'])})
+                              'config': self.machine_config(user_id, token, volume['id'],
+                                                            self._tailnet_env(user_id))})
         self._ids[user_key(user_id)] = machine['id']
         return machine
 
-    def _box(self, user_id: Any, machine: dict) -> Sandbox:
-        name = self.machine_name(user_id)
+    # -- the tailnet (cognitrix/tailscale/computers.py) ---------------------------
+    @staticmethod
+    def _tailnet_env(user_id: Any) -> dict[str, str] | None:
+        """What this person's machine needs to join the tailnet, or None when
+        their computer stays off it."""
+        from cognitrix.tailscale import computers
+
+        key = user_key(user_id)
+        if not computers.wanted_for(key):
+            return None
+        try:
+            return computers.join_env(key)
+        except computers.ComputersError as exc:
+            raise Unsupported(str(exc)) from None
+
+    def _join_tailnet(self, user_id: Any, machine: dict, again: bool = False) -> dict:
+        """Give a machine made before the tailnet was turned on (or one that
+        fell off it, ``again``) a join key. Fly restarts it with the new settings."""
+        if _meta(machine).get(META_TAILNET) == '1' and not again:
+            return machine
+        from cognitrix.tailscale import computers
+        if machine.get('state') == 'started' and not again and not computers.dial_over_tailnet():
+            return machine  # in use and reachable as it is: it joins the next time it wakes
+        tailnet = self._tailnet_env(user_id)
+        if tailnet is None:
+            return machine
+        config = dict(machine.get('config') or {})
+        config['env'] = {**(config.get('env') or {}), **tailnet}
+        config['metadata'] = {**(config.get('metadata') or {}), META_TAILNET: '1'}
+        self.api.update(machine['id'], {'config': config})
+        self._boxes.pop(self.machine_name(user_id), None)
+        return self._settle(self.api.machine(machine['id']) or machine)
+
+    @staticmethod
+    def _join_wait() -> float:
+        from cognitrix.tailscale import computers
+        return computers.JOIN_WAIT_S
+
+    def _address(self, user_id: Any, machine: dict, wait: float = 0.0) -> tuple[str, int, int]:
+        """(host, tools port, screen port) this engine dials for the machine."""
+        from cognitrix.tailscale import computers
+
+        if computers.dial_over_tailnet():
+            if _meta(machine).get(META_TAILNET) != '1':
+                raise Unsupported("This server isn't on Fly, so it reaches the agents' computers there over "
+                                  "Tailscale, and your computer isn't set to join the tailnet. An admin can change "
+                                  'that in Settings, Tailscale.')
+            try:
+                return computers.reach(user_key(user_id), wait)
+            except computers.ComputersError as exc:
+                raise DriverError(str(exc)) from None
         host = machine.get('private_ip') or f"{machine['id']}.vm.{self.api.app}.internal"
+        return host, SERVICE_PORT, VIEWER_PORT
+
+    def _box(self, user_id: Any, machine: dict, wait: float = 0.0) -> Sandbox:
+        name = self.machine_name(user_id)
+        host, tools_port, screen_port = self._address(user_id, machine, wait)
         token = _token_of(machine)
         box = self._boxes.get(name)
-        if box is None or box.token != token or box.machine_id != machine['id'] or host not in box.api:
-            box = Sandbox(name, token, SERVICE_PORT, VIEWER_PORT, host=host)
+        address = f'[{host}]' if ':' in host else host
+        if (box is None or box.token != token or box.machine_id != machine['id']
+                or box.api != f'http://{address}:{tools_port}' or box.viewer_port != screen_port):
+            box = Sandbox(name, token, tools_port, screen_port, host=host)
             box.machine_id = machine['id']
             box.container_id = machine['id']
             self._boxes[name] = box
         box.image_id = str((machine.get('config') or {}).get('image') or '')
         return box
+
+    def tailnet_info(self, user_id: Any) -> dict[str, Any] | None:
+        """The computer's place on the tailnet, for the Computer panel; None when it isn't on it."""
+        from cognitrix.tailscale import computers
+
+        key = user_key(user_id)
+        if not computers.wanted_for(key):
+            return None
+        peer = computers.find(key)
+        return {'name': computers.node_name(key), 'dns': (peer or {}).get('dns', ''),
+                'online': bool(peer and peer['online'])}
 
     # -- the manager's calls ----------------------------------------------------
     def sandbox(self, user_id: Any) -> Sandbox:
@@ -308,6 +383,7 @@ class FlyManager(SandboxManager):
             if machine is None:
                 machine = self._create(user_id)
             machine = self._settle(machine)
+            machine = self._join_tailnet(user_id, machine)
             if machine.get('state') in ('stopped', 'suspended'):
                 if self._outdated_machine(machine):
                     api.update(machine['id'], {'config': {**machine['config'], 'image': self.image}})
@@ -317,7 +393,21 @@ class FlyManager(SandboxManager):
             if machine.get('state') != 'started':
                 api.wait(machine['id'], 'started', 60)
                 machine = api.machine(machine['id']) or machine
-            box = self._box(user_id, machine)
+            try:
+                box = self._box(user_id, machine, wait=self._join_wait())
+            except DriverError:
+                # It started but never showed up on the tailnet: its saved
+                # Tailscale identity may have been removed there. One new key.
+                if _meta(machine).get(META_TAILNET) != '1' or machine['id'] in self._rejoined:
+                    raise
+                self._rejoined.add(machine['id'])
+                machine = self._join_tailnet(user_id, machine, again=True)
+                if machine.get('state') in ('stopped', 'suspended'):
+                    api.start(machine['id'])
+                if machine.get('state') != 'started':
+                    api.wait(machine['id'], 'started', 60)
+                    machine = api.machine(machine['id']) or machine
+                box = self._box(user_id, machine, wait=self._join_wait())
         self._last_used[box.machine_id] = time.time()
         self._wait_healthy(box, 90)
         return box
@@ -349,8 +439,10 @@ class FlyManager(SandboxManager):
         machine = self._find(user_id)
         if machine is None or machine.get('state') != 'started':
             return None
-        box = self._box(user_id, machine)
-        return box
+        try:
+            return self._box(user_id, machine)
+        except DriverError:
+            return None  # started on Fly, not (yet) reachable on the tailnet
 
     def asleep(self, user_id: Any) -> bool:
         machine = self._find(user_id)
@@ -393,6 +485,10 @@ class FlyManager(SandboxManager):
             api.destroy(machine['id'])
         self._ids.pop(user_key(user_id), None)
         self._boxes.pop(self.machine_name(user_id), None)
+        if machine is not None and _meta(machine).get(META_TAILNET) == '1':
+            # Its Tailscale identity goes with the volume: take the old entry off the tailnet.
+            from cognitrix.tailscale import computers
+            computers.forget(user_key(user_id))
         name = self.volume_name(user_id)
         for _ in range(10):  # the volume detaches a moment after the machine goes
             vols = [v for v in api.volumes() if v.get('name') == name and v.get('state') not in ('destroyed',)]
@@ -496,8 +592,8 @@ class FlyManager(SandboxManager):
                     box.request('DELETE', f"/desktops/{desktop['name']}", timeout=30)
                 except DriverError:
                     logger.info("Couldn't close desktop %s before the restore", desktop['name'], exc_info=True)
-        code, err = self.exec_in(box, 'cd /home/agent && find . -mindepth 1 -delete && '
-                                      'tar -xzf - --no-same-owner', source)
+        from cognitrix.computer.sandbox.snapshots import EMPTY_HOME
+        code, err = self.exec_in(box, f'cd /home/agent && {EMPTY_HOME} && tar -xzf - --no-same-owner', source)
         if code != 0:
             raise DriverError(f"Couldn't restore the snapshot: {err.strip()[-300:]}")
         machine = self._find(user_id)
@@ -518,6 +614,15 @@ class FlyManager(SandboxManager):
         if self._proxy_where is None:
             bind = os.environ.get('COGNITRIX_SANDBOX_PROXY_BIND', '').strip() or '::'
             host = os.environ.get('COGNITRIX_SANDBOX_PROXY_HOST', '').strip()
+            from cognitrix.tailscale import computers
+            if not host and computers.dial_over_tailnet():
+                # Not on Fly: the computers reach this engine at its tailnet address.
+                try:
+                    own_bind, host = computers.proxy_addresses()
+                except computers.ComputersError as exc:
+                    raise Unsupported(str(exc)) from None
+                if not os.environ.get('COGNITRIX_SANDBOX_PROXY_BIND', '').strip():
+                    bind = own_bind
             if not host:
                 private = os.environ.get('FLY_PRIVATE_IP', '').strip()
                 app = os.environ.get('FLY_APP_NAME', '').strip()
@@ -585,10 +690,17 @@ class FlyManager(SandboxManager):
             return engine_idle
 
     def _activity(self, machine: dict) -> dict | None:
-        host = machine.get('private_ip') or f"{machine['id']}.vm.{self.api.app}.internal"
+        from cognitrix.tailscale import computers
+
+        host, port = machine.get('private_ip') or f"{machine['id']}.vm.{self.api.app}.internal", SERVICE_PORT
+        if computers.dial_over_tailnet():
+            try:
+                host, port, _ = computers.reach(str(_meta(machine).get(META_USER) or ''))
+            except computers.ComputersError:
+                return None
         address = f'[{host}]' if ':' in host else host
         try:
-            resp = httpx.get(f'http://{address}:{SERVICE_PORT}/activity', timeout=5,
+            resp = httpx.get(f'http://{address}:{port}/activity', timeout=5,
                              headers={'Authorization': f'Bearer {_token_of(machine)}'})
             out = resp.json() if resp.status_code == 200 else None
         except (httpx.HTTPError, ValueError):

@@ -10,11 +10,56 @@
 # supervisor clears them from everything it starts
 # (cognitrix/computer/sandbox/users.py). Started as 'agent' (an older engine),
 # it goes straight on and every agent shares that user, as before.
+#
+# A computer on Fly that joins its owner's tailnet (COGNITRIX_TAILNET=1, set by
+# the engine: cognitrix/tailscale/computers.py) starts Tailscale first, as
+# root. Its identity stays in a root-only folder on the volume, so a stop and
+# a wake keep the same name and address. The join key works once; it is used
+# from a root-only file and dropped from the environment before anything of
+# the agents' runs.
 set -e
+
+start_tailscale() {
+    state=/home/agent/.cognitrix-tailscale
+    sock=/run/tailscale/tailscaled.sock
+    mkdir -p "$state" /run/tailscale
+    chown root:root "$state"
+    chmod 700 "$state"
+    tun=
+    [ -c /dev/net/tun ] || tun=--tun=userspace-networking
+    # shellcheck disable=SC2086
+    env -u COGNITRIX_TAILNET_AUTHKEY tailscaled --statedir="$state" --socket="$sock" $tun \
+        >/var/log/tailscaled.log 2>&1 &
+    i=0
+    while [ ! -S "$sock" ] && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
+    # Signed in from an earlier start: nothing more to do.
+    i=0
+    backend=
+    while [ "$i" -lt 25 ]; do
+        backend=$(tailscale --socket="$sock" status --json 2>/dev/null \
+            | sed -n 's/.*"BackendState": *"\([A-Za-z]*\)".*/\1/p' | head -n 1)
+        case "$backend" in Running|NeedsLogin|NeedsMachineAuth) break ;; esac
+        sleep 0.2
+        i=$((i + 1))
+    done
+    if [ "$backend" != "Running" ] && [ -n "${COGNITRIX_TAILNET_AUTHKEY:-}" ]; then
+        (umask 077 && printf '%s' "$COGNITRIX_TAILNET_AUTHKEY" > "$state/join-key")
+        tailscale --socket="$sock" up --auth-key="file:$state/join-key" \
+            --hostname="${COGNITRIX_TAILNET_NAME:-cognitrix-sandbox}" --accept-dns=false --accept-routes=false \
+            --timeout=30s >>/var/log/tailscaled.log 2>&1 \
+            || echo "cognitrix-sandbox: could not join the tailnet (see /var/log/tailscaled.log)" >&2
+        rm -f "$state/join-key"
+    fi
+}
+
 if [ "$(id -u)" = "0" ]; then
     if [ "$(stat -c %U /home/agent)" != "agent" ]; then
         chown agent:agent /home/agent
     fi
+    if [ "${COGNITRIX_TAILNET:-}" = "1" ] && command -v tailscaled >/dev/null 2>&1; then
+        start_tailscale || echo "cognitrix-sandbox: Tailscale did not start" >&2
+    fi
+    unset COGNITRIX_TAILNET_AUTHKEY
     CAPS=+chown,+fowner,+setgid,+setuid
     if [ "${COGNITRIX_SANDBOX_AGENT_USERS:-1}" = "0" ]; then
         CAPS=-all

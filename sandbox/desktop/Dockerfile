@@ -39,10 +39,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
         python3-venv python3-pip python3-dev sqlite3 git \
         fonts-dejavu-core fonts-liberation xdg-utils tini procps \
         xterm build-essential pkg-config ripgrep jq less zip unzip file openssh-client \
+        iptables \
         nodejs \
     && test "$(dpkg-query -W -f='${Version}' nodejs | cut -d. -f1)" -ge 22 \
     && ! dpkg -s libnode108 >/dev/null 2>&1 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Tailscale, for a computer on Fly that joins its owner's tailnet (Settings >
+# Tailscale; cognitrix/tailscale/computers.py). Started by the root start
+# script only when the engine asks for it; never in local Docker. iptables
+# above is what it sets its own network rules with.
+COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscaled /usr/local/bin/tailscaled
+COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscale /usr/local/bin/tailscale
 
 # The CLI's dependency list (see install.sh), worked out in a throwaway stage:
 # only the list is copied into the image, so its install layer below is
