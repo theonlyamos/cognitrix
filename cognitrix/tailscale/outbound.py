@@ -83,9 +83,9 @@ def _pump(a: socket.socket, b: socket.socket) -> None:
     """Pass bytes both ways until either side closes."""
     try:
         while True:
-            ready, _, _ = select.select([a, b], [], [], 600)
+            ready, _, _ = select.select([a, b], [], [], 3600)
             if not ready:
-                return  # nothing either way for ten minutes
+                return  # nothing either way for an hour (a still screen someone watches is quiet for long)
             for src in ready:
                 data = src.recv(65536)
                 if not data:
