@@ -161,6 +161,7 @@ def describe(row: Any) -> dict[str, Any]:
         'kind': row.kind,
         'description': row.description or '',
         'allowed_hosts': list(row.allowed_hosts or []),
+        'use_in_browser': bool(getattr(row, 'use_in_browser', False)),
     }
 
 
@@ -278,14 +279,33 @@ class Resolver:
                 logger.debug('Could not stamp last_used_at for %s', name, exc_info=True)
 
 
+# A run this long at the start of a saved value counts as the value: output
+# that cut a value short (a control list shows 120 characters, a field kept
+# only part of what was typed) must not show its beginning either.
+PREFIX_REDACT_LENGTH = 12
+
+
 def redact(text: str, secrets_map: dict[str, str]) -> str:
-    """Replace every saved value in ``text`` with a short marker."""
+    """Replace every saved value in ``text`` with a short marker, and any cut
+    off start of one (``PREFIX_REDACT_LENGTH`` characters or more)."""
     if not text or not secrets_map:
         return text
     # Longest first, so a value that contains another is replaced whole.
     for value in sorted(secrets_map, key=len, reverse=True):
         if value in text:
             text = text.replace(value, f'[{secrets_map[value]} hidden]')
+    for value in sorted(secrets_map, key=len, reverse=True):
+        if len(value) <= PREFIX_REDACT_LENGTH:
+            continue
+        head = value[:PREFIX_REDACT_LENGTH]
+        start = text.find(head)
+        while start != -1:
+            end = start + PREFIX_REDACT_LENGTH
+            while end < len(text) and end - start < len(value) and text[end] == value[end - start]:
+                end += 1
+            marker = f'[{secrets_map[value]} hidden]'
+            text = text[:start] + marker + text[end:]
+            start = text.find(head, start + len(marker))
     return text
 
 

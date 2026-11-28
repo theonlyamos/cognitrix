@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import dataclasses
 import io
 import re
 import time
@@ -48,15 +49,14 @@ COMPUTER_NOTE = (
     'you made looks), show them one with show_screenshot.\n\n'
     'Work on your own and do as much of the task as you can before involving the person. When a site or app '
     'needs an email, username, password, API key or token, never ask the person to take over or to type it: '
-    'call list_credentials and type a saved one into the field with set_text (pass element) or type_in_window '
-    '(pass x and y), writing only {{secret:NAME.username}}, {{secret:NAME.password}} or {{secret:NAME}} as the '
-    'text. It is filled in only on '
-    "the sites it was saved for, and you never see it. If none fits, ask for it with ask_for_sign_in "
-    "(kind='basic' for a username and password, allowed_hosts=[the site, e.g. 'github.com']), then type it the "
-    'same way. Use ask_to_take_over only for a step you truly cannot do yourself: a CAPTCHA you cannot pass, a '
-    "code sent to the person's phone, a passkey or security key, or approving something in their bank or "
-    'authenticator app. Say exactly what they need to do, and carry on with the rest of the task once they '
-    'hand back.')
+    'call list_credentials and type a saved one into its field with set_text (pass element) or type_in_window '
+    '(pass x and y), one field per call, writing only {{secret:NAME.username}}, then {{secret:NAME.password}} '
+    "(or {{secret:NAME}}) as the text. It is filled in only on the exact sites it was saved for, and you aren't "
+    "shown it. If none fits, ask for it with ask_for_sign_in (kind='basic' for a username and password, "
+    "allowed_hosts=[the sign-in page's host as the address bar shows it]), then type it the same way. Use "
+    'ask_to_take_over only for a step you truly cannot do yourself: a CAPTCHA you cannot pass, a code sent to '
+    "the person's phone, a passkey or security key, or approving something in their bank or authenticator app. "
+    'Say exactly what they need to do, and carry on with the rest of the task once they hand back.')
 
 
 def computer_note() -> str:
@@ -123,7 +123,8 @@ def _viewer(parent: Any) -> Any:
 def _with_saved_sign_ins(driver, window_id: int, text: str, parent: Any, *, element: int | None = None,
                          point: tuple[float, float] | None = None):
     """``text`` with saved sign-ins filled in for this window, or a refusal
-    (cognitrix/computer/saved_sign_ins.py)."""
+    (cognitrix/computer/saved_sign_ins.py). A browser field that gets one is
+    remembered, so later looks hide what it shows."""
     from cognitrix.computer import saved_sign_ins
     from cognitrix.credentials import agent_allowed_credentials
     from cognitrix.tools.utils import current_execution_context
@@ -132,11 +133,95 @@ def _with_saved_sign_ins(driver, window_id: int, text: str, parent: Any, *, elem
         return text
     owner = current_execution_context().user_id
     try:
-        return saved_sign_ins.prepare(driver, window_id, text, owner=owner,
-                                      allowed=agent_allowed_credentials(parent), viewer=_viewer(parent),
-                                      element=element, point=point)
+        filled, target = saved_sign_ins.prepare(driver, window_id, text, owner=owner,
+                                                allowed=agent_allowed_credentials(parent), viewer=_viewer(parent),
+                                                element=element, point=point)
     except saved_sign_ins.SignInRefused as exc:
         return ToolOutcome.failure('sign_in', str(exc))
+    if target is not None:
+        _filled_fields(driver).setdefault(int(window_id), set()).add((target.role, target.name))
+    return filled
+
+
+# Typing results can read the field back (e.g. "the field reads '...'"):
+# after a saved sign-in, the agent gets this instead.
+_SIGN_IN_TYPED = ('{status}: Typed the saved sign-in. Its value stays hidden from you; look at the window to '
+                  'check it worked.')
+
+
+def _filled_fields(driver) -> dict[int, set[tuple[str, str]]]:
+    """Fields that got a saved sign-in, by window: (role, normalized name)."""
+    fields = getattr(driver, '_sign_in_fields', None)
+    if fields is None:
+        fields = {}
+        try:
+            driver._sign_in_fields = fields
+        except Exception:
+            pass
+    return fields
+
+
+def _secret_overlap(value: str, secrets: list[str]) -> bool:
+    """Whether a control's value shows a saved value, or a piece of one."""
+    from cognitrix.credentials import MIN_REDACT_LENGTH, PREFIX_REDACT_LENGTH
+
+    if not value:
+        return False
+    for secret in secrets:
+        if len(secret) < MIN_REDACT_LENGTH:
+            continue
+        if secret in value or (len(value) >= 8 and value in secret):
+            return True
+        if len(secret) > PREFIX_REDACT_LENGTH and secret[:PREFIX_REDACT_LENGTH] in value:
+            return True
+    return False
+
+
+def _hidden_controls(driver, window_id: int, elements, secrets: list[str]) -> set[int]:
+    """Controls whose value must not reach the model: fields a saved sign-in
+    was typed into, and any showing a saved value."""
+    from cognitrix.computer.saved_sign_ins import _norm
+
+    filled = _filled_fields(driver).get(int(window_id)) or set()
+    hidden = set()
+    for index, el in enumerate(elements or []):
+        key = (str(getattr(el, 'role', '')).lower(), _norm(getattr(el, 'name', '')))
+        if key in filled or _secret_overlap(str(getattr(el, 'value', '') or ''), secrets):
+            hidden.add(index)
+    return hidden
+
+
+def _mask_image(image, snap, elements, hidden: set[int]):
+    """Cover the hidden controls in a window screenshot."""
+    if image is None or not hidden:
+        return image
+    from PIL import ImageDraw
+
+    image = image.convert('RGB')
+    draw = ImageDraw.Draw(image)
+    scale = snap.scale or 1.0
+    for index in hidden:
+        r = elements[index].rect
+        box = ((r[0] - snap.origin[0]) / scale, (r[1] - snap.origin[1]) / scale,
+               (r[2] - snap.origin[0]) / scale, (r[3] - snap.origin[1]) / scale)
+        if box[2] > box[0] and box[3] > box[1]:
+            draw.rectangle(box, fill=(128, 128, 128))
+    return image
+
+
+def _saved_values() -> list[str]:
+    """The person's saved values, to hide them (from a tool's worker thread)."""
+    from cognitrix.credentials import redaction_map_for
+    from cognitrix.tools.tool import run_on_calling_loop
+    from cognitrix.tools.utils import current_execution_context
+
+    owner = current_execution_context().user_id
+    if not owner:
+        return []
+    try:
+        return list(run_on_calling_loop(redaction_map_for(str(owner))) or {})
+    except Exception:
+        return []
 
 
 def _image_point(driver, window_id: int, x: float, y: float) -> tuple[float, float]:
@@ -197,11 +282,11 @@ def open_app(target: str, computer: str = AGENT):
 
 
 SIGN_IN_HINT = (
-    'This window asks for a sign-in. Do it yourself: call list_credentials and type the saved one with '
-    '{{secret:NAME.username}} and {{secret:NAME.password}} (set_text with the field\'s element, or type_in_window '
-    'with its x and y; nothing else in the text). If none fits, ask for '
-    "it with ask_for_sign_in (kind='basic', allowed_hosts=[this site]). Don't ask the person to take over for "
-    'this.')
+    'This window asks for a sign-in. Do it yourself: call list_credentials and type the saved one, one field '
+    'per call: {{secret:NAME.username}} into the username or email field, then {{secret:NAME.password}} into the '
+    "password field (set_text with the field's element, or type_in_window with its x and y; nothing else in the "
+    "text). If none fits, ask for it with ask_for_sign_in (kind='basic', allowed_hosts=[this page's host]). "
+    "Don't ask the person to take over for this.")
 
 
 def _asks_for_password(elements) -> bool:
@@ -227,6 +312,8 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
     """
     def go(driver):
         image, snap, shown, note = driver.look(window_id, find, max_elements, viewer=_viewer(parent))
+        hidden = _hidden_controls(driver, window_id, snap.elements, _saved_values())
+        image = _mask_image(image, snap, snap.elements, hidden)
         win = driver.backend.window(int(window_id))
         title = win.title if win else ''
         lines = [f'Window {window_id} {title!r}, snapshot {snap.id}.']
@@ -254,6 +341,8 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
                 if coords_normalized.get():
                     px, py = px * 1000 / (snap.size[0] / snap.scale), py * 1000 / (snap.size[1] / snap.scale)
                 at = f' at ({round(px)},{round(py)})'
+            if index in hidden:
+                el = dataclasses.replace(el, value='[saved sign-in hidden]' if el.value is not None else None)
             lines.append(f'[{index}] {el.describe()}{at}')
         if total and not shown:
             lines.append('(none match; try without find)')
@@ -297,6 +386,13 @@ async def show_screenshot(window_id: int, caption: str = '', computer: str = AGE
         image = Image.open(io.BytesIO(png))
     else:
         actor = _actor(parent)
+        from cognitrix.credentials import redaction_map_for
+
+        owner = current_execution_context().user_id
+        try:
+            secrets = list(await redaction_map_for(str(owner))) if owner else []
+        except Exception:
+            secrets = []
 
         def grab():
             token = current_actor.set(actor)
@@ -306,7 +402,11 @@ async def show_screenshot(window_id: int, caption: str = '', computer: str = AGE
                 # look stays its latest: if this one replaced the window's
                 # controls, the agent's next action is refused as out of date
                 # (look again) instead of using an old number on a new control.
-                image = driver.look(window_id, None, 1, viewer=('show_screenshot', _viewer(parent)))[0]
+                image, snap, _shown, _note = driver.look(window_id, None, 1,
+                                                          viewer=('show_screenshot', _viewer(parent)))
+                if snap is not None:
+                    image = _mask_image(image, snap, snap.elements,
+                                        _hidden_controls(driver, window_id, snap.elements, secrets))
                 win = driver.backend.window(int(window_id))
                 return image, (win.title if win else '')
             finally:
@@ -371,7 +471,10 @@ def set_text(window_id: int, text: str, element: int | None = None, computer: st
         filled = _with_saved_sign_ins(driver, window_id, text, parent, element=element)
         if isinstance(filled, ToolOutcome):
             return filled
-        return _done(driver.set_text(window_id, filled, element, viewer=_viewer(parent)))
+        result = driver.set_text(window_id, filled, element, viewer=_viewer(parent))
+        if filled != text:
+            return _SIGN_IN_TYPED.format(status=result.status)
+        return _done(result)
     return _run(go, parent, computer)
 
 
@@ -424,7 +527,10 @@ def type_in_window(window_id: int, text: str, x: int | None = None, y: int | Non
                                       point=(ix, iy) if ix is not None else None)
         if isinstance(filled, ToolOutcome):
             return filled
-        return _done(driver.type_text(window_id, filled, ix, iy, viewer=_viewer(parent), use_screen=use_screen))
+        result = driver.type_text(window_id, filled, ix, iy, viewer=_viewer(parent), use_screen=use_screen)
+        if filled != text:
+            return _SIGN_IN_TYPED.format(status=result.status)
+        return _done(result)
     return _run(go, parent, computer)
 
 
@@ -527,8 +633,8 @@ def takeover_precheck(args: dict[str, Any], session_id: Any) -> str | None:
         return None  # it tried already (or there's no chat to remember it by): the person's call
     _TAKEOVER_SENT_BACK[key] = now
     return ('The person was not asked. Sign in yourself instead: call list_credentials, and if a saved sign-in '
-            'fits this site, type it with type_in_window or set_text using {{secret:NAME.username}} and '
-            "{{secret:NAME.password}} (or {{secret:NAME}} for a key). If none fits, call ask_for_sign_in "
+            'fits this site, type it into each field with set_text or type_in_window, one field per call: '
+            "{{secret:NAME.username}}, then {{secret:NAME.password}} (or {{secret:NAME}} for a key). If none fits, call ask_for_sign_in "
             "(kind='basic' for a username and password, allowed_hosts=[the site's host]) so the person saves it "
             'without taking over, then type it. Only if the site then needs something only the person can do (a '
             "CAPTCHA, a code sent to their phone, a passkey), call ask_to_take_over again and say exactly that.")

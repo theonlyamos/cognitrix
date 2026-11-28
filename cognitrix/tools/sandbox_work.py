@@ -514,26 +514,42 @@ def _thumbnail(shot: dict) -> tuple[str, str] | None:
 
 async def _let_agent_use(agent: Any, name: str) -> None:
     """An agent limited to some saved sign-ins (agent page, Connections) may
-    use the one the person just shared with it through Ask For Sign-in."""
+    use the one the person just shared with it through Ask For Sign-in.
+
+    The grant is merged into the agent's list as stored now, not the chat's
+    copy, so a sign-in the person took away (or the switch to "all sign-ins")
+    since the chat loaded the agent stays as they left it."""
+    import logging
+
     from cognitrix.credentials import agent_allowed_credentials
 
-    allowed = agent_allowed_credentials(agent)
-    if allowed is None or name in {str(n).upper() for n in allowed}:
+    def merged(allowed: list[str] | None) -> list[str] | None:
+        if allowed is None or name in {str(n).upper() for n in allowed}:
+            return allowed
+        return [*allowed, name]
+
+    current = agent_allowed_credentials(agent)
+    if current is None:
         return
-    updated = [*allowed, name]
+    agent_id = getattr(agent, 'id', None)
+    updated = merged(current)
+    try:
+        if agent_id:
+            from cognitrix.models import Agent
+            stored = await Agent.find_one({'id': str(agent_id)})
+            if stored is not None:
+                fresh = agent_allowed_credentials(stored)
+                updated = merged(fresh)
+                if updated is not None and updated != fresh:
+                    await Agent.update_one({'id': str(agent_id)}, {'credentials': updated})
+    except Exception:
+        # The chat can still use it this time.
+        logging.getLogger('cognitrix.log').info("Could not add %s to the agent's sign-ins", name, exc_info=True)
+        updated = merged(current)
     try:
         agent.credentials = updated
     except Exception:
         pass
-    agent_id = getattr(agent, 'id', None)
-    if not agent_id:
-        return
-    try:
-        from cognitrix.models import Agent
-        await Agent.update_one({'id': str(agent_id)}, {'credentials': updated})
-    except Exception:
-        import logging
-        logging.getLogger('cognitrix.log').info('Could not add %s to the agent\'s sign-ins', name, exc_info=True)
 
 
 # Hosts for a sign-in saved only for the sandbox (see sandbox_work).
@@ -543,24 +559,27 @@ SANDBOX_ONLY_HOST = sw.SANDBOX_ONLY_HOST
 @tool(category='system', retryable=False, max_attempts=1, supported_interfaces=['web'],
       occupies_execution_slot=False, approval_mode='assigned_only')
 async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_hosts: list[str] | None = None,
-                          *, parent: Any | None = None):
+                          for_browser: bool | None = None, *, parent: Any | None = None):
     """Ask the person for a token, API key or username and password you need (to sign in to a website in
     the browser on your computer, to run tests against a real service in the sandbox, or to call an API). They
     type it into a masked field in the chat and it is saved to their Saved sign-ins under `name`; you never see
     the value, only that it was saved. Use this instead of asking them to take over your computer to sign in.
 
     Use List Credentials first: if a sign-in you can use already exists, use it instead of asking.
-    Then type it on the site with type_in_window or set_text ({{secret:NAME.username}},
-    {{secret:NAME.password}}, {{secret:NAME}}), or pass the name in Bash or Run Tests `credentials` (sandbox)
-    or Http Request `credential`.
+    Then type it on the site with set_text or type_in_window, one field per call ({{secret:NAME.username}},
+    then {{secret:NAME.password}}, or {{secret:NAME}}), or pass the name in Bash or Run Tests `credentials`
+    (sandbox) or Http Request `credential`.
 
     Args:
         name (str): A name like GITHUB_TOKEN or STAGING_DB (letters, numbers, _).
         reason (str): One sentence on what it's for, shown to the person.
         kind (str, optional): 'token' (one secret value, default) or 'basic' (username and password).
-        allowed_hosts (list[str], optional): Sites it may be used on: the website you sign in to in your
-            browser (like github.com, which also covers its subdomains there) and hosts Http Request may send it
-            to (like api.github.com). Leave empty when it's only for commands in the sandbox.
+        allowed_hosts (list[str], optional): The exact hosts it may be used on: the sign-in page's host as the
+            browser's address bar shows it (like github.com, or accounts.google.com; add '*.google.com' too when
+            the site signs in on several subdomains) and hosts Http Request may send it to (like
+            api.github.com). Leave empty when it's only for commands in the sandbox.
+        for_browser (bool, optional): Whether you'll type it into a sign-in page in your browser. Default: yes
+            for a username and password with sites, no otherwise. The person sees this on the card.
 
     Returns:
         str: Whether it was saved.
@@ -587,13 +606,18 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
     owner = current_execution_context().user_id
     existing = await find_row(str(owner) if owner else None, clean)
     what = 'a username and password' if kind == 'basic' else 'a token or key'
-    where = ('for commands in the sandbox' if hosts == [SANDBOX_ONLY_HOST]
+    sites = hosts != [SANDBOX_ONLY_HOST]
+    browser = bool(sites and (kind == 'basic' if for_browser is None else for_browser))
+    where = ('for commands in the sandbox' if not sites
              else 'for ' + ', '.join(hosts) + ' and commands in the sandbox')
+    typed_note = (f" The agent may type it into the sign-in page on {', '.join(hosts)} in the browser on its "
+                  "computer." if browser else '')
     try:
         spec = QuestionSpec.from_tool_args(
             prompt=f'Share {what}: {clean}',
-            details=(f"{str(reason or '').strip()[:500]}\n\nIt's saved to your Saved sign-ins, {where}. "
-                     "The agent never sees it." + (' This replaces the one you saved before.' if existing else '')),
+            details=(f"{str(reason or '').strip()[:500]}\n\nIt's saved to your Saved sign-ins, {where}."
+                     f"{typed_note} The agent isn't shown it." +
+                     (' This replaces the one you saved before.' if existing else '')),
             options=[{'id': 'saved', 'label': 'Save'}],
         )
     except QuestionValidationError as exc:
@@ -601,7 +625,7 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
     import dataclasses
     spec = dataclasses.replace(spec, secret={'name': clean, 'kind': kind, 'hosts': hosts,
                                              'description': str(reason or '').strip()[:500],
-                                             'replaces': bool(existing)})
+                                             'replaces': bool(existing), 'browser': browser})
     try:
         answer = await ask_question(spec)
     except QuestionChannelUnavailable:
@@ -620,12 +644,13 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
     else:
         use = clean
     if kind == 'basic':
-        typed = f'{{{{secret:{clean}.username}}}} and {{{{secret:{clean}.password}}}}'
+        typed = (f'{{{{secret:{clean}.username}}}} into the username or email field, then '
+                 f'{{{{secret:{clean}.password}}}} into the password field')
     else:
-        typed = f'{{{{secret:{clean}}}}}'
-    browser = ('' if hosts == [SANDBOX_ONLY_HOST] else
-               f" To sign in on {', '.join(hosts)} in your browser, type {typed} with type_in_window or set_text.")
+        typed = f'{{{{secret:{clean}}}}} into its field'
+    in_browser = (f" To sign in on {', '.join(hosts)} in your browser, type {typed} with set_text or "
+                  "type_in_window, one field per call." if browser else '')
     return ToolOutcome.success(
-        f"Saved {clean}.{browser} In the sandbox pass credentials=['{clean}'] to Bash or Run Tests and read it "
+        f"Saved {clean}.{in_browser} In the sandbox pass credentials=['{clean}'] to Bash or Run Tests and read it "
         f"from the variable{'s' if kind == 'basic' else ''} {use}" +
         ('' if hosts == [SANDBOX_ONLY_HOST] else f"; with Http Request use credential='{clean}'") + '.')

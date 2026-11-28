@@ -15,6 +15,8 @@ export interface Credential {
   hint: string;
   username: string;
   last_used_at: string | null;
+  /** Agents may type it into sign-in pages on its hosts in their own browser. */
+  use_in_browser?: boolean;
   /** What an agent writes to use it, e.g. {{secret:GITHUB_TOKEN}}. */
   placeholder: string;
 }
@@ -28,6 +30,7 @@ export interface CredentialInput {
   value?: string;
   username?: string;
   password?: string;
+  use_in_browser?: boolean;
 }
 
 export type CredentialUpdate = Partial<Omit<CredentialInput, 'name' | 'kind'>>;
