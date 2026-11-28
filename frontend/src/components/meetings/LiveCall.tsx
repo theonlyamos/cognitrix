@@ -110,7 +110,8 @@ export function LiveCall({ meeting, agents, onBack, onChanged, onReload }: {
     try {
       const r = await api.post(`/meetings/${meeting.id}/pause`, { paused: !meeting.paused });
       const status = (r.data as { status?: string } | undefined)?.status;
-      setNotice(status === 'pending' ? tr('ui.meetingExtras.notConfirmedYetBotname', { botName: bot })
+      setNotice(status === 'pending'
+        ? (meeting.paused ? tr('ui.meetingExtras.resumeNotConfirmedYet', { botName: bot }) : tr('ui.meetingExtras.notConfirmedYetBotname', { botName: bot }))
         : meeting.paused ? tr('ui.meetingExtras.backOnTheRecord') : tr('ui.meetingExtras.pausedNothingIsKeptUntil'));
       window.setTimeout(() => setNotice(''), 6000);
       void onReload();

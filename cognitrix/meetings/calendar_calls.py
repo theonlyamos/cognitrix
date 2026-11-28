@@ -295,7 +295,7 @@ async def save_settings(user_id: str, **fields: Any) -> CalendarCallSettings:
     if fields.get('remind_minutes') is not None:
         changes['remind_minutes'] = CalendarCallSettings._minutes(fields['remind_minutes'])
     if changes:
-        await CalendarCallSettings.update_one({'id': row.id}, changes)
+        await CalendarCallSettings.update_many({'id': row.id}, changes)
     return await settings_for(user_id)
 
 
@@ -341,7 +341,7 @@ async def sync(user_id: str, settings: CalendarCallSettings, events: list[dict[s
         if 'starts_at' in changes and row.status == SUGGESTED:
             changes['alerted'] = False  # moved: remind again
         if changes:
-            await CalendarCall.update_one({'id': row.id}, changes)
+            await CalendarCall.update_many({'id': row.id}, changes)
     horizon = (now + timedelta(hours=LOOKAHEAD_HOURS)).strftime(FMT)
     stamp, old = now.strftime(FMT), (now - timedelta(days=KEEP_DAYS)).strftime(FMT)
     for row in list(stored.values()):
@@ -350,7 +350,7 @@ async def sync(user_id: str, settings: CalendarCallSettings, events: list[dict[s
             stored.pop(row.event_id, None)
         elif row.event_id not in seen and row.status in OPEN and stamp < row.starts_at <= horizon:
             # Deleted, declined or moved out of the next day.
-            await CalendarCall.update_one({'id': row.id}, {'status': CANCELLED})
+            await CalendarCall.update_many({'id': row.id}, {'status': CANCELLED})
     return await upcoming(user_id, now)
 
 
@@ -371,7 +371,7 @@ async def check(user_id: str, now: datetime | None = None) -> list[CalendarCall]
         raise CalendarError("Couldn't reach Google to renew the Calendar sign-in.")
     events = await upcoming_events(token, now)
     calls = await sync(user_id, settings, events, now)
-    await CalendarCallSettings.update_one({'id': settings.id}, {'checked_at': now.strftime(FMT), 'error': ''})
+    await CalendarCallSettings.update_many({'id': settings.id}, {'checked_at': now.strftime(FMT), 'error': ''})
     return calls
 
 
@@ -403,11 +403,11 @@ async def poll(now: datetime | None = None) -> int:
                 continue
             # Claim the check, so two processes never both read it.
             claim: dict[str, Any] = {'id': settings.id, 'checked_at': settings.checked_at}
-            if await CalendarCallSettings.update_one(claim, {'checked_at': now.strftime(FMT)}) != 1:
+            if await CalendarCallSettings.update_many(claim, {'checked_at': now.strftime(FMT)}) != 1:
                 continue
             await check(owner, now)
         except CalendarError as exc:
-            await CalendarCallSettings.update_one({'user_id': owner}, {'error': str(exc)[:300]})
+            await CalendarCallSettings.update_many({'user_id': owner}, {'error': str(exc)[:300]})
         except Exception:
             logger.exception('Calendar check failed for %s', owner)
     return await act(now)
@@ -438,7 +438,7 @@ async def _join(call: CalendarCall, settings: CalendarCallSettings) -> bool:
     from cognitrix.tasks.automation import create_notification
 
     # Claim it, so a tap and the scheduler can't both send an agent.
-    if await CalendarCall.update_one({'id': call.id, 'status': APPROVED, 'meeting_id': ''},
+    if await CalendarCall.update_many({'id': call.id, 'status': APPROVED, 'meeting_id': ''},
                                      {'status': JOINED}) != 1:
         return False
     try:
@@ -449,15 +449,15 @@ async def _join(call: CalendarCall, settings: CalendarCallSettings) -> bool:
         row = await start_live(call.user_id, url=call.url, agent_id=settings.agent_id, title=call.title,
                                context=background, series_id=call.series_id)
     except meeting_notes.MeetingError as exc:
-        await CalendarCall.update_one({'id': call.id}, {'status': FAILED, 'error': str(exc)[:300]})
+        await CalendarCall.update_many({'id': call.id}, {'status': FAILED, 'error': str(exc)[:300]})
         await create_notification(call.user_id, f"Couldn't send an agent to {call.title}", str(exc)[:300],
                                   link=f'/meetings?call={call.id}')
         return False
     except Exception:
         logger.exception('Joining calendar call %s failed', call.id)
-        await CalendarCall.update_one({'id': call.id}, {'status': FAILED, 'error': 'Something went wrong.'})
+        await CalendarCall.update_many({'id': call.id}, {'status': FAILED, 'error': 'Something went wrong.'})
         return False
-    await CalendarCall.update_one({'id': call.id}, {'meeting_id': str(row.id), 'error': ''})
+    await CalendarCall.update_many({'id': call.id}, {'meeting_id': str(row.id), 'error': ''})
     return True
 
 
@@ -478,14 +478,14 @@ async def act(now: datetime | None = None, user_id: str | None = None) -> int:
         try:
             if call.status == SUGGESTED:
                 if until < -MISSED_AFTER_S:
-                    await CalendarCall.update_one({'id': call.id, 'status': SUGGESTED}, {'status': MISSED})
+                    await CalendarCall.update_many({'id': call.id, 'status': SUGGESTED}, {'status': MISSED})
                 elif not call.alerted and until <= settings.remind_minutes * 60 and settings.enabled:
-                    if await CalendarCall.update_one({'id': call.id, 'alerted': call.alerted},
+                    if await CalendarCall.update_many({'id': call.id, 'alerted': call.alerted},
                                                      {'alerted': True}) == 1:
                         await _alert(call)
             elif call.status == APPROVED and not call.meeting_id:
                 if ends is not None and now >= ends:
-                    await CalendarCall.update_one({'id': call.id, 'status': APPROVED}, {'status': MISSED})
+                    await CalendarCall.update_many({'id': call.id, 'status': APPROVED}, {'status': MISSED})
                 elif until <= JOIN_EARLY_S:
                     joined += 1 if await _join(call, settings) else 0
         except Exception:
@@ -515,7 +515,7 @@ async def answer(user_id: str, call_id: str, action: str, now: datetime | None =
             always.append(series)
         elif action == 'never':
             never.append(series)
-        await CalendarCallSettings.update_one({'id': settings.id}, {
+        await CalendarCallSettings.update_many({'id': settings.id}, {
             'always_series': json.dumps(always[-500:]), 'never_series': json.dumps(never[-500:])})
     status = {'send': APPROVED, 'always': APPROVED, 'skip': SKIPPED, 'never': SKIPPED, 'ask': SUGGESTED}[action]
     by = 'you' if action in ('send', 'skip') else ('series' if series else 'you')
@@ -524,7 +524,7 @@ async def answer(user_id: str, call_id: str, action: str, now: datetime | None =
         targets += [r for r in await CalendarCall.find({'user_id': str(user_id), 'series_id': series}) or []
                     if str(r.id) != str(call.id) and r.status in OPEN]
     for row in targets:
-        await CalendarCall.update_one({'id': row.id}, {'status': status, 'decided_by': by, 'error': ''})
+        await CalendarCall.update_many({'id': row.id}, {'status': status, 'decided_by': by, 'error': ''})
     if status == APPROVED:
         await act(now, user_id=str(user_id))
     return await CalendarCall.get(call_id)

@@ -169,27 +169,41 @@ async def leave_meeting(meeting_id: str | None = None, *, parent: Any | None = N
 
 
 @tool(category=MEETING_TOOL_CATEGORY, supported_interfaces=['web', 'ws', 'task'])
-async def steer_meeting(text: str, kind: str = 'note', meeting_id: str | None = None, *,
+async def steer_meeting(text: str = '', kind: str = 'note', meeting_id: str | None = None, *,
                         parent: Any | None = None):
-    """Pass private guidance to the agent in a live call; nobody in the call sees it.
+    """Pass private guidance to the agent in a live call; nobody in the call sees it. Also takes the
+    notes off the record and back on: while paused nothing said in the call is sent to speech-to-text,
+    so only the person (the Meetings page, or asking you) can resume them.
     Args:
-        text (str): The guidance, or what to bring up.
+        text (str): The guidance, or what to bring up (not needed to pause or resume).
         kind (str, optional): "note" (guidance the agent uses in its answers, default), "raise" (the agent
-            brings it up at the next pause in the conversation) or "answer" (the person's answer to a question
-            the agent in the call asked them; it is passed on in the call).
+            brings it up at the next pause in the conversation), "answer" (the person's answer to a question
+            the agent in the call asked them; it is passed on in the call), "pause" or "resume" (the notes).
         meeting_id (str, optional): The meeting; your current call by default.
     """
+    import asyncio
+
     from cognitrix.meetings import live
 
     user_id, agent_id = _who(parent)
     text = (text or '').strip()
-    if not text:
+    if kind not in ('note', 'raise', 'answer', 'pause', 'resume'):
+        return ToolOutcome.failure('kind', 'Kind is "note", "raise", "answer", "pause" or "resume".')
+    if not text and kind not in ('pause', 'resume'):
         return ToolOutcome.failure('empty', 'Say what to pass on.')
-    if kind not in ('note', 'raise', 'answer'):
-        return ToolOutcome.failure('kind', 'Kind is "note", "raise" or "answer".')
     row = await _current(user_id, agent_id, meeting_id)
-    if row is None or not live.steer(str(row.id), kind, text):
+    done = live.steer(str(row.id), kind, text) if row is not None else None
+    if done is None:
         return ToolOutcome.failure('not_in_call', 'No agent is in that call right now.')
+    if kind in ('pause', 'resume'):
+        try:
+            saved = await asyncio.wait_for(asyncio.shield(done), 15)
+        except TimeoutError:
+            return f'Asked to {kind} the notes; the agent in the call has not confirmed it yet.'
+        if not saved:
+            return ToolOutcome.failure('not_saved', f"The {kind} couldn't be saved. Try again.")
+        return 'The notes are paused: nothing said in the call is heard or kept.' if kind == 'pause' else \
+            'The notes are back on.'
     if kind == 'raise':
         return 'Passed on: the agent brings it up at the next pause.'
     if kind == 'answer':
