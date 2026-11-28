@@ -12,6 +12,7 @@ headers Tailscale Serve adds, and the PC's ``tailscale status`` is a stand-in.
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -231,6 +232,41 @@ async def test_a_pc_asks_and_its_owner_approves_on_the_web(world, tmp_path):
     # Used once.
     again = await world.http.post(path + '/pair', json={**mine, 'folders': [str(tmp_path)], 'powers': ['files']})
     assert again.status_code == 404 and 'already used' in again.json()['detail']['message']
+
+
+async def test_an_approval_ends_when_its_approver_is_signed_out(world, tmp_path):
+    from cognitrix import signins
+    from cognitrix.models import User
+    from cognitrix.models.paired_device import PairedDevice
+
+    async def approved_request():
+        ask = (await world.http.post('/pair-requests', json={'name': 'Work laptop'})).json()
+        world.here.sid = await signins.start(world.kofi, method='password', name='Chrome on Windows')
+        assert (await world.http.post(f"/pair-requests/{ask['request_id']}/approve")).status_code == 200
+        return f"/pair-requests/{ask['request_id']}", {'secret': ask['secret'], 'folders': [str(tmp_path)], 'powers': ['files']}
+
+    # The approving device is signed out before the PC finishes.
+    path, body = await approved_request()
+    assert await signins.end(str(world.kofi.id), world.here.sid)
+    gone = await world.http.post(path + '/pair', json=body)
+    assert gone.status_code == 404 and 'signed out since' in gone.json()['detail']['message']
+    assert (await world.http.post(path + '/status', json=body)).json()['status'] == 'denied'
+
+    # Signed out everywhere (what a new password does too).
+    path, body = await approved_request()
+    await signins.end_all(str(world.kofi.id))
+    assert (await world.http.post(path + '/pair', json=body)).status_code == 404
+
+    # Every session ended some other way: the account's cut-off alone is enough.
+    path, body = await approved_request()
+    await User.update_one({'id': world.kofi.id}, {'tokens_valid_after': int(time.time()) + 5})
+    assert (await world.http.post(path + '/pair', json=body)).status_code == 404
+    assert not await PairedDevice.find({'user_id': str(world.kofi.id)})
+
+    # A new yes after that works.
+    await User.update_one({'id': world.kofi.id}, {'tokens_valid_after': int(time.time()) - 5})
+    path, body = await approved_request()
+    assert (await world.http.post(path + '/pair', json=body)).status_code == 200
 
 
 async def test_declined_expired_and_repeated_requests(world):

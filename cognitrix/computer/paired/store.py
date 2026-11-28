@@ -72,6 +72,7 @@ class PairRequest:
     expires: float
     status: str = 'pending'   # pending | approved | denied | used
     approved_by_sid: str = ''
+    approved_at: float = 0.0
 
 
 _codes: dict[str, PairCode] = {}
@@ -299,7 +300,30 @@ async def decide_request(user_id: str, request_id: str, approve: bool, sid: str 
             raise PairingError('gone', 'That request is no longer waiting. Ask again from the PC.', 404)
         item.status = 'approved' if approve else 'denied'
         item.approved_by_sid = sid if approve else ''
+        item.approved_at = time.time() if approve else 0.0
     return _request_view(item)
+
+
+async def _still_approved(item: PairRequest) -> bool:
+    """A yes only counts while the device that gave it is still signed in, and only if it was
+    given after the account's last sign-out everywhere (a new password signs out everywhere too)."""
+    from cognitrix.models import User
+    from cognitrix.models.sign_in import SignIn
+
+    user = await User.find_one({'id': item.user_id})
+    if user is None or getattr(user, 'disabled', None):
+        return False
+    try:
+        cutoff = int(getattr(user, 'tokens_valid_after', None) or 0)
+    except (TypeError, ValueError):
+        return False
+    if cutoff and int(item.approved_at) <= cutoff:
+        return False
+    if item.approved_by_sid:
+        row = await SignIn.find_one({'sid': item.approved_by_sid})
+        if row is None or row.ended_at or str(row.user_id) != str(item.user_id):
+            return False
+    return True
 
 
 def _own_request(request_id: str, secret: str, login: str, address: str) -> PairRequest:
@@ -333,6 +357,11 @@ async def pair_approved(request_id: str, secret: str, login: str, address: str, 
     item = _own_request(request_id, secret, login, address)
     if item.expires < time.time():
         raise PairingError('expired', 'That request ran out of time. Ask again.', 410)
+    if item.status == 'approved' and not await _still_approved(item):
+        with _lock:
+            if item.status == 'approved':
+                item.status = 'denied'
+        raise PairingError('gone', 'The device that approved this request has been signed out since. Ask again.', 404)
     with _lock:
         if item.status == 'used':
             raise PairingError('gone', 'That request was already used to pair a PC. Ask again.', 404)

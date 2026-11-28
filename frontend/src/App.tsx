@@ -75,8 +75,9 @@ function SignInFirst() {
   return <Navigate to="/" replace />;
 }
 
-/** An app's link: signed in, the app; signed out, the way in for someone on the owner's
- *  tailnet when the app was shared with them, and the sign-in page for everyone else. */
+/** An app's link: signed in, the app (OpenApp tries the tailnet way in when the account
+ *  has none); signed out, the way in for someone on the owner's tailnet when the app was
+ *  shared with them, and the sign-in page for everyone else. */
 function AppLinkRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading, waitingForServer } = useUser();
   if (isLoading) return <DesktopFrame><LoadingScreen waitingForServer={waitingForServer} /></DesktopFrame>;
