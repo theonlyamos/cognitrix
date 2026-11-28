@@ -1,15 +1,16 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Search } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
-import { Input } from '@/lib/components/ui/input';
 import { Select } from '@/lib/components/ui/select';
 import { Textarea } from '@/lib/components/ui/textarea';
-import MarkdownMessage from '@/components/MarkdownMessage';
+import { Sheet } from '@/components/meetings/Overlay';
+import { CalendarRulesFields, type Calendar, type CalendarRules } from '@/components/UpcomingCalls';
+import type { AgentLite, ShareLevel } from '@/components/meetings/types';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
 
-/** What answers in a call may use: only the call, or also the person's work. */
-export type ShareLevel = 'call' | 'work';
+export type { ShareLevel } from '@/components/meetings/types';
 
 export interface MeetingSettings {
   share: ShareLevel;
@@ -20,123 +21,6 @@ export interface MeetingSettings {
 }
 
 interface SearchHit { id: string; title: string; date: string; kind: string; snippet: string }
-
-/** The person's private controls while an agent is in a call: an answer to
- *  its question, guidance, something to raise, and off the record. Nobody in
- *  the call sees any of it. */
-export function CallControls({ meetingId, botName, paused, question, guidance, liveNotes }: {
-  meetingId: string; botName: string; paused: boolean; question: string; guidance: string[]; liveNotes: string;
-}) {
-  const [kind, setKind] = useState<'note' | 'raise'>('note');
-  const [text, setText] = useState('');
-  const [answer, setAnswer] = useState('');
-  const [sent, setSent] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  const post = async (path: string, body: object, done: string) => {
-    setBusy(true);
-    setError('');
-    try {
-      await api.post(`/meetings/${meetingId}/${path}`, body);
-      setSent(done);
-      window.setTimeout(() => setSent(''), 4000);
-      return true;
-    } catch (e) {
-      setError(errorMessage(e, tr('ui.meetingExtras.couldNotReachTheAgent')));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  };
-  // The page says "paused" only once the agent has applied it; until then
-  // it says so (the pause still counts from the moment it was asked).
-  const togglePause = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      const r = await api.post(`/meetings/${meetingId}/pause`, { paused: !paused });
-      const status = (r.data as { status?: string } | undefined)?.status;
-      const done = status === 'pending'
-        ? (paused ? tr('ui.meetingExtras.resumeNotConfirmedYet', { botName }) : tr('ui.meetingExtras.notConfirmedYetBotname', { botName }))
-        : paused ? tr('ui.meetingExtras.backOnTheRecord') : tr('ui.meetingExtras.pausedNothingIsKeptUntil');
-      setSent(done);
-      window.setTimeout(() => setSent(''), 6000);
-    } catch (e) {
-      setError(errorMessage(e, tr('ui.meetingExtras.couldNotReachTheAgent')));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const steer = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!text.trim()) return;
-    const done = kind === 'raise' ? `${botName} brings it up at the next pause.` : `${botName} uses it in its answers.`;
-    if (await post('steer', { kind, text: text.trim() }, done)) setText('');
-  };
-  const reply = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!answer.trim()) return;
-    if (await post('steer', { kind: 'answer', text: answer.trim() }, tr('ui.meetingExtras.botnamePassesYourAnswerOn', { botName }))) setAnswer('');
-  };
-
-  return (
-    <div className="flex flex-col gap-3">
-      {question && (
-        <form onSubmit={(e) => void reply(e)} role="alert"
-          className="flex flex-col gap-2 rounded-[10px] border border-accent bg-panel px-3 py-2.5">
-          <p className="text-[13px] leading-relaxed">
-            <span className="font-medium">{tr('ui.meetingExtras.botnameIsAskingYou', { botName })}</span> {question}
-          </p>
-          <div className="flex gap-2">
-            <Input value={answer} onChange={(e) => setAnswer(e.target.value)} maxLength={600} autoFocus
-              placeholder={tr('ui.meetingExtras.yourAnswerPassedOnIn')} aria-label={tr('ui.meetingExtras.yourAnswer')} className="h-9 flex-1" />
-            <Button type="submit" size="sm" disabled={busy || !answer.trim()}>{tr('ui.meetingExtras.answer')}</Button>
-          </div>
-        </form>
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        {paused && (
-          <span className="rounded bg-panel-2 px-1.5 py-0.5 font-mono text-[11px] text-fg-dim">{tr('ui.meetingExtras.offTheRecord')}</span>
-        )}
-        <Button type="button" size="sm" variant="outline" disabled={busy}
-          onClick={() => void togglePause()}>
-          {paused ? tr('ui.meetingExtras.resumeNotes') : tr('ui.meetingExtras.pauseNotes')}
-        </Button>
-        <span className="text-[12px] text-fg-dim">
-          {tr('ui.meetingExtras.anyoneInTheCallCan', { botName })}
-        </span>
-      </div>
-      <form onSubmit={(e) => void steer(e)} className="flex flex-col gap-2 rounded-[10px] border border-line px-3 py-2.5">
-        <p className="text-[12.5px] text-fg-dim">{tr('ui.meetingExtras.tellBotnamePrivatelyNobodyIn', { botName })}</p>
-        <div className="flex flex-wrap gap-2">
-          <Select value={kind} onChange={(e) => setKind(e.target.value as 'note' | 'raise')} aria-label={tr('ui.meetingExtras.whatToDoWithIt')}
-            className="h-9 w-auto">
-            <option value="note">{tr('ui.meetingExtras.useInAnswers')}</option>
-            <option value="raise">{tr('ui.meetingExtras.bringItUp')}</option>
-          </Select>
-          <Input value={text} onChange={(e) => setText(e.target.value)} maxLength={600}
-            placeholder={kind === 'raise' ? tr('ui.meetingExtras.askWhenThePricingPage') : tr('ui.meetingExtras.donTAgreeToNew')}
-            aria-label={tr('ui.meetingExtras.privateGuidance')} className="h-9 min-w-[180px] flex-1" />
-          <Button type="submit" size="sm" disabled={busy || !text.trim()}>{tr('ui.meetingExtras.passOn')}</Button>
-        </div>
-        {guidance.length > 0 && (
-          <ul className="list-disc pl-5 text-[12.5px] text-fg-dim">
-            {guidance.map((g, i) => <li key={i}>{g}</li>)}
-          </ul>
-        )}
-      </form>
-      {sent && <p aria-live="polite" className="text-[12.5px] text-fg-dim">{sent}</p>}
-      {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
-      {liveNotes && (
-        <details open className="rounded-[10px] border border-line px-3 py-2">
-          <summary className="cursor-pointer text-[12.5px] font-medium">{tr('ui.meetingExtras.runningNotes')}</summary>
-          <div className="md mt-2 break-words text-[13px]"><MarkdownMessage content={liveNotes} /></div>
-        </details>
-      )}
-    </div>
-  );
-}
 
 /** What the agent saw when it couldn't get into the call: the controls it
  *  read and, when there is one, a screenshot. */
@@ -162,21 +46,31 @@ export function SeenOnJoin({ meetingId, seen, hasImage }: { meetingId: string; s
 
   if (!seen && !hasImage) return null;
   return (
-    <details className="mb-3 rounded-[10px] border border-line px-3 py-2">
-      <summary className="cursor-pointer text-[12.5px] font-medium">{tr('ui.meetingExtras.whatTheAgentSaw')}</summary>
-      {image && <img src={image} alt={tr('ui.meetingExtras.theAgentSScreenWhen')} className="mt-2 max-h-[360px] rounded border border-line" />}
-      {seen && (
-        <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap text-[11.5px] leading-relaxed text-fg-dim">{seen}</pre>
-      )}
-    </details>
+    <section aria-label={tr('ui.meetingExtras.whatTheAgentSaw')} className="flex flex-col gap-2">
+      <h3 className="text-[11px] font-medium uppercase tracking-[.08em] text-fg-dim">{tr('ui.meetingExtras.whatTheAgentSaw')}</h3>
+      <div className="flex flex-col gap-3 lg:flex-row">
+        {image && <img src={image} alt={tr('ui.meetingExtras.theAgentSScreenWhen')} className="max-h-[320px] min-w-0 rounded-lg border border-line object-contain lg:max-w-[60%]" />}
+        {seen && (
+          <pre className="max-h-[320px] min-w-0 flex-1 overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-bg px-3 py-2 text-[11.5px] leading-relaxed text-fg-dim">{seen}</pre>
+        )}
+      </div>
+    </section>
   );
 }
 
-/** Search across past meetings' notes and transcripts. */
-export function MeetingSearch({ onOpen }: { onOpen: (id: string) => void }) {
+/** Search across past meetings' notes and transcripts; hits drop down under the box. */
+export function MeetingSearch({ onOpen, className }: { onOpen: (id: string) => void; className?: string }) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!hits) return;
+    const away = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setHits(null); };
+    document.addEventListener('mousedown', away);
+    return () => document.removeEventListener('mousedown', away);
+  }, [hits]);
 
   const search = async (event: FormEvent) => {
     event.preventDefault();
@@ -197,53 +91,110 @@ export function MeetingSearch({ onOpen }: { onOpen: (id: string) => void }) {
   };
 
   return (
-    <div className="flex flex-col gap-2">
-      <form onSubmit={(e) => void search(e)} role="search" className="flex gap-2">
-        <Input value={query} onChange={(e) => { setQuery(e.target.value); if (!e.target.value) setHits(null); }}
-          placeholder={tr('ui.meetingExtras.searchMeetingsATopicA')} aria-label={tr('ui.meetingExtras.searchMeetings')} className="h-9 flex-1" />
-        <Button type="submit" size="sm" variant="outline" disabled={busy || !query.trim()}>{tr('ui.meetingExtras.search')}</Button>
+    <div ref={box} className={cn('relative', className)}>
+      <form onSubmit={(e) => void search(e)} role="search" className="relative">
+        <Search size={14} aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
+        <input type="search" value={query} aria-label={tr('ui.meetingExtras.searchMeetings')}
+          placeholder={tr('ui.meetingExtras.searchNotesAndTranscripts')}
+          onChange={(e) => { setQuery(e.target.value); if (!e.target.value) setHits(null); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setHits(null); }}
+          className="h-10 w-full rounded-lg border border-line bg-panel pl-8 pr-16 text-[13px] outline-none placeholder:text-fg-dim focus:border-fg-dim md:h-8" />
+        <button type="submit" disabled={busy || !query.trim()}
+          className="absolute right-1 top-1/2 h-8 -translate-y-1/2 rounded-md px-2 text-[12px] text-fg-dim hover:bg-panel-2 hover:text-fg disabled:opacity-0 md:h-6">
+          {tr('ui.meetingExtras.search')}
+        </button>
       </form>
       {hits && (
-        hits.length === 0 ? <p className="text-[12.5px] text-fg-dim">{tr('ui.meetingExtras.noMeetingsMatchThat')}</p> : (
-          <ul className="divide-y divide-line rounded-[10px] border border-line bg-panel">
-            {hits.map((h) => (
-              <li key={h.id}>
-                <button type="button" onClick={() => onOpen(h.id)} className="flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-panel-2">
-                  <span className="text-[13px] font-medium">{h.title} <span className="font-mono text-[11px] font-normal text-fg-dim">{h.date}</span></span>
-                  <span className="text-[12.5px] text-fg-dim">{h.snippet}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )
+        <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-[60vh] overflow-y-auto rounded-xl border border-line bg-panel p-1 shadow-xl md:min-w-[420px]">
+          {hits.length === 0 ? <p className="px-3 py-2 text-[12.5px] text-fg-dim">{tr('ui.meetingExtras.noMeetingsMatchThat')}</p> : (
+            <ul>
+              {hits.map((h) => (
+                <li key={h.id}>
+                  <button type="button" onClick={() => { setHits(null); onOpen(h.id); }} className="flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left hover:bg-panel-2">
+                    <span className="text-[13px] font-medium">{h.title} <span className="font-mono text-[11px] font-normal text-fg-dim">{h.date}</span></span>
+                    <span className="text-[12.5px] text-fg-dim">{h.snippet}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
-/** How agents behave in every call: what answers may use, what to watch
- *  for, words to expect, speakers and running notes. */
-export function MeetingSettingsPanel({ onClose }: { onClose: () => void }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-3 border-t border-line pt-4 first:border-t-0 first:pt-1">
+      <h3 className="text-[11px] font-medium uppercase tracking-[.08em] text-fg-dim">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function Toggle({ label, hint, checked, onChange }: { label: string; hint: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-start gap-3">
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-medium">{label}</span>
+        <span className="block text-[12px] text-fg-dim">{hint}</span>
+      </span>
+      <input type="checkbox" role="switch" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-1 h-4 w-4 flex-none accent-[var(--accent)]" />
+    </label>
+  );
+}
+
+/** Everything about meetings in one place: how agents behave in every call,
+ *  the calendar rules, and who writes the notes for uploads. */
+export function MeetingSettingsSheet({ open, onClose, calendar, agents, uploadAgent, onUploadAgent }: {
+  open: boolean;
+  onClose: () => void;
+  calendar: Calendar;
+  agents: AgentLite[];
+  uploadAgent: string;
+  onUploadAgent: (id: string) => void;
+}) {
   const [form, setForm] = useState<MeetingSettings | null>(null);
+  const [rules, setRules] = useState<CalendarRules | null>(null);
+  const [writer, setWriter] = useState(uploadAgent);
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!open) return;
+    setError('');
+    setWriter(uploadAgent);
     api.get<MeetingSettings>('/meetings/settings').then((r) => setForm(r.data))
       .catch((e) => setError(errorMessage(e, tr('ui.meetingExtras.couldNotLoadTheMeeting'))));
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
-  const save = async (event: FormEvent) => {
-    event.preventDefault();
+  const calendarSettings = calendar.data?.settings;
+  useEffect(() => {
+    if (!open || !calendarSettings) return;
+    const { enabled, agent_id, auto_join, never_words, remind_minutes } = calendarSettings;
+    setRules({ enabled, agent_id, auto_join, never_words, remind_minutes });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, !!calendarSettings]);
+
+  const save = async (event?: FormEvent) => {
+    event?.preventDefault();
     if (!form) return;
     setBusy(true);
     setError('');
     try {
-      const res = await api.put<MeetingSettings>('/meetings/settings', form);
-      setForm(res.data);
-      setSaved(true);
-      window.setTimeout(() => setSaved(false), 2000);
+      await api.put<MeetingSettings>('/meetings/settings', form);
+      if (rules && calendar.data?.connected) {
+        const before = calendar.data.settings;
+        const changed = (Object.keys(rules) as (keyof CalendarRules)[]).some((k) => rules[k] !== before[k]);
+        if (changed && !(await calendar.save(rules))) {
+          setError(tr('ui.upcomingCalls.couldNotSaveTheSettings'));
+          return;
+        }
+      }
+      onUploadAgent(writer);
+      onClose();
     } catch (e) {
       setError(errorMessage(e, tr('ui.meetingExtras.couldNotSaveTheMeeting')));
     } finally {
@@ -254,57 +205,87 @@ export function MeetingSettingsPanel({ onClose }: { onClose: () => void }) {
     setForm((f) => (f ? { ...f, [key]: value } : f));
 
   return (
-    <form onSubmit={(e) => void save(e)} className="flex flex-col gap-3 rounded-[10px] border border-line bg-panel px-4 py-3.5">
-      <p className="text-[14px] font-medium">{tr('ui.meetingExtras.meetingSettings')}</p>
-      {!form ? <p className="text-[13px] text-fg-dim">{error || tr('ui.meetingExtras.loading')}</p> : (
+    <Sheet open={open} title={tr('ui.meetingExtras.meetingSettings')} onClose={onClose}
+      footer={(
         <>
-          <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
-            {tr('ui.meetingExtras.whenSomeoneAsksTheAgent')}
-            <Select value={form.share} onChange={(e) => set('share', e.target.value as ShareLevel)} className="h-9">
-              <option value="call">{tr('ui.meetingExtras.onlyWhatWasSaidIn')}</option>
-              <option value="work">{tr('ui.meetingExtras.alsoYourMemoryKnowledgePast')}</option>
-            </Select>
-          </label>
-          <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
-            {tr('ui.meetingExtras.alertMeRightAwayWhen')}
-            <Textarea value={form.watch_words} onChange={(e) => set('watch_words', e.target.value)} rows={2} maxLength={2000}
-              placeholder={tr('ui.meetingExtras.budgetMyNameLaunchDate')} />
-          </label>
-          <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
-            {tr('ui.meetingExtras.namesAndWordsSpeechTo')}
-            <Textarea value={form.vocabulary} onChange={(e) => set('vocabulary', e.target.value)} rows={2} maxLength={2000}
-              placeholder={tr('ui.meetingExtras.akosuaKubernetesCognitrix')} />
-          </label>
-          <label className="flex items-center gap-2 text-[12.5px]">
-            <input type="checkbox" checked={form.speaker_pass} onChange={(e) => set('speaker_pass', e.target.checked)}
-              className="h-4 w-4 accent-[var(--accent)]" />
-            {tr('ui.meetingExtras.afterTheCallTellThe')}
-          </label>
-          <label className="flex items-center gap-2 text-[12.5px]">
-            <input type="checkbox" checked={form.live_notes} onChange={(e) => set('live_notes', e.target.checked)}
-              className="h-4 w-4 accent-[var(--accent)]" />
-            {tr('ui.meetingExtras.keepRunningNotesDuringThe')}
-          </label>
-          {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
-          <div className="flex items-center gap-2">
-            <Button type="submit" size="sm" disabled={busy}>{saved ? tr('ui.meetingExtras.saved') : tr('ui.meetingExtras.save')}</Button>
-            <Button type="button" size="sm" variant="ghost" onClick={onClose}>{tr('ui.meetingExtras.close')}</Button>
-          </div>
+          {error && <p role="alert" className="mr-auto text-[12.5px] text-danger-ink">{error}</p>}
+          <Button type="button" size="sm" variant="ghost" onClick={onClose}>{tr('ui.meetings.cancel')}</Button>
+          <Button type="button" size="sm" disabled={busy || !form} onClick={() => void save()}>{tr('ui.meetingExtras.save')}</Button>
         </>
+      )}>
+      {!form ? <p className="py-2 text-[13px] text-fg-dim">{error || tr('ui.meetingExtras.loading')}</p> : (
+        <form onSubmit={(e) => void save(e)} className="flex flex-col gap-5">
+          <Section title={tr('ui.meetingExtras.inEveryCall')}>
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="mb-1.5 text-[12px] text-fg-dim">{tr('ui.meetingExtras.whenSomeoneAsksTheAgent')}</legend>
+              <Choice name="share" value={form.share} onChange={(v) => set('share', v)} options={[
+                { id: 'call', label: tr('ui.meetingExtras.onlyTheCall') },
+                { id: 'work', label: tr('ui.meetingExtras.alsoMyMemoryAndPast') },
+              ]} />
+            </fieldset>
+            <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
+              {tr('ui.meetingExtras.alertMeRightAwayWhen')}
+              <Textarea value={form.watch_words} onChange={(e) => set('watch_words', e.target.value)} rows={2} maxLength={2000}
+                placeholder={tr('ui.meetingExtras.budgetMyNameLaunchDate')} />
+            </label>
+            <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
+              {tr('ui.meetingExtras.namesAndWordsSpeechTo')}
+              <Textarea value={form.vocabulary} onChange={(e) => set('vocabulary', e.target.value)} rows={2} maxLength={2000}
+                placeholder={tr('ui.meetingExtras.akosuaKubernetesCognitrix')} />
+            </label>
+            <Toggle label={tr('ui.meetingExtras.runningNotes')} hint={tr('ui.meetingExtras.notesBuildUpWhileThe')}
+              checked={form.live_notes} onChange={(v) => set('live_notes', v)} />
+            <Toggle label={tr('ui.meetingExtras.tellTheSpeakersApart')} hint={tr('ui.meetingExtras.afterTheCallWithGoogle')}
+              checked={form.speaker_pass} onChange={(v) => set('speaker_pass', v)} />
+          </Section>
+          <Section title={tr('ui.meetingExtras.calendar')}>
+            {rules ? <CalendarRulesFields calendar={calendar} agents={agents} rules={rules} onChange={setRules} />
+              : <p className="text-[12.5px] text-fg-dim">{tr('ui.meetingExtras.loading')}</p>}
+          </Section>
+          <Section title={tr('ui.meetingExtras.recordings')}>
+            <label className="flex flex-wrap items-center gap-2 text-[13px]">
+              <span className="flex-1">{tr('ui.meetingExtras.notesForUploadsWrittenBy')}</span>
+              <Select value={writer} onChange={(e) => setWriter(e.target.value)} aria-label={tr('ui.meetings.agentForNewRecordings')} className="h-9 w-auto min-w-[170px]">
+                <option value="">{tr('ui.meetings.yourMainAgent')}</option>
+                {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </Select>
+            </label>
+          </Section>
+          <button type="submit" hidden />
+        </form>
       )}
-    </form>
+    </Sheet>
   );
 }
 
-/** The list of tabs a finished meeting shows. */
-export function MeetingTabs<T extends string>({ tabs, value, onChange, labels }: {
-  tabs: readonly T[]; value: T; onChange: (tab: T) => void; labels: Record<T, string>;
+/** A row of choices that look like one switch (radio buttons underneath). */
+export function Choice<T extends string>({ name, value, onChange, options, disabled }: {
+  name: string; value: T; onChange: (value: T) => void; options: { id: T; label: string }[]; disabled?: T[];
 }) {
   return (
-    <div role="tablist" aria-label={tr('ui.meetingExtras.meetingView')} className="flex rounded-lg border border-line p-0.5 text-[12.5px]">
+    <div className="flex flex-wrap gap-0.5 rounded-lg border border-line bg-panel p-0.5">
+      {options.map(({ id, label }) => (
+        <label key={id} className={cn('flex min-h-9 flex-1 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-3 text-center text-[12.5px] md:min-h-7',
+          value === id ? 'bg-panel-2 font-medium text-fg' : 'text-fg-dim hover:text-fg', disabled?.includes(id) && 'pointer-events-none opacity-50')}>
+          <input type="radio" name={name} value={id} checked={value === id} disabled={disabled?.includes(id)}
+            onChange={() => onChange(id)} className="sr-only" />
+          {label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** Underlined tabs for a meeting's views. */
+export function MeetingTabs<T extends string>({ tabs, value, onChange, labels, className }: {
+  tabs: readonly T[]; value: T; onChange: (tab: T) => void; labels: Record<T, ReactNode>; className?: string;
+}) {
+  return (
+    <div role="tablist" aria-label={tr('ui.meetingExtras.meetingView')} className={cn('flex gap-5 overflow-x-auto border-b border-line text-[13px]', className)}>
       {tabs.map((name) => (
         <button key={name} type="button" role="tab" aria-selected={value === name} onClick={() => onChange(name)}
-          className={cn('min-h-9 rounded-md px-3 md:min-h-7', value === name ? 'bg-panel-2 text-fg' : 'text-fg-dim hover:text-fg')}>
+          className={cn('-mb-px min-h-10 flex-none whitespace-nowrap border-b-2 pb-1.5 pt-2 md:min-h-9',
+            value === name ? 'border-accent font-medium text-fg' : 'border-transparent text-fg-dim hover:text-fg')}>
           {labels[name]}
         </button>
       ))}

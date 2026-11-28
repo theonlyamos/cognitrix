@@ -22,10 +22,16 @@ interface Draft {
   value: string;
   username: string;
   password: string;
+  useInBrowser: boolean;
+  /** As it was when the form opened: an edit sends it only when it changed,
+   *  so saving a new password doesn't widen where it may be typed. */
+  wasInBrowser: boolean;
 }
 
 const EMPTY: Draft = {
   id: null, name: '', kind: 'token', description: '', hosts: '', header: '', value: '', username: '', password: '',
+  useInBrowser: false,
+  wasInBrowser: false,
 };
 
 function draftFrom(c: Credential): Draft {
@@ -39,6 +45,8 @@ function draftFrom(c: Credential): Draft {
     value: '',
     username: c.username,
     password: '',
+    useInBrowser: Boolean(c.use_in_browser),
+    wasInBrowser: Boolean(c.use_in_browser),
   };
 }
 
@@ -76,6 +84,7 @@ export function CredentialsCard() {
       if (draft.id) {
         await updateCredential(draft.id, {
           ...common,
+          ...(draft.useInBrowser !== draft.wasInBrowser ? { use_in_browser: draft.useInBrowser } : {}),
           ...(draft.kind === 'token'
             ? (draft.value ? { value: draft.value } : {})
             : { username: draft.username, ...(draft.password ? { password: draft.password } : {}) }),
@@ -85,6 +94,7 @@ export function CredentialsCard() {
           name: draft.name.trim(),
           kind: draft.kind,
           ...common,
+          use_in_browser: draft.useInBrowser,
           ...(draft.kind === 'token' ? { value: draft.value } : { username: draft.username, password: draft.password }),
         });
       }
@@ -142,6 +152,9 @@ export function CredentialsCard() {
                 {c.allowed_hosts.length === 1 && c.allowed_hosts[0] === 'sandbox.invalid'
                   ? tr('ui.credentialsCard.onlyForCommandsInThe')
                   : tr('ui.credentialsCard.onlySentToFilter', { filter: c.allowed_hosts.filter((h) => h !== 'sandbox.invalid').join(', ') })}
+                {c.use_in_browser
+                  ? tr('ui.credentialsCard.typedOnSites', { sites: (c.browser_hosts ?? []).join(', ') })
+                  : ''}
                 {c.last_used_at ? tr('ui.credentialsCard.lastUsedLastUsedAt', { last_used_at: c.last_used_at }) : tr('ui.credentialsCard.notUsedYet')}
               </p>
               {c.description && <p className="mt-0.5 text-[12px] text-fg-dim">{c.description}</p>}
@@ -215,6 +228,20 @@ function CredentialForm({ draft, setDraft, busy, onSave, onCancel }: {
           </Field>
         </div>
       )}
+      <label className="flex cursor-pointer items-start gap-2.5 rounded border border-line bg-panel-2 px-3 py-2.5">
+        <input
+          type="checkbox"
+          checked={draft.useInBrowser}
+          onChange={(e) => set({ useInBrowser: e.target.checked })}
+          className="mt-[3px] accent-[var(--accent)]"
+        />
+        <span className="min-w-0">
+          <span className="block text-[13px] font-medium">{tr('ui.credentialsCard.agentsMayTypeItInto')}</span>
+          <span className="mt-0.5 block text-[12px] leading-relaxed text-fg-dim">
+            {tr('ui.credentialsCard.theyTypeItIntoThe')}
+          </span>
+        </span>
+      </label>
       <Field label={tr('ui.credentialsCard.description')} hint={tr('ui.credentialsCard.tellsAgentsWhenToUse')}>
         <Input value={draft.description} onChange={(e) => set({ description: e.target.value })} placeholder={tr('ui.credentialsCard.githubApiReadAndWrite')} />
       </Field>

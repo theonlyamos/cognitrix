@@ -7,7 +7,8 @@ module.exports = {
     extend: {
       // A phone turned sideways: short and wide. Used where the agents'
       // computer moves its controls to a side rail.
-      screens: { side: { raw: '(orientation: landscape) and (max-height: 500px)' } },
+      // wide: room for a list, a meeting and a side column next to the app sidebar.
+      screens: { side: { raw: '(orientation: landscape) and (max-height: 500px)' }, wide: '1360px' },
       colors: {
         // "Technical / Signal" tokens (CSS-var backed; theme-reactive)
         bg: 'rgb(var(--bg-rgb) / <alpha-value>)',

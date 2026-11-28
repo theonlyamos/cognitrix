@@ -39,7 +39,26 @@ class Credential(Model):
     hint: str = ''
     """Last four characters, for the settings list."""
     last_used_at: str | None = None
+    browser_hosts: list[str] = []
+    """Sites (some of ``allowed_hosts``) whose sign-in pages agents may type
+    it into, in the browser on their own computer
+    (cognitrix/computer/saved_sign_ins.py). That puts the value inside the
+    sandbox, which the key proxy otherwise avoids, so it is empty unless the
+    person allows it: "Agents may type it into sign-in pages" in Saved
+    sign-ins (every site listed there), or answering an agent's Ask For
+    Sign-in that named those sites on its card. Kept per site, so adding a
+    host for Http Request never lets it be typed there."""
 
-    @validator('allowed_hosts', pre=True)
+    @validator('allowed_hosts', 'browser_hosts', pre=True)
     def _coerce_null_list(cls, value):
-        return [] if value is None else value
+        # Rows saved before a field existed read back NULL (or '' from a TEXT column).
+        if value in (None, ''):
+            return []
+        if isinstance(value, str):
+            import json
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                return [value]
+            return parsed if isinstance(parsed, list) else []
+        return value

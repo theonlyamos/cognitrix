@@ -126,6 +126,10 @@ def _turn_helper_names(names: set[str]) -> tuple[str, ...]:
         helpers += ('bash_output', 'kill_shell')
     if 'look at window' in names:
         helpers += ('show_screenshot',)
+    if 'type in window' in names or 'set text' in names:
+        # Signing in on its own computer: type a saved sign-in, or ask the
+        # person to save one, instead of asking them to take over.
+        helpers += ('list_credentials', 'ask_for_sign_in')
     return helpers
 
 
