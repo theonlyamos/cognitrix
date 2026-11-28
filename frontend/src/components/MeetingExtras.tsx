@@ -49,6 +49,25 @@ export function CallControls({ meetingId, botName, paused, question, guidance, l
       setBusy(false);
     }
   };
+  // The page says "paused" only once the agent has applied it; until then
+  // it says so (the pause still counts from the moment it was asked).
+  const togglePause = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const r = await api.post(`/meetings/${meetingId}/pause`, { paused: !paused });
+      const status = (r.data as { status?: string } | undefined)?.status;
+      const done = status === 'pending'
+        ? tr('ui.meetingExtras.notConfirmedYetBotname', { botName })
+        : paused ? tr('ui.meetingExtras.backOnTheRecord') : tr('ui.meetingExtras.pausedNothingIsKeptUntil');
+      setSent(done);
+      window.setTimeout(() => setSent(''), 6000);
+    } catch (e) {
+      setError(errorMessage(e, tr('ui.meetingExtras.couldNotReachTheAgent')));
+    } finally {
+      setBusy(false);
+    }
+  };
   const steer = async (event: FormEvent) => {
     event.preventDefault();
     if (!text.trim()) return;
@@ -81,7 +100,7 @@ export function CallControls({ meetingId, botName, paused, question, guidance, l
           <span className="rounded bg-panel-2 px-1.5 py-0.5 font-mono text-[11px] text-fg-dim">{tr('ui.meetingExtras.offTheRecord')}</span>
         )}
         <Button type="button" size="sm" variant="outline" disabled={busy}
-          onClick={() => void post('pause', { paused: !paused }, paused ? tr('ui.meetingExtras.backOnTheRecord') : tr('ui.meetingExtras.pausedNothingIsKeptUntil'))}>
+          onClick={() => void togglePause()}>
           {paused ? tr('ui.meetingExtras.resumeNotes') : tr('ui.meetingExtras.pauseNotes')}
         </Button>
         <span className="text-[12px] text-fg-dim">

@@ -2834,6 +2834,7 @@ const uiEn = {
   "ui.meetingExtras.onlyWhatWasSaidIn": "Only what was said in the call and its background",
   "ui.meetingExtras.passOn": "Pass on",
   "ui.meetingExtras.pauseNotes": "Pause notes",
+  "ui.meetingExtras.notConfirmedYetBotname": "Not confirmed yet: {botName} hasn't caught up. Anything said from now on is dropped once it does.",
   "ui.meetingExtras.pausedNothingIsKeptUntil": "Paused: nothing is kept until you resume.",
   "ui.meetingExtras.privateGuidance": "Private guidance",
   "ui.meetingExtras.resumeNotes": "Resume notes",

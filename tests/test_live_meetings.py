@@ -7,6 +7,7 @@ import io
 import math
 import struct
 import threading
+import time
 import wave
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -1115,8 +1116,8 @@ async def test_anyone_in_the_call_can_pause_resume_mark_and_send_the_agent_away(
 async def test_private_steering_questions_for_the_owner_and_their_answer(call):
     llm = SteerLLM()
     c = await _in_call(call, llm)
-    c.item.control.put_nowait(('note', "Don't commit to dates."))
-    c.item.control.put_nowait(('raise', 'mention the budget review'))
+    c.item.control.put_nowait(('note', "Don't commit to dates.", time.time(), None))
+    c.item.control.put_nowait(('raise', 'mention the budget review', time.time(), None))
     await c.take_control()
     assert (await call.notes.MeetingNote.get(c.id)).guidance == ["Don't commit to dates."]
     c.quiet_s = 0.5  # someone is talking: wait
@@ -1135,7 +1136,7 @@ async def test_private_steering_questions_for_the_owner_and_their_answer(call):
     assert 'Let me check that with Sam.\n' in call.driver.typed
     assert call.alerts[-1] == f'Question from {row.title}'
 
-    c.item.control.put_nowait(('answer', 'Yes, Monday works.'))
+    c.item.control.put_nowait(('answer', 'Yes, Monday works.', time.time(), None))
     await c.take_control()
     row = await call.notes.MeetingNote.get(c.id)
     assert 'Sam says: Yes, Monday works.\n' in call.driver.typed
@@ -1334,29 +1335,72 @@ async def test_steer_and_search_tools(call, monkeypatch):
 
 async def test_speech_heard_while_paused_stays_dropped_even_if_notes_resume_before_it_is_transcribed(call, monkeypatch):
     c = await _in_call(call)
-    # Paused from the page: pieces heard from now on are off the record.
-    await c.set_paused(True, by='Sam')
-    c.piece_no = 1  # one piece arrives while paused, still waiting to be transcribed
-    await c.set_paused(False, by='Sam')  # resumed before its text came back
-    _saying(call, monkeypatch, 'The acquisition price is 40 million.', 'Next item is hiring.')
-    await c._one(_b64(), '0:02', 1)
-    c.piece_no = 2
-    await c._one(_b64(), '0:03', 2)
+    t0 = time.time()
+    # Paused and resumed from the page while a piece said during the pause
+    # (it ended just after the resume) was still waiting to be transcribed.
+    await c.set_paused(True, by='Sam', at=t0 + 10)
+    await c.set_paused(False, by='Sam', at=t0 + 20)
+    _saying(call, monkeypatch, 'Next item is hiring.')  # the private piece is never even transcribed
+    await c._one(_b64(), '0:02', (t0 + 15, t0 + 21), 1)
+    await c._one(_b64(), '0:03', (t0 + 22, t0 + 25), 2)
     assert not any('40 million' in ln for ln in c.lines) and 'hiring' in c.lines[-1]
+    assert c.heard == 2  # both handled: the saved mark moves past the dropped piece too
 
-    # Said in the call: pieces already queued after "pause notes" are dropped too.
+    # Said in the call: pieces queued after "pause notes" are dropped even if
+    # the page resumes before their text comes back.
     c2 = await _in_call(call)
-    c2.piece_no = 3  # "pause notes", then two more pieces queued before its text came back
-    _saying(call, monkeypatch, 'Ada, pause the notes.', 'Salary bands are 90 to 120.', 'Still private.',
-            'Back to the roadmap.')
-    await c2._one(_b64(), '0:01', 1)
-    await c2.set_paused(False, by='Sam')  # the page resumes while pieces 2 and 3 wait
-    await c2._one(_b64(), '0:02', 2)
-    await c2._one(_b64(), '0:03', 3)
-    c2.piece_no = 4
-    await c2._one(_b64(), '0:04', 4)
+    _saying(call, monkeypatch, 'Ada, pause the notes.', 'Back to the roadmap.')
+    await c2._one(_b64(), '0:01', (t0, t0 + 2), 1)
+    await c2.set_paused(False, by='Sam', at=t0 + 9)
+    await c2._one(_b64(), '0:02', (t0 + 3, t0 + 5), 2)
+    await c2._one(_b64(), '0:03', (t0 + 6, t0 + 8), 3)
+    await c2._one(_b64(), '0:04', (t0 + 10, t0 + 12), 4)
     text = '\n'.join(c2.lines)
-    assert 'Salary' not in text and 'Still private' not in text and 'roadmap' in c2.lines[-1]
+    assert 'roadmap' in c2.lines[-1] and text.count('[0:0') == 2
+
+
+async def test_speech_said_while_paused_is_dropped_after_a_restart_too(call, monkeypatch):
+    c = await _in_call(call)
+    t0 = time.time()
+    await c.set_paused(True, by='Sam', at=t0 + 10)
+    await c.set_paused(False, by='Sam', at=t0 + 20)
+    # Cognitrix restarts before the piece heard during the pause was transcribed.
+    row = await call.notes.MeetingNote.get(c.id)
+    assert row.call_state['off'] == [[t0 + 10, t0 + 20]]
+    again = call.live._Call(c.item, row, c.desk, c.agent, 'Sam', ('groq', 'whisper', 'key'), c.settings, [])
+    _saying(call, monkeypatch, 'Next item is hiring.')
+    await again._one(_b64(), '0:02', (t0 + 15, t0 + 21), 1)
+    await again._one(_b64(), '0:03', (t0 + 22, t0 + 25), 2)
+    assert len(again.lines) == 1 and 'hiring' in again.lines[0]
+
+
+async def test_a_paused_piece_never_reaches_watch_words_or_the_speaker_audio(call, monkeypatch, tmp_path):
+    c = await _in_call(call)
+    c.watch = ['forecast']
+    c.audio_path = tmp_path / 'speakers.pcm'
+    alerts = []
+
+    async def alert(row, title, message, urgent=False):
+        alerts.append(title)
+
+    monkeypatch.setattr(call.live, '_alert', alert)
+    t0 = time.time()
+    await c.set_paused(True, by='Sam', at=t0)
+    await c.set_paused(False, by='Sam', at=t0 + 1)
+    _saying(call, monkeypatch, 'The forecast is four million.')
+    await c._one(_b64(), '0:02', (t0 + 0.2, t0 + 1.6), 1)  # began during the pause, finished after it
+    assert alerts == [] and not c.audio_path.exists()
+    assert not any('forecast' in ln for ln in c.lines)
+
+
+async def test_pieces_are_placed_on_this_machines_clock(call):
+    c = await _in_call(call)
+    pieces = c.heard_from({'now': 1000.0, 'recorder': 'r1', 'pieces': [{'seq': 1, 'at': 990.0, 'seconds': 2.0,
+                                                                         'audio': _b64()}]})
+    c.hear(pieces)
+    _audio, _at, span, seq = c.queue.get_nowait()
+    skew = time.time() - 1000.0
+    assert seq == 1 and abs(span[1] - (990.0 + skew)) < 1 and abs((span[1] - span[0]) - 2.0) < 1e-6
 
 
 async def test_a_lost_connection_without_a_rejoin_button_is_reopened_after_a_few_checks(call, monkeypatch):
@@ -1386,24 +1430,66 @@ async def test_only_one_process_takes_over_a_call_after_a_restart(call, monkeypa
     async def run(item):
         await held.wait()
 
+    later = []
     monkeypatch.setattr(call.live, 'run', run)
+    monkeypatch.setattr(call.live, '_check_again', later.append)
     row = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1', runner='old',
                                  url='https://meet.google.com/abc-defg-hij', progress='listening')
     await row.save()
     stale = await call.notes.MeetingNote.find({'kind': 'live'})  # what a second process read at the same time
     try:
         assert await call.live.resume_interrupted() == 1
-        assert (await call.notes.MeetingNote.get(row.id)).runner == call.live.BOOT
+        mine = (await call.notes.MeetingNote.get(row.id)).runner
+        assert mine.startswith(call.live.BOOT + ':')
         assert await call.live.resume_interrupted() == 0  # already ours
         other = AsyncFind(stale)
         monkeypatch.setattr(call.live, 'BOOT', 'second-process')
         monkeypatch.setattr(call.notes.MeetingNote, 'find', other)
         monkeypatch.setattr(call.live, '_live', {})
-        monkeypatch.setattr(call.live, 'fail_interrupted', other.nothing)
+        # It read the old owner: its claim and its clean-up both miss.
         assert await call.live.resume_interrupted() == 0
+        after = await call.notes.MeetingNote.get(row.id)
+        assert after.status == call.live.LIVE and after.runner == mine
+        # Reading the row now, it sees a fresh lease: it waits for it to run out.
+        monkeypatch.setattr(call.notes.MeetingNote, 'find', AsyncFind([after]))
+        assert await call.live.resume_interrupted() == 0
+        assert (await call.notes.MeetingNote.get(row.id)).status == call.live.LIVE
+        assert later and 0 < later[-1] <= call.live.LEASE_S + 1
     finally:
         held.set()
         await asyncio.sleep(0)
+
+
+async def test_a_call_whose_lease_ran_out_is_taken_over_and_the_old_owner_stops_writing(call, monkeypatch):
+    async def run(item):
+        return None
+
+    monkeypatch.setattr(call.live, 'run', run)
+    old = f'someone-else:{int(time.time()) - call.live.LEASE_S - 5}'
+    row = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1', runner=old,
+                                 url='https://meet.google.com/abc-defg-hij', progress='listening')
+    await row.save()
+    assert await call.live.resume_interrupted() == 1
+    # The old owner comes back and tries to write: the lease isn't its any more.
+    monkeypatch.setitem(call.live._owned, str(row.id), old)
+    with pytest.raises(call.live.LostCall):
+        await call.live._set(str(row.id), transcript='stale')
+    assert (await call.notes.MeetingNote.get(row.id)).transcript == ''
+
+
+async def test_a_released_lease_is_picked_up_at_once(call, monkeypatch):
+    async def run(item):
+        return None
+
+    async def no_limit(*args, **kwargs):
+        raise AssertionError('update_one adds LIMIT 1, which PostgreSQL rejects')
+
+    monkeypatch.setattr(call.live, 'run', run)
+    monkeypatch.setattr(call.notes.MeetingNote, 'update_one', no_limit)
+    released = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1',
+                                      runner='someone-else:0', url='https://meet.google.com/abc-defg-hij')
+    await released.save()
+    assert await call.live.resume_interrupted() == 1
 
 
 class AsyncFind:
@@ -1420,8 +1506,8 @@ class AsyncFind:
 async def test_what_follows_a_spoken_pause_in_the_same_piece_is_not_kept(call, monkeypatch):
     c = await _in_call(call)
     _saying(call, monkeypatch, 'Ada, pause the notes. The acquisition price is 40 million.')
-    await c._one(_b64(), '0:01', 1)
-    assert c.paused and c.lines[0] == '[0:01] Ada, pause the notes.'
+    await c._one(_b64(), '0:01', None, 1)
+    assert c.paused and c.lines[0] == '[0:01] Ada, pause the notes'
     assert not any('40 million' in ln for ln in c.lines)
 
 
@@ -1431,7 +1517,7 @@ async def test_private_things_to_raise_are_never_said_word_for_word(call, monkey
 
     c = await _in_call(call, broken)
     c.quiet_s = 10
-    c.item.control.put_nowait(('raise', 'Ask whether they will drop the price to 9k'))
+    c.item.control.put_nowait(('raise', 'Ask whether they will drop the price to 9k', time.time(), None))
     await c.take_control()
     for _ in range(call.live.DELIVERY_TRIES):
         await c.raise_pending()
@@ -1449,7 +1535,7 @@ async def test_the_owners_answer_waits_until_it_is_out_in_the_call(call, monkeyp
         return await real(desk, row, text, mode) if out['ok'] else ''
 
     monkeypatch.setattr(call.live, 'deliver', deliver)
-    c.item.control.put_nowait(('answer', 'Yes, Monday works.'))
+    c.item.control.put_nowait(('answer', 'Yes, Monday works.', time.time(), None))
     await c.take_control()
     assert c.question and (await call.notes.MeetingNote.get(c.id)).owner_question == 'Is Monday OK?'
     out['ok'] = True
@@ -1504,3 +1590,115 @@ async def test_recovery_skips_unreadable_and_other_windows(call):
     row.url = 'https://meet.google.com/qqq-qqqq-qqq'
     desk = Desk()
     assert not await live._still_in_call(desk, row) and desk.screen.window_id is None
+
+
+async def test_a_failed_save_never_loses_speech_and_a_restart_never_repeats_it(call, monkeypatch):
+    c = await _in_call(call)
+    c.use_recorder('r1')
+    _saying(call, monkeypatch, 'First thing.', 'Second thing.', 'Third thing.')
+    real = call.live._set
+    broken = {'on': True}
+
+    async def flaky(meeting_id, **fields):
+        if broken['on'] and 'transcript' in fields:
+            raise RuntimeError('database is locked')
+        return await real(meeting_id, **fields)
+
+    monkeypatch.setattr(call.live, '_set', flaky)
+
+    def piece(seq):
+        return {'seq': seq, 'audio': _b64(), 'at': time.time(), 'seconds': 1.0}
+
+    c.hear([piece(1)])
+    await c.heard_all()
+    assert c.done == 0  # not saved: the recorder keeps piece 1 for a restart
+    broken['on'] = False
+    c.hear([piece(2)])
+    await c.heard_all()
+    assert c.done == 2
+    row = await call.notes.MeetingNote.get(c.id)
+    assert row.call_state['heard'] == 2 and row.call_state['recorder'] == 'r1'
+    assert 'First thing.' in row.transcript and 'Second thing.' in row.transcript
+
+    # Restarted before the recorder heard that piece 2 was saved: it hands
+    # both over again, and only the new one is added.
+    lines = [ln for ln in row.transcript.splitlines() if ln.strip()]
+    again = call.live._Call(c.item, row, c.desk, c.agent, 'Sam', ('groq', 'whisper', 'key'), c.settings, lines)
+    assert again.after == 2
+    again.heard_from({'recorder': 'r1', 'now': time.time()})
+    again.hear([piece(1), piece(2), piece(3)])
+    await again.heard_all()
+    text = (await call.notes.MeetingNote.get(c.id)).transcript
+    assert [text.count(t) for t in ('First thing.', 'Second thing.', 'Third thing.')] == [1, 1, 1]
+
+    # A new recorder counts from one again.
+    again.heard_from({'recorder': 'r2'})
+    assert again.after == again.done == again.heard == 0
+
+
+async def test_leaving_is_kept_before_the_agent_leaves_so_a_restart_never_goes_back_in(call, monkeypatch):
+    from cognitrix.api.routes import meetings as routes
+
+    polling = threading.Event()
+    release = asyncio.Event()
+
+    def audio(method, path, body=None, **kwargs):
+        if method == 'GET':
+            polling.set()
+            return {'ok': True, 'listening': True, 'pieces': []}
+        if path.endswith('/stop'):
+            return {'ok': True, 'pieces': [{'seq': 1, 'audio': _b64()}]}
+        return {'ok': True}
+
+    async def slow(clip, **kwargs):
+        await release.wait()
+        return 'the last words'
+
+    monkeypatch.setattr(call.box, 'call', audio)
+    monkeypatch.setattr(call.notes, 'transcribe', slow)
+    made = await routes.join_live(routes.LiveJoin(url='https://meet.google.com/abc-defg-hij', announce=False), _ctx())
+    assert await asyncio.to_thread(polling.wait, 3)
+    task = call.live._live[made['id']].task
+    await routes.leave_live(made['id'], _ctx())
+    for _ in range(200):
+        if 'Leave call' in call.driver.clicked:
+            break
+        await asyncio.sleep(0.02)
+    task.cancel()  # Cognitrix stops while the last piece is still being transcribed
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    row = await call.notes.MeetingNote.get(made['id'])
+    assert row.call_state.get('left') and row.status == call.notes.FAILED
+    assert 'finishing the call' in row.error
+    call.driver.clicked.clear()
+    assert await call.live.resume_interrupted() == 0
+    assert 'Leave call' not in call.driver.clicked and not call.live.running(made['id'])
+
+
+async def test_a_long_answer_from_the_owner_is_passed_on_whole(call, monkeypatch):
+    c = await _in_call(call, SteerLLM())
+    await c.ask_owner('When does it ship?')
+    answer = ('word ' * 116 + 'on Friday.').strip()
+    assert len(answer) <= call.live.MAX_ANSWER_CHARS
+    c.item.control.put_nowait(('answer', answer, time.time(), None))
+    await c.take_control()
+    typed = ''.join(call.driver.typed).replace('\n', ' ')
+    assert 'Sam says:' in typed and 'on Friday.' in typed and not c.question
+    assert all(len(t.rstrip('\n')) <= call.live.MAX_ANSWER_CHARS for t in call.driver.typed)
+
+
+async def test_the_pause_button_answers_once_the_call_has_paused(call):
+    from cognitrix.api.routes import meetings as routes
+
+    made = await routes.join_live(routes.LiveJoin(url='https://meet.google.com/abc-defg-hij', announce=False), _ctx())
+    for _ in range(200):
+        if (await call.notes.MeetingNote.get(made['id'])).status == call.live.LIVE:
+            break
+        await asyncio.sleep(0.02)
+    out = await routes.pause_live(made['id'], routes.PauseBody(paused=True), _ctx())
+    assert out == {'status': 'paused'} and (await call.notes.MeetingNote.get(made['id'])).paused
+    out = await routes.pause_live(made['id'], routes.PauseBody(paused=False), _ctx())
+    assert out == {'status': 'resumed'} and not (await call.notes.MeetingNote.get(made['id'])).paused
+    task = call.live._live[made['id']].task
+    await routes.leave_live(made['id'], _ctx())
+    await asyncio.wait_for(task, 3)

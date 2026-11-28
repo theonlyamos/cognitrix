@@ -207,8 +207,31 @@ def test_a_spoken_pause_keeps_only_what_came_before_it():
     from cognitrix.meetings import extras
 
     said = 'Ada, pause the notes. The acquisition price is 40 million.'
-    assert extras.up_to_command(said) == 'Ada, pause the notes.'
+    assert extras.up_to_command(said) == 'Ada, pause the notes'
+    said = 'Ada, pause the notes, the private forecast is four million.'
+    assert extras.up_to_command(said) == 'Ada, pause the notes'
     assert extras.up_to_command('No command here.') == 'No command here.'
+
+
+@pytest.mark.parametrize('said, order', [
+    ('Ada, when should we resume taking notes?', None),
+    ('Ada, should we resume the notes?', None),
+    ('Ada, I think we can resume later', None),
+    ('Ada, do not resume notes yet', None),
+    ('Ada, continue the budget discussion', None),
+    ('Ada resume', 'resume'),
+    ('Ada, please resume.', 'resume'),
+    ('Ada, can you resume taking notes?', 'resume'),
+    ("Ada, we're back on the record", 'resume'),
+    ('Ada, off the record', 'pause'),
+    ('Ada, we are going off the record now', 'pause'),
+    ('Ada, pause the notes, the private forecast is four million.', 'pause'),
+])
+def test_spoken_commands_only_resume_on_a_request(said, order):
+    from cognitrix.meetings import extras
+
+    got = extras.command(said, ['Ada'])
+    assert (got[0] if got else None) == order
 
 
 def test_the_recorder_keeps_speech_until_the_engine_has_its_text():
@@ -328,3 +351,143 @@ def test_search_looks_in_both_transcripts():
     finally:
         MeetingNote.find = original
     assert hits and 'invoice goes out Friday' in hits[0]['snippet']
+
+
+def _address_view(address):
+    from cognitrix.meetings import live
+
+    return live.View(1, 's', [SimpleNamespace(role='entry', name='Address and search bar', value=address,
+                                              enabled=True, rect=(0, 0, 1, 1))])
+
+
+def test_restart_recovery_compares_the_exact_meeting():
+    from cognitrix.meetings import live
+
+    screen = live.Screen(SimpleNamespace(), 'meeting:1')
+    win = SimpleNamespace(title='')
+    cases = [
+        ('teams', 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_AAA%40thread.v2/0',
+         'https://teams.microsoft.com/l/meetup-join/19%3ameeting_BBB%40thread.v2/0'),
+        ('zoom', 'https://us02web.zoom.us/wc/join/8123456789', 'https://us02web.zoom.us/wc/81234567890/start'),
+        ('zoom', 'https://zoom.us/my/alice', 'https://zoom.us/my/bob'),
+        ('other', 'https://meet.jit.si/TeamSync', 'https://meet.jit.si/BoardRoom'),
+        ('other', 'https://calls.example.com/room/1', 'https://other.example.org/room/1'),
+    ]
+    for platform, link, elsewhere in cases:
+        screen.platform, screen.url = platform, link
+        assert live._is_this_call(screen, _address_view(link), win), link
+        assert not live._is_this_call(screen, _address_view(elsewhere), win), (link, elsewhere)
+    # A page whose address doesn't say which meeting it is never counts.
+    screen.platform, screen.url = 'teams', cases[0][1]
+    assert not live._is_this_call(screen, _address_view('https://teams.microsoft.com/v2/'), win)
+    # A Meet nickname link: the room it resolved to when the agent got in was kept.
+    screen = live.Screen(SimpleNamespace(), 'meeting:1')
+    screen.platform, screen.url = 'meet', 'https://meet.google.com/lookup/teamsync'
+    assert not live._is_this_call(screen, _address_view('https://meet.google.com/abc-defg-hij'), win)
+    screen._room_code = 'abc-defg-hij'
+    assert live._is_this_call(screen, _address_view('https://meet.google.com/abc-defg-hij'), win)
+    assert not live._is_this_call(screen, _address_view('https://meet.google.com/zzz-zzzz-zzz'), win)
+
+
+async def test_after_a_restart_the_kept_room_is_used_and_the_person_at_the_computer_is_waited_for(monkeypatch):
+    from cognitrix.computer import HumanControl
+    from cognitrix.meetings import live
+    from cognitrix.meetings.notes import MeetingNote
+
+    in_call = [SimpleNamespace(role='button', name='Leave call', value='', enabled=True, rect=(0, 0, 1, 1)),
+               SimpleNamespace(role='entry', name='Address and search bar', value='https://meet.google.com/abc-defg-hij',
+                               enabled=True, rect=(0, 0, 1, 1))]
+    state = {'held': 2}
+
+    class Driver:
+        def list_windows(self):
+            if state['held']:
+                state['held'] -= 1
+                raise HumanControl('The person has the computer.')
+            return [SimpleNamespace(id=7, app='chromium', title='Meet')]
+
+        def look(self, window_id, query=None, limit=60, viewer=None):
+            return None, SimpleNamespace(id='s', elements=in_call, origin=(0, 0), scale=1.0), [], ''
+
+    class Desk:
+        def __init__(self):
+            self.driver = Driver()
+            self.screen = live.Screen(self.driver, 'meeting:1')
+
+        async def do(self, fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+    writes = []
+
+    async def fake_set(meeting_id, **fields):
+        writes.append(fields)
+
+    monkeypatch.setattr(live, '_set', fake_set)
+    monkeypatch.setattr(live, 'HANDBACK_POLL_S', 0)
+    row = MeetingNote(user_id='u1', kind='live', platform='meet', url='https://meet.google.com/lookup/teamsync',
+                      call_state={'room': 'meet:abc-defg-hij'})
+    desk = Desk()
+    assert await live._back_in_call(live.Live('m1'), desk, row)
+    assert desk.screen.window_id == 7 and state['held'] == 0
+    assert writes == [{'progress': 'waiting for you to hand back the computer'}]
+
+
+def test_failed_teams_and_zoom_joins_never_keep_another_tab():
+    from cognitrix.meetings import live
+
+    address = {'value': 'https://mail.google.com/mail/u/0/#drafts'}
+
+    class Driver:
+        def look(self, window_id, query=None, limit=60, viewer=None):
+            elements = [SimpleNamespace(role='entry', name='Address and search bar', value=address['value'],
+                                        enabled=True, rect=(0, 0, 1, 1))]
+            return 'IMAGE', SimpleNamespace(id='s1', elements=elements, origin=(0, 0), scale=1.0), [], ''
+
+    for platform, link, sign_in in (
+            ('teams', 'https://teams.microsoft.com/l/meetup-join/abc/0', 'https://login.microsoftonline.com/x'),
+            ('zoom', 'https://us02web.zoom.us/wc/join/81234567890', 'https://us02web.zoom.us/signin')):
+        screen = live.Screen(Driver(), 'meeting:1')
+        screen.platform, screen.url, screen.window_id = platform, link, 5
+        address['value'] = 'https://mail.google.com/mail/u/0/#drafts'
+        screen.look()
+        assert screen.last_view is None and screen.last_image is None, platform
+        address['value'] = sign_in
+        screen.look()
+        assert screen.last_image == 'IMAGE', platform
+
+
+async def test_the_relational_upgrade_fills_in_an_empty_runner():
+    from cognitrix.config import _MEETING_RELATIONAL_COLUMNS, _migrate_relational_task_schema
+
+    statements = []
+
+    class Cursor:
+        def fetchall(self):
+            return []
+
+    class Database:
+        dbms = 'postgresql'
+
+        @staticmethod
+        async def query(statement, params=None):
+            statements.append(statement)
+            if 'pg_index' in statement.lower():
+                raise RuntimeError('stop here')
+            return Cursor()
+
+    try:
+        await _migrate_relational_task_schema(Database)
+    except RuntimeError:
+        pass
+    assert ('call_state', 'TEXT') in _MEETING_RELATIONAL_COLUMNS
+    assert "UPDATE meetingnotes SET runner = '' WHERE runner IS NULL" in statements
+
+
+def test_the_recorder_says_which_recorder_it_is_and_its_clock():
+    from cognitrix.computer.sandbox import audio
+
+    desk = audio.DesktopAudio.__new__(audio.DesktopAudio)
+    rec = audio.Recorder('x.monitor')
+    desk.recorder = rec
+    read = desk.read(0, 0)
+    assert read['recorder'] == rec.id and abs(read['now'] - __import__('time').time()) < 5

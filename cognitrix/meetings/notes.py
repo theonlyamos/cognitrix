@@ -26,6 +26,7 @@ import logging
 import re
 import shutil
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -204,7 +205,13 @@ class MeetingNote(Model):
     """Running notes while the call goes on."""
     rejoins: int = 0
     runner: str = ''
-    """The process running this live call (live.BOOT), so only one picks it up after a restart."""
+    """'<process>:<unix time>': the process running this live call and when it
+    last said so (a lease, see live.LEASE_S), so only one process runs it."""
+    call_state: dict = {}
+    """What a restart needs to carry on exactly: 'off' (off-the-record time
+    ranges), 'recorder' + 'heard' (the sandbox recorder and the last piece of
+    speech saved in the transcript), 'room' (the meeting the browser was in),
+    'left' (the agent already left the call)."""
     seen: str = ''
     """What was on the agent's screen when joining failed (control names)."""
     test: bool = False
@@ -228,6 +235,11 @@ class MeetingNote(Model):
     @validator('watch_words', 'guidance', pre=True)
     def _words(cls, value):
         return [str(v) for v in _json(value, []) if v]
+
+    @validator('call_state', pre=True)
+    def _state(cls, value):
+        value = _json(value, {})
+        return value if isinstance(value, dict) else {}
 
     @validator('action_items', pre=True)
     def _items(cls, value):
@@ -401,7 +413,9 @@ def storage_dir() -> Path:
 
 
 async def _set(meeting_id: str, **fields: Any) -> None:
-    await MeetingNote.update_one({'id': meeting_id}, fields)
+    # update_many on the unique id: update_one adds a LIMIT that PostgreSQL rejects.
+    fields['updated_at'] = datetime.now()
+    await MeetingNote.update_many({'id': meeting_id}, fields)
 
 
 async def _agent_llm(user_key: str, agent_id: str):
@@ -502,7 +516,11 @@ async def cancel(meeting_id: str) -> None:
 
 async def fail_interrupted() -> None:
     """On start: nothing is running yet, so anything marked as working was cut off."""
+    from cognitrix.meetings import live
+
     for row in await MeetingNote.all() or []:
+        if row.kind == 'live' and (live.running(str(row.id)) or live._held_elsewhere(row.runner)):
+            continue  # a call another Cognitrix process is still finishing
         if row.status in WORKING and not running(str(row.id)):
             await _set(str(row.id), status=FAILED, progress='',
                        error='Cognitrix restarted before this finished.')

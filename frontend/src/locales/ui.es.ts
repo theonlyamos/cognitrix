@@ -2835,6 +2835,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.meetingExtras.onlyWhatWasSaidIn": "Solo lo dicho en la llamada y su contexto",
   "ui.meetingExtras.passOn": "Transmitir",
   "ui.meetingExtras.pauseNotes": "Pausar notas",
+  "ui.meetingExtras.notConfirmedYetBotname": "Aún sin confirmar: {botName} todavía no se ha puesto al día. Todo lo que se diga desde ahora se descartará cuando lo haga.",
   "ui.meetingExtras.pausedNothingIsKeptUntil": "En pausa: no se guarda nada hasta que reanudes.",
   "ui.meetingExtras.privateGuidance": "Indicaciones privadas",
   "ui.meetingExtras.resumeNotes": "Reanudar notas",
