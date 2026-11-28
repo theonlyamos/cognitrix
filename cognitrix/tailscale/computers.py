@@ -280,7 +280,11 @@ def policy_snippet() -> str:
 
 def view() -> dict[str, Any]:
     """What Settings shows about Fly computers on the tailnet (never the secret)."""
+    from cognitrix.computer.sandbox.client import sandbox_mode
+
     return {
+        # Whether agents' computers run on Fly at all: the card only shows then.
+        'fly': sandbox_mode() == 'fly',
         'scope': tailscale.sandbox_choice(),
         'tag': tailscale.sandbox_tag(),
         'oauth_id': api.client_id(),

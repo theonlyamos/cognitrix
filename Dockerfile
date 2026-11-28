@@ -30,7 +30,7 @@ ENV PYTHONUNBUFFERED=1 \
 # Supervisor keeps the web process and solo Celery worker in one Fly machine.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libgl1 libglib2.0-0 curl ca-certificates ffmpeg \
+        libgl1 libglib2.0-0 curl ca-certificates ffmpeg openssh-client \
         supervisor \
     && rm -rf /var/lib/apt/lists/*
 

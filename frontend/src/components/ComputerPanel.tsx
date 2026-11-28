@@ -141,7 +141,17 @@ export function ComputerPanel({ agents, focusAgentId, takeOverRequest, onTakeOve
               <span aria-hidden>‹</span>{' '}{tr('ui.computerPanel.thisChat')}
             </button>
           )}
-          <h2 className="mr-auto text-[13px] font-semibold">{tr('ui.computerPanel.agentsComputer')}</h2>
+          <div className="mr-auto flex min-w-0 items-center gap-2">
+            <h2 className="flex-none text-[13px] font-semibold">{tr('ui.computerPanel.agentsComputer')}</h2>
+            {status?.running && status.tailnet && (
+              <span
+                title={status.tailnet.dns || status.tailnet.name}
+                className="truncate rounded-full border border-line px-2 py-0.5 font-mono text-[10.5px] text-fg-dim"
+              >
+                {status.tailnet.online ? tr('ui.computerPanel.onYourTailnet') : tr('ui.computerPanel.joiningYourTailnet')}
+              </span>
+            )}
+          </div>
           {status?.running && status.update_available && <UpdateButton onDone={load} />}
           {status?.running && <ResetButton onDone={load} />}
           {expanded ? (

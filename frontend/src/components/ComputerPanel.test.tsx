@@ -68,6 +68,15 @@ describe('ComputerPanel', () => {
     await waitFor(() => expect(rfb.made.length).toBe(1));
   });
 
+  it('says when a hosted computer is on the tailnet', async () => {
+    lib.sandboxStatus.mockResolvedValue({
+      enabled: true, running: true, host: 'fly', desktops: [],
+      tailnet: { name: 'cognitrix-sandbox-abc', dns: 'cognitrix-sandbox-abc.tail1234.ts.net', online: true },
+    });
+    render(<ComputerPanel agents={agents} onClose={() => {}} />);
+    expect(await screen.findByText('On your tailnet')).toHaveAttribute('title', 'cognitrix-sandbox-abc.tail1234.ts.net');
+  });
+
   it("takes over the desktop an agent asked for, once", async () => {
     lib.sandboxStatus.mockResolvedValue({
       enabled: true, running: true,

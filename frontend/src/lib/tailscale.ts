@@ -43,6 +43,59 @@ export interface TailscaleStatus {
   listen_local: boolean;
   /** People may link their Tailscale login to their account and sign in with it. */
   signin: boolean;
+  /** Admins only: the agents' Fly computers as machines on the tailnet. */
+  computers?: TailnetComputers;
+  /** Admins only: whose agents may run commands on tailnet devices. */
+  devices?: TailnetScope;
+}
+
+export type TailnetScope = 'off' | 'admins' | 'everyone';
+
+export interface TailnetComputers {
+  /** Agents' computers run on Fly at all (the card only shows then). */
+  fly: boolean;
+  scope: 'nobody' | 'admins' | 'everyone';
+  /** The tag every computer carries, like tag:cognitrix-sandbox. */
+  tag: string;
+  oauth_id: string;
+  /** A secret is saved (it is never sent back). */
+  oauth_saved: boolean;
+  /** This server runs on Fly, so it keeps reaching computers over Fly's own network. */
+  on_fly: boolean;
+  /** Lines for the tailnet policy file. */
+  policy: string;
+}
+
+export interface TailnetCheckStep {
+  name: 'oauth' | 'join_key' | 'engine';
+  ok: boolean;
+  detail: string;
+}
+
+/** One machine on the tailnet and what agents may do on it. */
+export interface TailnetDevice {
+  node: string;
+  name: string;
+  dns: string;
+  os: string;
+  online: boolean;
+  tags: string[];
+  /** The machine accepts Tailscale SSH. */
+  tailscale_ssh: boolean;
+  /** Still on the tailnet (an allowed machine that left stays listed so it can be removed). */
+  present: boolean;
+  allowed: boolean;
+  users: string[];
+  path: 'tailscale' | 'key';
+}
+
+export interface TailnetDevices {
+  scope: TailnetScope;
+  devices: TailnetDevice[];
+  /** This server's public SSH key, for machines without Tailscale SSH. */
+  key: string;
+  /** This server has an ssh program. */
+  ssh: boolean;
 }
 
 export interface TailscaleChange {
@@ -55,6 +108,11 @@ export interface TailscaleChange {
   allow?: TailscaleAllow[];
   listen_local?: boolean;
   signin?: boolean;
+  sandbox?: TailnetComputers['scope'];
+  sandbox_tag?: string;
+  oauth_id?: string;
+  oauth_secret?: string;
+  devices?: TailnetScope;
 }
 
 export type TailscaleCheck = Partial<Record<'private' | 'public', { ok: boolean; detail: string }>>;
@@ -77,6 +135,22 @@ export async function disconnectTailscale(): Promise<TailscaleStatus> {
 
 export async function checkTailscale(): Promise<TailscaleCheck> {
   return (await api.post('/tailscale/check')).data;
+}
+
+export async function checkTailnetComputers(): Promise<{ ok: boolean; steps: TailnetCheckStep[] }> {
+  return (await api.post('/tailscale/computers/check')).data;
+}
+
+export async function tailnetDevices(): Promise<TailnetDevices> {
+  return (await api.get('/tailscale/devices')).data;
+}
+
+export async function allowTailnetDevice(node: string, users: string[], path: TailnetDevice['path']): Promise<TailnetDevice> {
+  return (await api.put(`/tailscale/devices/${encodeURIComponent(node)}`, { users, path })).data;
+}
+
+export async function removeTailnetDevice(node: string): Promise<void> {
+  await api.delete(`/tailscale/devices/${encodeURIComponent(node)}`);
 }
 
 /** Something is waiting on the owner or on Tailscale, so the page keeps looking. */

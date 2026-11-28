@@ -418,6 +418,19 @@ def test_status_says_when_an_update_is_ready_and_update_restarts(api, monkeypatc
     assert mgr.updated == ['u1']
 
 
+def test_status_says_when_the_computer_is_on_the_tailnet(api, monkeypatch):
+    from cognitrix.computer.sandbox import client as sandbox_client
+    client, _ = api
+    assert 'tailnet' not in client.get('/computer/sandbox').json()      # a Docker computer never is
+    mgr = sandbox_client.get_manager()
+    asked = []
+    place = {'name': 'cognitrix-sandbox-u1', 'dns': 'cognitrix-sandbox-u1.tail1234.ts.net', 'online': True}
+    monkeypatch.setattr(mgr, 'tailnet_info', lambda owner: asked.append(owner) or place, raising=False)
+    assert client.get('/computer/sandbox').json()['tailnet'] == place and asked == ['u1']
+    monkeypatch.setattr(mgr, 'tailnet_info', lambda owner: None, raising=False)
+    assert 'tailnet' not in client.get('/computer/sandbox').json()
+
+
 class _FakeDocker:
     """Answers the docker commands SandboxManager runs."""
 

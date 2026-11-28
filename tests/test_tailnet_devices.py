@@ -379,3 +379,75 @@ async def test_a_worker_without_tailscale_asks_the_web_process(db, tailnet, ssh,
     finally:
         from cognitrix.tools.utils import reset_execution_context
         reset_execution_context(token)
+
+
+# ---------------------------------------------------------------------------
+# Settings > Tailscale
+# ---------------------------------------------------------------------------
+
+async def test_only_an_admin_sees_and_changes_the_devices(db, tailnet, ssh, monkeypatch):  # noqa: F811
+    from fastapi import HTTPException
+
+    from cognitrix.api.routes import tailscale as routes
+    from cognitrix.common.security import AuthContext
+    from cognitrix.tailscale import api, computers
+
+    async def is_admin(user):
+        return user.id == 'boss'
+
+    async def changed(app):
+        return {'private': {}, 'public': {}}
+
+    monkeypatch.setattr(routes, 'is_admin', is_admin)
+    monkeypatch.setattr(service, 'settings_changed', changed)
+    monkeypatch.setattr(service, 'snapshot', lambda: {'private': {}, 'public': {}})
+    request = SimpleNamespace(app=None, scope={})
+    boss, member = (AuthContext(user=SimpleNamespace(id=name, email=f'{name}@example.com'))
+                    for name in ('boss', 'member'))
+
+    for call in (routes.read_devices(request, member), routes.remove_device('nNAS', member),
+                 routes.allow_device('nNAS', routes.DeviceBody(users=['ada']), member),
+                 routes.check_computers(member), routes.save_tailscale(routes.TailscaleBody(devices='off'), request, member)):
+        with pytest.raises(HTTPException) as refused:
+            await call
+        assert refused.value.status_code == 403
+    seen = await routes.read_tailscale(request, member)
+    assert 'computers' not in seen and 'devices' not in seen
+
+    saved = await routes.save_tailscale(
+        routes.TailscaleBody(devices='admins', sandbox='admins', sandbox_tag='boxes', oauth_id='kABC',
+                             oauth_secret='tskey-client-kABC-SECRET'), request, boss)
+    assert saved['devices'] == 'admins'
+    assert saved['computers']['scope'] == 'admins' and saved['computers']['tag'] == 'tag:boxes'
+    assert saved['computers']['oauth_id'] == 'kABC' and saved['computers']['oauth_saved'] is True
+    assert 'SECRET' not in json.dumps(saved)                    # the secret is never sent back
+    assert '"tag:boxes": ["autogroup:admin"]' in saved['computers']['policy']
+    for bad in (routes.TailscaleBody(devices='anyone'), routes.TailscaleBody(sandbox='some')):
+        with pytest.raises(HTTPException) as refused:
+            await routes.save_tailscale(bad, request, boss)
+        assert refused.value.status_code == 400
+
+    tailnet.peers['k4']['Tags'] = ['tag:boxes']                 # the agents' computer carries the new tag
+    page = await routes.read_devices(request, boss)
+    assert page['scope'] == 'admins' and page['ssh'] is True and page['key'].startswith('ssh-ed25519 ')
+    assert [d['name'] for d in page['devices']] == ['nas', 'Office-PC', 'attic']
+    allowed = await routes.allow_device('nNAS', routes.DeviceBody(users=['ada'], path='key'), boss)
+    assert allowed['allowed'] and allowed['users'] == ['ada'] and allowed['path'] == 'key'
+    with pytest.raises(HTTPException) as bad_name:
+        await routes.allow_device('nNAS', routes.DeviceBody(users=['-oProxyCommand=x']), boss)
+    assert bad_name.value.status_code == 400
+    with pytest.raises(HTTPException) as unknown:
+        await routes.allow_device('nNOPE', routes.DeviceBody(users=['ada']), boss)
+    assert unknown.value.status_code == 404
+    assert (await routes.remove_device('nNAS', boss)) == {'removed': True}
+    with pytest.raises(HTTPException) as gone:
+        await routes.remove_device('nNAS', boss)
+    assert gone.value.status_code == 404
+
+    # Check: the saved OAuth client is tried against Tailscale.
+    monkeypatch.setattr(api, 'access_token', lambda: 'token')
+    monkeypatch.setattr(api, 'join_key', lambda tag, description: 'tskey-auth-once')
+    monkeypatch.setattr(computers, '_status_cache', None)
+    checked = await routes.check_computers(boss)
+    assert checked['ok'] is True and [s['name'] for s in checked['steps']] == ['oauth', 'join_key', 'engine']
+    assert 'tskey' not in json.dumps(checked)
