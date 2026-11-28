@@ -205,8 +205,13 @@ class MeetingNote(Model):
     """Running notes while the call goes on."""
     rejoins: int = 0
     runner: str = ''
-    """'<process>:<unix time>': the process running this live call and when it
-    last said so (a lease, see live.LEASE_S), so only one process runs it."""
+    """The process running this live call (live.BOOT): only it writes the row."""
+    lease_at: str = ''
+    """When that process last said it still runs the call (unix seconds); a
+    lease older than live.LEASE_S can be taken over."""
+    stop_asked: str = ''
+    """'leave' or 'delete', asked for on the page: whichever process runs the
+    call carries it out, even after a restart."""
     call_state: dict = {}
     """What a restart needs to carry on exactly: 'off' (off-the-record time
     ranges), 'recorder' + 'heard' (the sandbox recorder and the last piece of
@@ -224,7 +229,8 @@ class MeetingNote(Model):
 
     @validator('title', 'filename', 'agent_id', 'language', 'progress', 'transcript', 'notes', 'error', 'url',
                'platform', 'bot_name', 'session_id', 'chat_agent_id', 'series_id', 'context', 'owner_question',
-               'owner_answer', 'live_notes', 'seen', 'speaker_transcript', 'runner', pre=True)
+               'owner_answer', 'live_notes', 'seen', 'speaker_transcript', 'runner', 'lease_at', 'stop_asked',
+               pre=True)
     def _text(cls, value):
         return value or ''
 
@@ -519,7 +525,7 @@ async def fail_interrupted() -> None:
     from cognitrix.meetings import live
 
     for row in await MeetingNote.all() or []:
-        if row.kind == 'live' and (live.running(str(row.id)) or live._held_elsewhere(row.runner)):
+        if row.kind == 'live' and (live.running(str(row.id)) or live._held_elsewhere(row)):
             continue  # a call another Cognitrix process is still finishing
         if row.status in WORKING and not running(str(row.id)):
             await _set(str(row.id), status=FAILED, progress='',

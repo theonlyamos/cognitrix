@@ -58,7 +58,7 @@ export function CallControls({ meetingId, botName, paused, question, guidance, l
       const r = await api.post(`/meetings/${meetingId}/pause`, { paused: !paused });
       const status = (r.data as { status?: string } | undefined)?.status;
       const done = status === 'pending'
-        ? tr('ui.meetingExtras.notConfirmedYetBotname', { botName })
+        ? (paused ? tr('ui.meetingExtras.resumeNotConfirmedYet', { botName }) : tr('ui.meetingExtras.notConfirmedYetBotname', { botName }))
         : paused ? tr('ui.meetingExtras.backOnTheRecord') : tr('ui.meetingExtras.pausedNothingIsKeptUntil');
       setSent(done);
       window.setTimeout(() => setSent(''), 6000);

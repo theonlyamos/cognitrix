@@ -1095,21 +1095,33 @@ async def test_speech_that_fails_to_transcribe_is_retried_then_marked_as_a_gap(c
     assert 'could not be transcribed' in (await call.notes.MeetingNote.get(c.id)).transcript
 
 
-async def test_anyone_in_the_call_can_pause_resume_mark_and_send_the_agent_away(call, monkeypatch):
+async def test_anyone_in_the_call_can_pause_mark_and_send_the_agent_away(call, monkeypatch):
     c = await _in_call(call)
-    _saying(call, monkeypatch, 'Ada, pause the notes for a minute.', 'The acquisition price is 40 million.',
-            'Ada, resume.', 'We go with plan B.', 'Ada, mark that as a decision.', 'Ada, you can leave now.')
-    await c._one(_b64(), '0:01')
+    sent = []
+    said = iter(['Ada, pause the notes for a minute.', 'We go with plan B.', 'Ada, mark that as a decision.',
+                 'Ada, you can leave now.'])
+
+    async def transcribe(audio, **kwargs):
+        sent.append(audio)
+        return next(said)
+
+    monkeypatch.setattr(call.notes, 'transcribe', transcribe)
+    t0 = time.time()
+    await c._one(_b64(), '0:01', (t0, t0 + 2))
     assert c.paused and (await call.notes.MeetingNote.get(c.id)).paused
-    assert any(t.startswith('Paused: nothing is kept until someone says') for t in call.driver.typed)
-    await c._one(_b64(), '0:02')
-    assert not any('40 million' in ln for ln in c.lines)
-    await c._one(_b64(), '0:03')
+    assert any(t.startswith('Paused: I am not listening to or keeping anything until Sam resumes') for t in
+               call.driver.typed)
+    # While paused, nothing said is sent to speech-to-text at all, "resume" included.
+    await c._one(_b64('private'), '0:02', (t0 + 3, t0 + 5))
+    await c._one(_b64('resume'), '0:03', (t0 + 6, t0 + 7))
+    assert len(sent) == 1 and c.paused
+    c.item.control.put_nowait(('resume', '', t0 + 8, None))
+    await c.take_control()
     assert not c.paused and 'Back on: taking notes again.\n' in call.driver.typed
-    await c._one(_b64(), '0:04')
-    await c._one(_b64(), '0:05')
+    await c._one(_b64(), '0:04', (t0 + 9, t0 + 10))
+    await c._one(_b64(), '0:05', (t0 + 11, t0 + 12))
     assert c.lines[-1].endswith('(marked: decision — the line above)')
-    await c._one(_b64(), '0:06')
+    await c._one(_b64(), '0:06', (t0 + 13, t0 + 14))
     assert c.item.leave.is_set() and 'someone in the call asked it to leave' in c.reasons
 
 
@@ -1398,7 +1410,8 @@ async def test_pieces_are_placed_on_this_machines_clock(call):
     pieces = c.heard_from({'now': 1000.0, 'recorder': 'r1', 'pieces': [{'seq': 1, 'at': 990.0, 'seconds': 2.0,
                                                                          'audio': _b64()}]})
     c.hear(pieces)
-    _audio, _at, span, seq = c.queue.get_nowait()
+    _audio, _at, span, seq, recorder, raw = c.queue.get_nowait()
+    assert recorder == 'r1' and raw == 990.0
     skew = time.time() - 1000.0
     assert seq == 1 and abs(span[1] - (990.0 + skew)) < 1 and abs((span[1] - span[0]) - 2.0) < 1e-6
 
@@ -1434,13 +1447,13 @@ async def test_only_one_process_takes_over_a_call_after_a_restart(call, monkeypa
     monkeypatch.setattr(call.live, 'run', run)
     monkeypatch.setattr(call.live, '_check_again', later.append)
     row = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1', runner='old',
-                                 url='https://meet.google.com/abc-defg-hij', progress='listening')
+                                 lease_at='0', url='https://meet.google.com/abc-defg-hij', progress='listening')
     await row.save()
     stale = await call.notes.MeetingNote.find({'kind': 'live'})  # what a second process read at the same time
     try:
         assert await call.live.resume_interrupted() == 1
-        mine = (await call.notes.MeetingNote.get(row.id)).runner
-        assert mine.startswith(call.live.BOOT + ':')
+        mine = await call.notes.MeetingNote.get(row.id)
+        assert mine.runner == call.live.BOOT and float(mine.lease_at) > time.time() - 5
         assert await call.live.resume_interrupted() == 0  # already ours
         other = AsyncFind(stale)
         monkeypatch.setattr(call.live, 'BOOT', 'second-process')
@@ -1449,7 +1462,7 @@ async def test_only_one_process_takes_over_a_call_after_a_restart(call, monkeypa
         # It read the old owner: its claim and its clean-up both miss.
         assert await call.live.resume_interrupted() == 0
         after = await call.notes.MeetingNote.get(row.id)
-        assert after.status == call.live.LIVE and after.runner == mine
+        assert after.status == call.live.LIVE and after.runner == mine.runner
         # Reading the row now, it sees a fresh lease: it waits for it to run out.
         monkeypatch.setattr(call.notes.MeetingNote, 'find', AsyncFind([after]))
         assert await call.live.resume_interrupted() == 0
@@ -1465,16 +1478,31 @@ async def test_a_call_whose_lease_ran_out_is_taken_over_and_the_old_owner_stops_
         return None
 
     monkeypatch.setattr(call.live, 'run', run)
-    old = f'someone-else:{int(time.time()) - call.live.LEASE_S - 5}'
-    row = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1', runner=old,
+    row = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1',
+                                 runner='someone-else', lease_at=str(int(time.time()) - call.live.LEASE_S - 5),
                                  url='https://meet.google.com/abc-defg-hij', progress='listening')
     await row.save()
     assert await call.live.resume_interrupted() == 1
-    # The old owner comes back and tries to write: the lease isn't its any more.
-    monkeypatch.setitem(call.live._owned, str(row.id), old)
-    with pytest.raises(call.live.LostCall):
-        await call.live._set(str(row.id), transcript='stale')
+    # The old owner comes back and tries to write: the row isn't its any more,
+    # and it stays that way for every write after (no falling back to the id alone).
+    monkeypatch.setattr(call.live, 'BOOT', 'someone-else')
+    for _ in range(2):
+        with pytest.raises(call.live.LostCall):
+            await call.live._set(str(row.id), transcript='stale')
     assert (await call.notes.MeetingNote.get(row.id)).transcript == ''
+
+
+async def test_renewing_the_lease_never_gets_in_the_way_of_the_owners_own_writes(call):
+    row = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1',
+                                 runner=call.live.BOOT, lease_at=call.live.lease())
+    await row.save()
+    call.live._owned.add(str(row.id))
+    try:
+        await call.live._set(str(row.id), lease_at=str(int(time.time()) + 1))
+        await call.live._set(str(row.id), transcript='still mine')
+        assert (await call.notes.MeetingNote.get(row.id)).transcript == 'still mine'
+    finally:
+        call.live._owned.discard(str(row.id))
 
 
 async def test_a_released_lease_is_picked_up_at_once(call, monkeypatch):
@@ -1487,7 +1515,7 @@ async def test_a_released_lease_is_picked_up_at_once(call, monkeypatch):
     monkeypatch.setattr(call.live, 'run', run)
     monkeypatch.setattr(call.notes.MeetingNote, 'update_one', no_limit)
     released = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1',
-                                      runner='someone-else:0', url='https://meet.google.com/abc-defg-hij')
+                                      runner='someone-else', lease_at='0', url='https://meet.google.com/abc-defg-hij')
     await released.save()
     assert await call.live.resume_interrupted() == 1
 
@@ -1702,3 +1730,152 @@ async def test_the_pause_button_answers_once_the_call_has_paused(call):
     task = call.live._live[made['id']].task
     await routes.leave_live(made['id'], _ctx())
     await asyncio.wait_for(task, 3)
+
+
+async def test_the_last_pieces_are_placed_by_when_the_recorder_answered_not_after_leaving(call):
+    c = await _in_call(call)
+    answered = time.time() - 1.5  # leaving the page took a while after the recorder's reply came in
+    c.heard_from({'now': 1000.0}, answered)
+    assert abs(c.skew - (answered - 1000.0)) < 0.01
+
+
+async def test_speech_overlapping_a_resume_even_slightly_is_dropped(call, monkeypatch):
+    c = await _in_call(call)
+    t0 = time.time()
+    await c.set_paused(True, by='Sam', at=t0)
+    await c.set_paused(False, by='Sam', at=t0 + 5)
+    sent = []
+
+    async def transcribe(audio, **kwargs):
+        sent.append(audio)
+        return 'On the record.'
+
+    monkeypatch.setattr(call.notes, 'transcribe', transcribe)
+    await c._one(_b64(), '0:01', (t0 + 4.9, t0 + 6), 1)
+    assert sent == [] and not any('On the record' in ln for ln in c.lines)
+    await c._one(_b64(), '0:02', (t0 + 5, t0 + 6), 2)
+    assert len(sent) == 1 and 'On the record.' in c.lines[-1]
+
+
+async def test_a_pause_is_only_confirmed_once_it_is_saved(call, monkeypatch):
+    c = await _in_call(call)
+    real = call.live._set
+    broken = {'on': True}
+
+    async def flaky(meeting_id, **fields):
+        if broken['on'] and 'paused' in fields:
+            raise RuntimeError('database is locked')
+        return await real(meeting_id, **fields)
+
+    monkeypatch.setattr(call.live, '_set', flaky)
+    loop = asyncio.get_running_loop()
+    first = loop.create_future()
+    c.item.control.put_nowait(('pause', '', time.time(), first))
+    await c.take_control()
+    assert first.result() is False and c.paused  # paused here at once, but not confirmed
+    broken['on'] = False
+    again = loop.create_future()
+    c.item.control.put_nowait(('pause', '', time.time(), again))
+    await c.take_control()
+    assert again.result() is True and (await call.notes.MeetingNote.get(c.id)).paused
+
+
+async def test_a_piece_from_the_previous_recorder_never_moves_the_new_ones_mark(call, monkeypatch):
+    c = await _in_call(call)
+    c.use_recorder('old')
+    c.after = 9
+    _saying(call, monkeypatch, 'From the old recorder.')
+    c.use_recorder('new')  # restarted while piece 9 of the old one was still being transcribed
+    assert c.after == c.heard == 0
+    await c._one(_b64(), '0:01', None, 9, 'old')
+    assert c.heard == 0
+    await c.save()
+    assert (await call.notes.MeetingNote.get(c.id)).call_state['heard'] == 0
+
+
+async def test_speaker_audio_keeps_each_piece_once(call, tmp_path):
+    c = await _in_call(call)
+    c.audio_path = tmp_path / 'speakers'
+    clip = _wav(b'\x01\x00' * 1600)
+    c._keep_audio(clip, 'r1', 4, 1000.5)
+    c._keep_audio(clip, 'r1', 4, 1000.5)  # handled again after a failed save and a restart
+    assert len(list(c.audio_path.iterdir())) == 1
+
+
+async def test_another_processs_audio_is_kept_while_it_finishes_a_call(call):
+    row = call.notes.MeetingNote(user_id='u1', kind='live', status=call.notes.TRANSCRIBING, agent_id='a1',
+                                 runner='someone-else', lease_at=call.live.lease())
+    await row.save()
+    folder = call.live.audio_dir() / str(row.id)
+    folder.mkdir()
+    (folder / 'piece.pcm').write_bytes(b'x')
+    stray = call.live.audio_dir() / 'gone'
+    stray.mkdir()
+    await call.live.fail_interrupted()
+    assert folder.exists() and not stray.exists()
+
+
+async def test_checks_for_calls_held_elsewhere_go_on_until_none_is_left(call, monkeypatch):
+    runs = []
+
+    async def resume():
+        runs.append(1)
+        if len(runs) < 3:
+            call.live._check_again(0)
+
+    monkeypatch.setattr(call.live, 'resume_interrupted', resume)
+    call.live._check_again(0)
+    for _ in range(100):
+        if len(runs) == 3:
+            break
+        await asyncio.sleep(0.05)
+    assert len(runs) == 3
+
+
+async def test_leave_is_kept_with_the_meeting_and_a_restart_leaves_instead_of_listening(call, monkeypatch):
+    from cognitrix.api.routes import meetings as routes
+
+    made = await routes.join_live(routes.LiveJoin(url='https://meet.google.com/abc-defg-hij', announce=False), _ctx())
+    for _ in range(200):
+        if (await call.notes.MeetingNote.get(made['id'])).status == call.live.LIVE:
+            break
+        await asyncio.sleep(0.02)
+    task = call.live._live[made['id']].task
+    # Asked to leave, and Cognitrix stops before the agent got round to it.
+    monkeypatch.setattr(call.live, 'request_leave', lambda meeting_id: True)
+    await routes.leave_live(made['id'], _ctx())
+    assert (await call.notes.MeetingNote.get(made['id'])).stop_asked == 'leave'
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert 'Leave call' not in call.driver.clicked
+    assert (await call.notes.MeetingNote.get(made['id'])).lease_at == '0'  # given up on the way out
+    monkeypatch.setattr(call.live, 'BOOT', 'after-the-restart')
+    assert await call.live.resume_interrupted() == 1
+    task = call.live._live[made['id']].task
+    await asyncio.wait_for(task, 5)
+    row = await call.notes.MeetingNote.get(made['id'])
+    assert 'Leave call' in call.driver.clicked and row.status == call.notes.DONE
+    assert ('POST', '/desktops/a1/audio/start') in call.box.calls  # only from the first run
+    assert call.box.calls.count(('POST', '/desktops/a1/audio/start')) == 1
+
+
+async def test_delete_while_another_process_runs_the_call_lets_it_leave_first(call, monkeypatch):
+    from cognitrix.api.routes import meetings as routes
+
+    row = call.notes.MeetingNote(user_id='u1', kind='live', status=call.live.LIVE, agent_id='a1',
+                                 runner='someone-else', lease_at=call.live.lease(), url='https://meet.google.com/x')
+    await row.save()
+    assert await routes.delete_meeting(str(row.id), _ctx()) == {'status': 'stopping'}
+    kept = await call.notes.MeetingNote.get(row.id)
+    assert kept is not None and kept.stop_asked == 'delete'
+    # The process running it sees that on its next lease renewal.
+    item = call.live.Live(str(row.id))
+    call.live._take_stop_request(item, kept.stop_asked)
+    assert item.stopping and item.delete
+
+
+def _wav(pcm):
+    from cognitrix.computer.sandbox import audio
+
+    return audio.wav_bytes(pcm)

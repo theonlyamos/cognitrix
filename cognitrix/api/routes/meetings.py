@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -239,7 +240,8 @@ async def start_live(user_key: str, *, url: str, agent_id: str = '', title: str 
         status=live_meetings.JOINING, progress='starting its computer',
         context=background, watch_words=extras.words(watch_words or []), share=share or settings.share,
         session_id=session_id, chat_agent_id=chat_agent_id, series_id=series_id, test=bool(test),
-        runner=live_meetings.lease(),
+        runner=live_meetings.BOOT,
+        lease_at=live_meetings.lease(),
     )
     await row.save()
     live_meetings.start(str(row.id))
@@ -366,9 +368,11 @@ async def pause_live(meeting_id: str, body: PauseBody, ctx: AuthContext = Depend
     if done is None:
         raise HTTPException(status_code=409, detail='The agent is not in this call.')
     try:
-        await asyncio.wait_for(asyncio.shield(done), PAUSE_WAIT_S)
+        saved = await asyncio.wait_for(asyncio.shield(done), PAUSE_WAIT_S)
     except TimeoutError:
         return {'status': 'pending'}
+    if not saved:
+        raise HTTPException(status_code=503, detail="That couldn't be saved, so it isn't confirmed. Try again.")
     return {'status': 'paused' if body.paused else 'resumed'}
 
 
@@ -386,10 +390,15 @@ async def seen_image(meeting_id: str, ctx: AuthContext = Depends(get_auth_contex
 
 @meetings_api.post('/{meeting_id}/leave')
 async def leave_live(meeting_id: str, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Kept with the meeting first, so whichever Cognitrix process runs the
+    call (now, or after a restart) takes the agent out."""
     row = await _mine(meeting_id, ctx)
-    if not live_meetings.request_leave(str(row.id)):
+    here = live_meetings.running(str(row.id))
+    if not here and not (row.status in live_meetings.LIVE_STATES and live_meetings._held_elsewhere(row)):
         raise HTTPException(status_code=409, detail='The agent is not in this call.')
-    await MeetingNote.update_many({'id': row.id}, {'progress': 'leaving the call'})
+    await MeetingNote.update_many({'id': row.id}, {'stop_asked': 'leave', 'progress': 'leaving the call',
+                                                   'updated_at': datetime.now()})
+    live_meetings.request_leave(str(row.id))
     return _view(await MeetingNote.get(row.id))
 
 
@@ -482,7 +491,8 @@ async def write_again(meeting_id: str, body: NotesAgain,
     data: dict[str, Any] = {'status': meeting_notes.WRITING, 'progress': 'writing the notes', 'error': ''}
     if body.agent_id is not None:
         data['agent_id'] = await _check_agent(_me(ctx), body.agent_id)
-    await MeetingNote.update_one({'id': row.id}, data)
+    data['updated_at'] = datetime.now()
+    await MeetingNote.update_many({'id': row.id}, data)  # update_one adds a LIMIT that PostgreSQL rejects
     meeting_notes.start(str(row.id), None)
     return _view(await MeetingNote.get(row.id), full=True)
 
@@ -490,6 +500,13 @@ async def write_again(meeting_id: str, body: NotesAgain,
 @meetings_api.delete('/{meeting_id}')
 async def delete_meeting(meeting_id: str, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, str]:
     row = await _mine(meeting_id, ctx)
+    if (not live_meetings.running(str(row.id)) and row.status in live_meetings.LIVE_STATES
+            and live_meetings._held_elsewhere(row)):
+        # Another Cognitrix process has the agent in the call: it leaves, stops
+        # listening, then removes the meeting.
+        await MeetingNote.update_many({'id': row.id}, {'stop_asked': 'delete', 'progress': 'leaving the call',
+                                                       'updated_at': datetime.now()})
+        return {'status': 'stopping'}
     await meeting_notes.cancel(str(row.id))
     await live_meetings.cancel(str(row.id))
     live_meetings.forget_seen(str(row.id))

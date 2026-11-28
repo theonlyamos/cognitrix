@@ -12,8 +12,9 @@
   knowledge, past meetings and the times the person is busy, found for that
   question. No tools run inside the call.
 - **Spoken commands** (``command``): anyone in the call can say "<name>,
-  pause notes" / "off the record", "resume", "please leave", or "mark that as
-  an action item / a decision".
+  pause notes" / "off the record", "please leave", or "mark that as an action
+  item / a decision". While paused nothing said is sent to speech-to-text, so
+  the notes resume only from the Meetings page or the agent's chat.
 - **Watch words** (``watch_hits``): the person is alerted when one comes up.
 - **Search** (``search``): across all the person's meetings.
 - **Report** (``report_to_chat``): the notes go back to the chat that sent the
@@ -96,7 +97,8 @@ async def save_settings(user_id: str, **fields: Any) -> MeetingSettings:
         if fields.get(name) is not None:
             changes[name] = bool(fields[name])
     if changes:
-        await MeetingSettings.update_one({'id': row.id}, changes)
+        changes['updated_at'] = datetime.now()
+        await MeetingSettings.update_many({'id': row.id}, changes)  # update_one adds a LIMIT PostgreSQL rejects
     return await settings_for(user_id)
 
 

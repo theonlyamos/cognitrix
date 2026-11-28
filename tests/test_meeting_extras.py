@@ -491,3 +491,70 @@ def test_the_recorder_says_which_recorder_it_is_and_its_clock():
     desk.recorder = rec
     read = desk.read(0, 0)
     assert read['recorder'] == rec.id and abs(read['now'] - __import__('time').time()) < 5
+
+
+def test_room_keys_keep_ports_fragments_and_teams_meet_links():
+    from cognitrix.meetings import live
+
+    assert live.room_key('https://calls.example.com:8443/r/1') != live.room_key('https://calls.example.com/r/1')
+    assert live.room_key('https://app.example.com/#/room/a') != live.room_key('https://app.example.com/#/room/b')
+    link = 'https://teams.microsoft.com/meet/2345678901234?p=abcdef'
+    assert live.room_key(link) == 'teams:teams.microsoft.com:meet:2345678901234'
+    assert live.same_room(live.room_key(link), live.room_key(link))
+    assert live.same_room(live.room_key('https://x.example.com/r?id=5'), live.room_key('https://x.example.com/r?id=5&lang=en'))
+    assert not live.same_room(live.room_key('https://x.example.com/r?id=5'), live.room_key('https://x.example.com/r?id=6'))
+
+
+def test_joining_never_settles_on_another_meeting_in_the_selected_tab():
+    from cognitrix.meetings import live
+
+    address = {'value': 'https://us02web.zoom.us/wc/81234567890/join'}
+
+    class Driver:
+        def look(self, window_id, query=None, limit=60, viewer=None):
+            elements = [SimpleNamespace(role='entry', name='Address and search bar', value=address['value'],
+                                        enabled=True, rect=(0, 0, 1, 1)),
+                        SimpleNamespace(role='push button', name='Leave', value='', enabled=True, rect=(0, 0, 1, 1))]
+            return 'IMAGE', SimpleNamespace(id='s1', elements=elements, origin=(0, 0), scale=1.0), [], ''
+
+    screen = live.Screen(Driver(), 'meeting:1')
+    screen.platform, screen.url, screen.window_id = 'zoom', 'https://us02web.zoom.us/wc/join/81234567890', 5
+    assert live.join_step(screen, 'Ada', set()) == 'live'
+    address['value'] = 'https://us02web.zoom.us/wc/89999999999/join'  # the person switched to another meeting's tab
+    with pytest.raises(live.Stale):
+        live.join_step(screen, 'Ada', set())
+    assert live.room_key(screen.last_view.address().geturl()) == 'zoom:81234567890'
+
+    # A personal link: the meeting it opened is kept, and only that one counts after.
+    screen = live.Screen(Driver(), 'meeting:2')
+    screen.platform, screen.url, screen.window_id = 'zoom', 'https://zoom.us/my/alice', 5
+    address['value'] = 'https://us02web.zoom.us/wc/81234567890/join'
+    screen.look()
+    assert live._room_now(screen, screen.url) == 'zoom:81234567890'
+    address['value'] = 'https://us02web.zoom.us/wc/89999999999/join'
+    with pytest.raises(live.Stale):
+        screen.look()
+
+
+async def test_meeting_settings_save_without_update_one(monkeypatch, tmp_path):
+    from odbms import DBMS
+
+    from cognitrix.config import _patch_odbms_sqlite
+    from cognitrix.meetings import extras
+
+    db_file = str(tmp_path / 's.db')
+    if hasattr(DBMS, 'initialize_async'):
+        await DBMS.initialize_async('sqlite', database=db_file)
+    else:
+        DBMS.initialize('sqlite', database=db_file)
+    _patch_odbms_sqlite()
+    create = getattr(extras.MeetingSettings, '_create_table_async', None) or extras.MeetingSettings.create_table
+    await create()
+
+    async def no_limit(*args, **kwargs):
+        raise AssertionError('update_one adds LIMIT 1, which PostgreSQL rejects')
+
+    monkeypatch.setattr(extras.MeetingSettings, 'update_one', no_limit)
+    await extras.settings_for('u1')
+    saved = await extras.save_settings('u1', vocabulary='Kofi, Abena')
+    assert saved.vocabulary == 'Kofi, Abena'
