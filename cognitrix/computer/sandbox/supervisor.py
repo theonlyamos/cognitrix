@@ -396,8 +396,8 @@ def busy_reasons(sup: Supervisor, work: Workspace | None, activity: _Activity) -
         reasons.append('a person has control')
     if work is not None and any(job.running for job in list(work.jobs.values())):
         reasons.append('a command is running')
-    if any(d.audio is not None and d.audio.recorder is not None and d.audio.recorder.alive
-           for d in list(sup.desktops.values())):
+    recorders = (getattr(getattr(d, 'audio', None), 'recorder', None) for d in list(sup.desktops.values()))
+    if any(rec is not None and rec.alive for rec in recorders):
         reasons.append('an agent is in a call')
     return reasons
 
