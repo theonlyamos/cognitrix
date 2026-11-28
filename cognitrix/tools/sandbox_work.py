@@ -44,14 +44,14 @@ def _job_line(job: dict) -> str:
 
 
 def sb_bash(ws: sw.SandboxWork, command: str, timeout: Any, working_dir: str | None, background: bool,
-            credentials: Any = None) -> str:
+            credentials: Any = None, agent: Any = None) -> str:
     try:
         timeout_s = int(timeout) if timeout not in (None, '') else 120
     except (TypeError, ValueError):
         return f"Error: Invalid timeout value '{timeout}'. Must be an integer."
     timeout_s = max(1, min(timeout_s, 1800))
     try:
-        env = sw.credential_env(sw.credential_names(credentials))
+        env = sw.credential_env(sw.credential_names(credentials), agent)
         command = sw.map_command(ws, command)
         working_dir = sw.to_sandbox_path(ws, working_dir)
         out = ws.run(command, working_dir, timeout_s, background, env=env)
@@ -425,7 +425,7 @@ def copy_back_details(params: dict) -> str:
 
 @tool(category='system', retryable=False, max_attempts=1)
 def run_tests(command: str, working_dir: str | None = None, timeout: int = 600,
-              credentials: list[str] | None = None):
+              credentials: list[str] | None = None, *, parent: Any | None = None):
     """Run a project's tests in the sandbox and show the person the result as a card: passed, failed and
     skipped counts, the failing tests, and screenshots the tests saved (for example Playwright's).
     Understands pytest, unittest, Jest, Vitest, Mocha, Go, Cargo, RSpec and PHPUnit output; other runners
@@ -454,7 +454,7 @@ def run_tests(command: str, working_dir: str | None = None, timeout: int = 600,
         timeout_s = 600
     started = time.time()
     try:
-        env = sw.credential_env(sw.credential_names(credentials))
+        env = sw.credential_env(sw.credential_names(credentials), parent)
         command = sw.map_command(ws, command)
         working_dir = sw.to_sandbox_path(ws, working_dir)
         out = ws.run(command, working_dir, timeout_s, env=env, label=f'{command}  (Run Tests)')
@@ -512,26 +512,120 @@ def _thumbnail(shot: dict) -> tuple[str, str] | None:
         return None
 
 
+async def _let_agent_use(agent: Any, name: str) -> None:
+    """An agent limited to some saved sign-ins (agent page, Connections) may
+    use the one the person just shared with it through Ask For Sign-in.
+
+    Always for this chat, and only in this person's turns (it is their saved
+    sign-in: ``tools/access.chat_grants``). Saved on the agent as well only
+    when the person owns it, since its sign-in list is the owner's to set
+    (``api/routes/agents._OWNER_ONLY_FIELDS``); someone it was shared with
+    changes nothing for anyone else. The owner's grant is merged into the
+    list as stored now (not the chat's copy, so a sign-in taken away or a
+    switch to "all sign-ins" stays as the owner left it), and checked after
+    writing so two chats granting at once don't drop one.
+    """
+    import logging
+
+    from cognitrix.credentials import agent_allowed_credentials
+    from cognitrix.tools import access
+
+    log = logging.getLogger('cognitrix.log')
+
+    def merged(allowed: list[str] | None) -> list[str] | None:
+        if allowed is None or name in {str(n).upper() for n in allowed}:
+            return allowed
+        return [*allowed, name]
+
+    person = access._person(agent)
+    agent_id = getattr(agent, 'id', None)
+    current = agent_allowed_credentials(agent)  # this turn's copy, with this chat's grants
+    stored_list: list[str] | None = current
+    read = owner = saved = False
+    if agent_id:
+        try:
+            from cognitrix.models import Agent
+
+            for _attempt in range(4):
+                stored = await Agent.find_one({'id': str(agent_id)})
+                if stored is None:
+                    break
+                stored_list, read = agent_allowed_credentials(stored), True
+                owner = access._owns(stored, person)
+                updated = merged(stored_list)
+                if updated == stored_list:
+                    saved = owner
+                    break
+                if not owner:
+                    break
+                await Agent.update_one({'id': str(agent_id)}, {'credentials': updated})
+                check = await Agent.find_one({'id': str(agent_id)})
+                stored_list = agent_allowed_credentials(check) if check is not None else updated
+                if merged(stored_list) == stored_list:
+                    saved = True  # it stuck (or the owner switched to all sign-ins)
+                    break
+        except Exception:
+            log.info("Could not add %s to the agent's sign-ins", name, exc_info=True)
+    if read and stored_list is None:
+        try:
+            agent.credentials = None  # every sign-in is allowed now
+        except Exception:
+            pass
+        return
+    if not read and current is None:
+        return  # it may use every sign-in already
+    if read and owner:
+        # The stored list is the owner's word: this turn follows it (it now has the sign-in).
+        base = stored_list
+    elif read:
+        # Someone it is shared with: the owner's list as stored, plus what this
+        # turn already had (what this person shared in this chat earlier); the
+        # turn's copy is what every other tool uses until the turn ends.
+        have = {str(n).upper() for n in stored_list or []}
+        base = [*(stored_list or []), *[n for n in current or [] if str(n).upper() not in have]]
+    else:
+        base = current
+    if not saved and person:
+        # This chat, this person (Session.granted_access; tools/access.chat_grants).
+        sink = access._grant_sink.get()
+        if sink is not None:
+            sink('sign_in', f'{person}|{name}')
+    try:
+        agent.credentials = merged(base)
+    except Exception:
+        pass
+
+
 # Hosts for a sign-in saved only for the sandbox (see sandbox_work).
 SANDBOX_ONLY_HOST = sw.SANDBOX_ONLY_HOST
 
 
 @tool(category='system', retryable=False, max_attempts=1, supported_interfaces=['web'],
       occupies_execution_slot=False, approval_mode='assigned_only')
-async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_hosts: list[str] | None = None):
-    """Ask the person for a token, API key or username and password you need (for example to run tests
-    against a real service in the sandbox, or to call an API). They type it into a masked field in the chat
-    and it is saved to their Saved sign-ins under `name`; you never see the value, only that it was saved.
+async def ask_for_sign_in(name: str, reason: str, kind: str | None = None, allowed_hosts: list[str] | None = None,
+                          for_browser: bool | None = None, *, parent: Any | None = None):
+    """Ask the person for a token, API key or username and password you need (to sign in to a website in
+    the browser on your computer, to run tests against a real service in the sandbox, or to call an API). They
+    type it into a masked field in the chat and it is saved to their Saved sign-ins under `name`; you never see
+    the value, only that it was saved. Use this instead of asking them to take over your computer to sign in.
 
     Use List Credentials first: if a sign-in you can use already exists, use it instead of asking.
-    Then pass the name in Bash or Run Tests `credentials` (sandbox) or Http Request `credential`.
+    Then type it on the site with set_text or type_in_window, one field per call ({{secret:NAME.username}},
+    then {{secret:NAME.password}}, or {{secret:NAME}}), or pass the name in Bash or Run Tests `credentials`
+    (sandbox) or Http Request `credential`.
 
     Args:
         name (str): A name like GITHUB_TOKEN or STAGING_DB (letters, numbers, _).
         reason (str): One sentence on what it's for, shown to the person.
-        kind (str, optional): 'token' (one secret value, default) or 'basic' (username and password).
-        allowed_hosts (list[str], optional): Hosts Http Request may send it to, like api.github.com. Leave
-            empty when it's only for commands in the sandbox.
+        kind (str, optional): 'token' (one secret value) or 'basic' (username and password). Default: the
+            kind of the saved sign-in with this name, else 'token'.
+        allowed_hosts (list[str], optional): The exact hosts it may be used on: the sign-in page's host (like
+            github.com, or accounts.google.com, with :port if the page has one; add '*.google.com' too when
+            the site signs in on several subdomains) and hosts Http Request may send it to (like
+            api.github.com). Leave empty when it's only for commands in the sandbox. With for_browser, every
+            host listed here may get it typed into its sign-in page.
+        for_browser (bool, optional): Whether you'll type it into a sign-in page in your browser. Default: yes
+            for a username and password with sites, no otherwise. The person sees this on the card.
 
     Returns:
         str: Whether it was saved.
@@ -545,7 +639,6 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
         clean = normalize_name(name)
     except ValueError as exc:
         return ToolOutcome.failure('bad_name', str(exc))
-    kind = 'basic' if str(kind or '').lower() in ('basic', 'password', 'username_password', 'login') else 'token'
     hosts: list[str] = []
     for raw in allowed_hosts or []:
         try:
@@ -557,14 +650,22 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
     hosts = hosts[:10] or [SANDBOX_ONLY_HOST]
     owner = current_execution_context().user_id
     existing = await find_row(str(owner) if owner else None, clean)
+    if kind is None and existing is not None and getattr(existing, 'kind', '') in ('basic', 'token'):
+        kind = existing.kind
+    kind = 'basic' if str(kind or '').lower() in ('basic', 'password', 'username_password', 'login') else 'token'
     what = 'a username and password' if kind == 'basic' else 'a token or key'
-    where = ('for commands in the sandbox' if hosts == [SANDBOX_ONLY_HOST]
+    sites = hosts != [SANDBOX_ONLY_HOST]
+    browser = bool(sites and (kind == 'basic' if for_browser is None else for_browser))
+    where = ('for commands in the sandbox' if not sites
              else 'for ' + ', '.join(hosts) + ' and commands in the sandbox')
+    typed_note = (f" The agent may type it into the sign-in page on {', '.join(hosts)} in the browser on its "
+                  "computer." if browser else '')
     try:
         spec = QuestionSpec.from_tool_args(
             prompt=f'Share {what}: {clean}',
-            details=(f"{str(reason or '').strip()[:500]}\n\nIt's saved to your Saved sign-ins, {where}. "
-                     "The agent never sees it." + (' This replaces the one you saved before.' if existing else '')),
+            details=(f"{str(reason or '').strip()[:500]}\n\nIt's saved to your Saved sign-ins, {where}."
+                     f"{typed_note} The agent isn't shown it." +
+                     (' This replaces the one you saved before.' if existing else '')),
             options=[{'id': 'saved', 'label': 'Save'}],
         )
     except QuestionValidationError as exc:
@@ -572,7 +673,7 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
     import dataclasses
     spec = dataclasses.replace(spec, secret={'name': clean, 'kind': kind, 'hosts': hosts,
                                              'description': str(reason or '').strip()[:500],
-                                             'replaces': bool(existing)})
+                                             'replaces': bool(existing), 'browser': browser})
     try:
         answer = await ask_question(spec)
     except QuestionChannelUnavailable:
@@ -585,11 +686,19 @@ async def ask_for_sign_in(name: str, reason: str, kind: str = 'token', allowed_h
     saved = await find_row(str(owner) if owner else None, clean)
     if saved is None:
         return ToolOutcome.failure('not_saved', f"{clean} wasn't saved. Ask the person to add it in Settings, Saved sign-ins.")
+    await _let_agent_use(parent, clean)
     if kind == 'basic':
         use = f'{clean}_USERNAME and {clean}_PASSWORD'
     else:
         use = clean
+    if kind == 'basic':
+        typed = (f'{{{{secret:{clean}.username}}}} into the username or email field, then '
+                 f'{{{{secret:{clean}.password}}}} into the password field')
+    else:
+        typed = f'{{{{secret:{clean}}}}} into its field'
+    in_browser = (f" To sign in on {', '.join(hosts)} in your browser, type {typed} with set_text or "
+                  "type_in_window, one field per call." if browser else '')
     return ToolOutcome.success(
-        f"Saved {clean}. In the sandbox pass credentials=['{clean}'] to Bash or Run Tests and read it from the "
-        f"variable{'s' if kind == 'basic' else ''} {use}" +
+        f"Saved {clean}.{in_browser} In the sandbox pass credentials=['{clean}'] to Bash or Run Tests and read it "
+        f"from the variable{'s' if kind == 'basic' else ''} {use}" +
         ('' if hosts == [SANDBOX_ONLY_HOST] else f"; with Http Request use credential='{clean}'") + '.')

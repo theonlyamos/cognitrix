@@ -52,6 +52,10 @@ SECURE_APPS = frozenset({
 
 _MAX_NODES = 500
 _MAX_DEPTH = 40
+# A web page, or a frame of one, in a browser's tree, and the fields on it
+# that get the page's address (computer/saved_sign_ins.py).
+_PAGE_ROLES = ('document web', 'document frame')
+_FIELD_ROLES = ('entry', 'password text', 'text', 'combo box')
 _TEXT_LIMIT = 2000
 
 # AtspiStateType
@@ -354,8 +358,9 @@ class _Atspi:
         sig('atspi_accessible_get_process_id', c_uint, P, E)
         sig('atspi_accessible_get_state_set', P, P)
         sig('atspi_state_set_contains', I, P, I)
-        for iface in ('component', 'action', 'text', 'editable_text', 'value', 'selection'):
+        for iface in ('component', 'action', 'text', 'editable_text', 'value', 'selection', 'document'):
             sig(f'atspi_accessible_get_{iface}_iface', P, P)
+        sig('atspi_document_get_document_attribute_value', P, P, c_char_p, E)
         sig('atspi_component_get_extents', P, P, I, E)
         sig('atspi_component_grab_focus', I, P, E)
         sig('atspi_action_get_n_actions', I, P, E)
@@ -417,6 +422,23 @@ class _Atspi:
 
     def name(self, acc: _Acc) -> str:
         return self.string(self.lib.atspi_accessible_get_name(acc.ptr, None))
+
+    def document_url(self, acc: _Acc) -> str:
+        """The address of the web page (or frame) ``acc`` is in, as the
+        browser itself reports it: Chromium gives every node of a page its
+        own frame's address ("URI"), Firefox gives it on the page ("DocURL").
+        '' when the app doesn't say."""
+        doc = self.lib.atspi_accessible_get_document_iface(acc.ptr)
+        if not doc:
+            return ''
+        try:
+            for key in (b'URI', b'DocURL'):
+                text = self.string(self.lib.atspi_document_get_document_attribute_value(doc, key, None))
+                if text:
+                    return text
+            return ''
+        finally:
+            self.gobject.g_object_unref(doc)
 
     def role(self, acc: _Acc) -> str:
         return self.string(self.lib.atspi_accessible_get_role_name(acc.ptr, None))
@@ -831,6 +853,16 @@ class LinuxBackend:
         if 'set_value' in actions and 'invoke' in actions:
             # A field's own action is "activate" (like pressing Enter), not a click.
             actions.remove('invoke')
+        if role in _PAGE_ROLES or role in _FIELD_ROLES or ('set_value' in actions and role not in _VALUE_ROLES):
+            # Which page a field is on, by the browser's own account (a frame
+            # from another site has its own address): saved sign-ins check it
+            # (saved_sign_ins.check_page). Not shown in control lists.
+            try:
+                page_url = a.document_url(acc)
+            except Exception:
+                page_url = ''
+            if page_url:
+                state['_page_url'] = page_url
         rect = a.extents(acc) if rects and not ref.in_menu and a.has(acc, 'component') else (0, 0, 0, 0)
         enabled = _ST_ENABLED in states or _ST_SENSITIVE in states
         return Element(role, name, value, enabled, actions, rect, state, accelerator, ref)
@@ -842,15 +874,25 @@ class LinuxBackend:
             return []
         out: list[Element] = []
         visited = 0
-        stack: list[tuple[_Acc, int, bool]] = [(frame, 0, False)]
+        # Each node carries the address of the page it is on and of the
+        # outermost page above it (the tab's own page, around any frames).
+        stack: list[tuple[_Acc, int, bool, str, str]] = [(frame, 0, False, '', '')]
         while stack and len(out) < _MAX_NODES and visited < _MAX_NODES * 6:
-            acc, depth, in_menu = stack.pop()
+            acc, depth, in_menu, page_url, top_url = stack.pop()
             visited += 1
             ref = _Ref(acc, info.id, in_menu)
             element = self._describe(ref, rects)
             if element is None:
                 continue
             states = ref.states
+            if element.role in _PAGE_ROLES:
+                page_url = element.state.get('_page_url') or ''
+                top_url = top_url or page_url
+            elif element.role in _FIELD_ROLES or 'set_value' in element.actions:
+                if page_url and '_page_url' not in element.state:
+                    element.state['_page_url'] = page_url  # an app that only names the page's address
+                if top_url:
+                    element.state['_top_url'] = top_url
             # Closed menus are not showing, but their items can still be run
             # (and carry the shortcuts), so menus are read all the way down.
             menu = in_menu or element.role in _MENU_ROLES
@@ -865,7 +907,7 @@ class LinuxBackend:
                 out.append(element)
             if depth < _MAX_DEPTH:
                 for child in reversed(a.children(acc, 300)):
-                    stack.append((child, depth + 1, menu))
+                    stack.append((child, depth + 1, menu, page_url, top_url))
         return out
 
     def elements(self, window_id: int) -> list[Element]:

@@ -476,6 +476,12 @@ _AGENT_MIGRATION_COLUMNS = (
     ('tool_mode', 'TEXT'),
 )
 
+# Saved sign-ins: sites agents may type one into (PR #215). Rows from before
+# read back NULL, which the model reads as none.
+_CREDENTIAL_MIGRATION_COLUMNS = (
+    ('browser_hosts', 'TEXT'),
+)
+
 _PAIRED_DEVICE_MIGRATION_COLUMNS = (
     ('sent_tasks', 'TEXT'),
     ('sign_in_sid', 'TEXT'),
@@ -750,6 +756,7 @@ async def _migrate_relational_task_schema(database) -> None:
         ('memorysetting', _MEMORY_SETTINGS_MIGRATION_COLUMNS),
         ('agentoffers', _OFFER_MIGRATION_COLUMNS),
         ('paireddevices', _PAIRED_DEVICE_MIGRATION_COLUMNS),
+        ('credentials', _CREDENTIAL_MIGRATION_COLUMNS),
         ('chatindexes', _CHAT_INDEX_MIGRATION_COLUMNS),
         ('meetingnotes', _MEETING_RELATIONAL_COLUMNS),
     ):
@@ -1088,6 +1095,7 @@ async def _ensure_schema():
         ('agentoffers', _OFFER_MIGRATION_COLUMNS),
         ('meetingnotes', _MEETING_MIGRATION_COLUMNS),
         ('paireddevices', _PAIRED_DEVICE_MIGRATION_COLUMNS),
+        ('credentials', _CREDENTIAL_MIGRATION_COLUMNS),
         ('chatindexes', _CHAT_INDEX_MIGRATION_COLUMNS),
     )):
         try:
