@@ -30,6 +30,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 import wave
 from array import array
 from collections import deque
@@ -114,25 +115,33 @@ class DesktopAudio:
         if self.recorder is None or not self.recorder.alive:
             self.recorder = Recorder(self.names['speaker'] + '.monitor')
             self.recorder.start()
-        return {'ok': True, 'listening': True}
+        return {'ok': True, 'listening': True, 'recorder': self.recorder.id, 'now': time.time()}
 
     def stop(self, after: int | None = None) -> dict:
         """Stop capture, optionally collecting unread speech including the final utterance."""
-        result = {'ok': True, 'listening': False}
+        result = {'ok': True, 'listening': False, 'now': time.time()}
         rec = self.recorder
         if rec is not None:
             rec.stop()
             self.recorder = None
         if after is not None:
             result['pieces'] = rec.pieces_after(after) if rec is not None else []
+            if rec is not None:
+                result['recorder'] = rec.id
         return result
 
-    def read(self, after: int) -> dict:
+    def read(self, after: int, ack: int | None = None) -> dict:
         rec = self.recorder
         if rec is None:
-            return {'ok': True, 'listening': False, 'pieces': [], 'last_sound': 0.0}
-        return {'ok': True, 'listening': rec.alive, 'pieces': rec.pieces_after(after),
-                'last_sound': rec.last_sound, 'error': rec.error}
+            return {'ok': True, 'listening': False, 'pieces': [], 'last_sound': 0.0, 'now': time.time()}
+        # quiet_s is measured here, so the engine on another machine needs no matching clock.
+        quiet = round(time.time() - rec.last_sound, 2) if rec.last_sound else None
+        # ``now`` lets the engine place each piece's ``at`` on its own clock
+        # (what was said during a pause), ``recorder`` tells it this is still
+        # the recorder whose pieces it counted.
+        return {'ok': True, 'listening': rec.alive, 'pieces': rec.pieces_after(after, ack),
+                'last_sound': rec.last_sound, 'quiet_s': quiet, 'error': rec.error, 'recorder': rec.id,
+                'now': time.time()}
 
     # --------------------------------------------------------------- speaking
 
@@ -240,6 +249,7 @@ class Recorder:
 
     def __init__(self, source: str):
         self.source = source
+        self.id = uuid.uuid4().hex[:12]  # a restarted recorder counts from one again: the engine checks this
         self.seq = 0
         self.last_sound = 0.0  # time.time() of the last loud frame
         self.error = ''
@@ -300,10 +310,13 @@ class Recorder:
             self._pieces.append({'seq': self.seq, 'at': time.time(), 'seconds': round(len(pcm) / (RATE * 2), 2),
                                  'audio': base64.b64encode(wav_bytes(pcm)).decode()})
 
-    def pieces_after(self, after: int) -> list[dict]:
-        """Pieces newer than ``after``; asking for them hands over the older
-        ones, which are dropped (the engine reads in order)."""
+    def pieces_after(self, after: int, ack: int | None = None) -> list[dict]:
+        """Pieces newer than ``after``. Pieces up to ``ack`` (the engine has
+        their text) are dropped; without ``ack``, asking for newer ones hands
+        over the older ones. Pieces between the two are kept, so an engine
+        that restarts before transcribing them can read them again."""
+        keep_from = after if ack is None else min(ack, after)
         with self._guard:
-            while self._pieces and self._pieces[0]['seq'] <= after:
+            while self._pieces and self._pieces[0]['seq'] <= keep_from:
                 self._pieces.popleft()
-            return list(self._pieces)
+            return [p for p in self._pieces if p['seq'] > after]

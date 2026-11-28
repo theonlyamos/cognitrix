@@ -11,6 +11,14 @@ Live calls (``cognitrix/meetings/live.py``): ``POST /meetings/live`` sends an
 agent into a Google Meet, Teams or Zoom call from the browser on its desktop
 in the agents' sandboxed computer; ``POST /meetings/{id}/leave`` brings it
 back, and ``POST /meetings/{id}/say`` has it say something in the call.
+``POST /meetings/{id}/steer`` is private guidance (a note, something to
+raise at the next pause, or the answer to a question the agent asked the
+person), ``POST /meetings/{id}/pause`` takes it off or back on the record,
+and ``GET /meetings/{id}/seen.png`` is what the agent saw when joining
+failed. ``POST /meetings/test`` runs a practice call on the agent's own
+computer. ``GET/PUT /meetings/settings`` hold the person's meeting settings
+(cognitrix/meetings/extras.py) and ``GET /meetings/search?q=`` searches
+past meetings.
 
 Calls from Google Calendar (``cognitrix/meetings/calendar_calls.py``):
 ``GET /meetings/calendar`` lists the upcoming calls found in the connected
@@ -21,17 +29,20 @@ calendar, ``PUT /meetings/calendar`` changes how they are suggested,
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from cognitrix.agents import access as agent_access
 from cognitrix.common.security import AuthContext, get_auth_context, jwt_only
-from cognitrix.meetings import calendar_calls
+from cognitrix.meetings import calendar_calls, extras
 from cognitrix.meetings import live as live_meetings
 from cognitrix.meetings import notes as meeting_notes
 from cognitrix.meetings.notes import MeetingNote
@@ -59,6 +70,32 @@ class LiveJoin(BaseModel):
     reply_mode: str = 'chat'
     announce: bool = True
     language: str | None = Field(default=None, max_length=12)
+    context: str | None = Field(default=None, max_length=extras.MAX_CONTEXT)
+    """Background for the call: agenda, who's in it, what the person wants out of it."""
+    watch_words: str | None = Field(default=None, max_length=extras.MAX_WORDS_TEXT)
+    share: str | None = None
+
+
+class TestCall(BaseModel):
+    agent_id: str | None = None
+    reply_mode: str = 'chat'
+
+
+class Steer(BaseModel):
+    kind: str
+    text: str = Field(default='', max_length=live_meetings.MAX_ANSWER_CHARS)
+
+
+class PauseBody(BaseModel):
+    paused: bool
+
+
+class MeetingSettingsBody(BaseModel):
+    share: str | None = None
+    watch_words: str | None = Field(default=None, max_length=extras.MAX_WORDS_TEXT)
+    vocabulary: str | None = Field(default=None, max_length=extras.MAX_WORDS_TEXT)
+    speaker_pass: bool | None = None
+    live_notes: bool | None = None
 
 
 class CalendarSettingsBody(BaseModel):
@@ -96,9 +133,19 @@ def _view(row: MeetingNote, full: bool = False) -> dict[str, Any]:
         'kind': row.kind or 'recording', 'url': row.url, 'platform': row.platform, 'bot_name': row.bot_name,
         'reply_mode': row.reply_mode, 'announce': row.announce, 'answers': row.answers,
         'in_call': live_meetings.running(str(row.id)),
+        'share': row.share, 'paused': row.paused, 'owner_question': row.owner_question,
+        'rejoins': row.rejoins, 'test': row.test,
+        # Sent from a chat, which gets the notes when the call ends.
+        'from_chat': bool(row.session_id),
     }
     if full:
-        data.update({'transcript': row.transcript, 'notes': row.notes})
+        data.update({
+            'transcript': row.transcript, 'notes': row.notes, 'context': row.context,
+            'watch_words': list(row.watch_words), 'guidance': list(row.guidance),
+            'live_notes': row.live_notes, 'speaker_transcript': row.speaker_transcript,
+            'action_items': list(row.action_items), 'seen': row.seen,
+            'has_seen_image': live_meetings.seen_file(str(row.id)) is not None,
+        })
     return data
 
 
@@ -149,15 +196,24 @@ async def _live_readiness(user_key: str) -> dict[str, Any]:
 
 
 async def start_live(user_key: str, *, url: str, agent_id: str = '', title: str = '', name: str = '',
-                     reply_mode: str = 'chat', announce: bool = True, language: str = '') -> MeetingNote:
-    """Send an agent into a call (the page and the Join Meeting tool).
+                     reply_mode: str = 'chat', announce: bool = True, language: str = '', context: str = '',
+                     watch_words: list[str] | None = None, share: str = '', session_id: str = '',
+                     chat_agent_id: str = '', series_id: str = '', test: bool = False) -> MeetingNote:
+    """Send an agent into a call (the page, the Join Meeting tool and calendar
+    calls). ``session_id`` is the chat that sent it, which gets the notes back.
     Raises MeetingError with what's wrong."""
     from cognitrix.computer.sandbox.client import sandbox_mode
 
     if sandbox_mode() is None:
         raise meeting_notes.MeetingError(
             "Agents join calls from their own computer. Turn it on under Settings, Agent access, Agents' computer first.", 409)
-    url, platform = live_meetings.check_link(url)
+    if test:
+        url, platform = live_meetings.test_call_url(), 'other'
+        title = title or 'Test call'
+    else:
+        url, platform = live_meetings.check_link(url)
+    if share and share not in meeting_notes.SHARE_LEVELS:
+        raise meeting_notes.MeetingError('Answers can use what was said in the call ("call"), or also your work ("work").')
     if reply_mode not in live_meetings.REPLY_MODES:
         raise meeting_notes.MeetingError('Answers go in the chat, out loud, or not at all.')
     await meeting_notes._voice(user_key)
@@ -171,11 +227,21 @@ async def start_live(user_key: str, *, url: str, agent_id: str = '', title: str 
     if len(busy) >= MAX_LIVE_PER_PERSON:
         raise meeting_notes.MeetingError('Your agents are already in two calls.', 429)
     label = live_meetings.PLATFORM_LABELS.get(platform, 'Call')
+    title = (title.strip() or f'{label} call')[:MAX_TITLE]
+    settings = await extras.settings_for(user_key)
+    background = context.strip()
+    if not test:
+        before = await extras.previous_meeting(user_key, series_id=series_id, title=title)
+        background = extras.join_context(background, extras.previous_context(before))
     row = MeetingNote(
         user_id=user_key, kind='live', url=url, platform=platform, agent_id=str(agent.id),
-        title=(title.strip() or f'{label} call')[:MAX_TITLE], bot_name=(name.strip() or agent.name)[:60],
+        title=title, bot_name=(name.strip() or agent.name)[:60],
         reply_mode=reply_mode, announce=bool(announce), language=(language or '').strip().lower()[:12],
         status=live_meetings.JOINING, progress='starting its computer',
+        context=background, watch_words=extras.words(watch_words or []), share=share or settings.share,
+        session_id=session_id, chat_agent_id=chat_agent_id, series_id=series_id, test=bool(test),
+        runner=live_meetings.BOOT,
+        lease_at=live_meetings.lease(),
     )
     await row.save()
     live_meetings.start(str(row.id))
@@ -233,6 +299,38 @@ async def calendar_answer(call_id: str, body: CallAnswer, ctx: AuthContext = Dep
     return await _calendar_view(user_key)
 
 
+@meetings_api.get('/settings')
+async def get_settings(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    return extras.settings_view(await extras.settings_for(_me(ctx)))
+
+
+@meetings_api.put('/settings')
+async def put_settings(body: MeetingSettingsBody, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    try:
+        row = await extras.save_settings(_me(ctx), **body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return extras.settings_view(row)
+
+
+@meetings_api.get('/search')
+async def search_meetings(q: str = Query('', max_length=200), ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    return {'results': await extras.search(_me(ctx), q, 20)}
+
+
+@meetings_api.post('/test')
+async def test_call(body: TestCall, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """A practice call on the agent's own computer: joins, writes in the chat,
+    speaks and checks that it hears itself."""
+    user_key = _me(ctx)
+    agent_id = await _check_agent(user_key, body.agent_id or '')
+    try:
+        row = await start_live(user_key, url='', agent_id=agent_id, reply_mode=body.reply_mode, test=True)
+    except meeting_notes.MeetingError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    return _view(await MeetingNote.get(row.id), full=True)
+
+
 @meetings_api.post('/live')
 async def join_live(body: LiveJoin, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
     user_key = _me(ctx)
@@ -240,18 +338,67 @@ async def join_live(body: LiveJoin, ctx: AuthContext = Depends(get_auth_context)
     try:
         row = await start_live(user_key, url=body.url, agent_id=agent_id, title=body.title or '',
                                name=body.name or '', reply_mode=body.reply_mode, announce=body.announce,
-                               language=body.language or '')
+                               language=body.language or '', context=body.context or '',
+                               watch_words=extras.words(body.watch_words or ''), share=body.share or '')
     except meeting_notes.MeetingError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
     return _view(await MeetingNote.get(row.id), full=True)
 
 
+@meetings_api.post('/{meeting_id}/steer')
+async def steer_live(meeting_id: str, body: Steer, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Private guidance for the agent in the call; nobody in the call sees it."""
+    row = await _mine(meeting_id, ctx)
+    if body.kind not in ('note', 'raise', 'answer'):
+        raise HTTPException(status_code=400, detail='Steer with a note, something to raise, or an answer.')
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail='Write something to pass on.')
+    if not live_meetings.steer(str(row.id), body.kind, body.text):
+        raise HTTPException(status_code=409, detail='The agent is not in this call.')
+    return {'status': 'queued'}
+
+
+@meetings_api.post('/{meeting_id}/pause')
+async def pause_live(meeting_id: str, body: PauseBody, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Off the record (or back on). Answers once the call has applied it, so
+    the page only says "paused" when it is; 'pending' if that took too long
+    (it still counts from the moment it was asked)."""
+    row = await _mine(meeting_id, ctx)
+    done = live_meetings.steer(str(row.id), 'pause' if body.paused else 'resume')
+    if done is None:
+        raise HTTPException(status_code=409, detail='The agent is not in this call.')
+    try:
+        saved = await asyncio.wait_for(asyncio.shield(done), PAUSE_WAIT_S)
+    except TimeoutError:
+        return {'status': 'pending'}
+    if not saved:
+        raise HTTPException(status_code=503, detail="That couldn't be saved, so it isn't confirmed. Try again.")
+    return {'status': 'paused' if body.paused else 'resumed'}
+
+
+PAUSE_WAIT_S = 15
+
+
+@meetings_api.get('/{meeting_id}/seen.png')
+async def seen_image(meeting_id: str, ctx: AuthContext = Depends(get_auth_context)) -> FileResponse:
+    row = await _mine(meeting_id, ctx)
+    path = live_meetings.seen_file(str(row.id))
+    if path is None:
+        raise HTTPException(status_code=404, detail='No screenshot for this meeting.')
+    return FileResponse(path, media_type='image/png', headers={'Cache-Control': 'no-store'})
+
+
 @meetings_api.post('/{meeting_id}/leave')
 async def leave_live(meeting_id: str, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Kept with the meeting first, so whichever Cognitrix process runs the
+    call (now, or after a restart) takes the agent out."""
     row = await _mine(meeting_id, ctx)
-    if not live_meetings.request_leave(str(row.id)):
+    here = live_meetings.running(str(row.id))
+    if not here and not (row.status in live_meetings.LIVE_STATES and live_meetings._held_elsewhere(row)):
         raise HTTPException(status_code=409, detail='The agent is not in this call.')
-    await MeetingNote.update_one({'id': row.id}, {'progress': 'leaving the call'})
+    await MeetingNote.update_many({'id': row.id}, {'stop_asked': 'leave', 'progress': 'leaving the call',
+                                                   'updated_at': datetime.now()})
+    live_meetings.request_leave(str(row.id))
     return _view(await MeetingNote.get(row.id))
 
 
@@ -344,7 +491,8 @@ async def write_again(meeting_id: str, body: NotesAgain,
     data: dict[str, Any] = {'status': meeting_notes.WRITING, 'progress': 'writing the notes', 'error': ''}
     if body.agent_id is not None:
         data['agent_id'] = await _check_agent(_me(ctx), body.agent_id)
-    await MeetingNote.update_one({'id': row.id}, data)
+    data['updated_at'] = datetime.now()
+    await MeetingNote.update_many({'id': row.id}, data)  # update_one adds a LIMIT that PostgreSQL rejects
     meeting_notes.start(str(row.id), None)
     return _view(await MeetingNote.get(row.id), full=True)
 
@@ -352,7 +500,15 @@ async def write_again(meeting_id: str, body: NotesAgain,
 @meetings_api.delete('/{meeting_id}')
 async def delete_meeting(meeting_id: str, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, str]:
     row = await _mine(meeting_id, ctx)
+    if (not live_meetings.running(str(row.id)) and row.status in live_meetings.LIVE_STATES
+            and live_meetings._held_elsewhere(row)):
+        # Another Cognitrix process has the agent in the call: it leaves, stops
+        # listening, then removes the meeting.
+        await MeetingNote.update_many({'id': row.id}, {'stop_asked': 'delete', 'progress': 'leaving the call',
+                                                       'updated_at': datetime.now()})
+        return {'status': 'stopping'}
     await meeting_notes.cancel(str(row.id))
     await live_meetings.cancel(str(row.id))
+    live_meetings.forget_seen(str(row.id))
     await MeetingNote.delete_many({'id': row.id})
     return {'status': 'deleted'}

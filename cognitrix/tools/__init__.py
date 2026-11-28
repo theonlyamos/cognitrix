@@ -51,7 +51,15 @@ from cognitrix.tools.management import (
     update_task,
 )
 from cognitrix.tools.mcp import list_mcp_tools, run_mcp_tool
-from cognitrix.tools.meetings import join_meeting, leave_meeting, meeting_transcript, say_in_meeting, upcoming_calls
+from cognitrix.tools.meetings import (
+    join_meeting,
+    leave_meeting,
+    meeting_transcript,
+    say_in_meeting,
+    search_meetings,
+    steer_meeting,
+    upcoming_calls,
+)
 from cognitrix.tools.followups import follow_up_later
 from cognitrix.tools.memory import memory
 from cognitrix.tools.payments import cancel_payment, pay, request_payment
@@ -130,6 +138,7 @@ __all__ = [
     'spawn_workers', 'swarm', 'swarm_team', 'board',
     'memory', 'follow_up_later', 'publish_brief', 'search_chats', 'read_chat', 'set_theme', 'search_knowledge', 'learn_from_website', 'send_email',
     'join_meeting', 'meeting_transcript', 'say_in_meeting', 'leave_meeting', 'upcoming_calls',
+    'steer_meeting', 'search_meetings',
     'request_payment', 'pay', 'cancel_payment',
     'list_tailnet_devices', 'run_on_tailnet_device',
     'take_screenshot', 'text_input', 'key_press', 'hot_key',

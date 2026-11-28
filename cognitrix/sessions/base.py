@@ -812,19 +812,20 @@ class Session(Model):
 
         # Live calls (cognitrix/meetings/live.py): Join Meeting and friends,
         # while the agents' sandboxed computer is on (the call runs in its browser).
+        # Searching and reading past meetings works without it.
         if interface in ('web', 'ws', 'task') and owner and getattr(agent.llm, 'supports_tool_use', True):
             try:
                 from cognitrix.computer.sandbox.client import sandbox_mode
+                from cognitrix.tools.base import ToolManager
+                from cognitrix.tools.meetings import MEETING_TOOL_CATEGORY, OFFLINE_MEETING_TOOL_NAMES
 
-                if sandbox_mode():
-                    from cognitrix.tools.base import ToolManager
-                    from cognitrix.tools.meetings import MEETING_TOOL_CATEGORY
-
-                    names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
-                    extra = [t for t in ToolManager.get_tools_by_category(MEETING_TOOL_CATEGORY)
-                             if t.name.lower() not in names]
-                    if extra:
-                        agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})
+                computer_on = bool(sandbox_mode())
+                names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+                extra = [t for t in ToolManager.get_tools_by_category(MEETING_TOOL_CATEGORY)
+                         if t.name.lower() not in names
+                         and (computer_on or t.name.lower().replace(' ', '_') in OFFLINE_MEETING_TOOL_NAMES)]
+                if extra:
+                    agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})
             except Exception:
                 logger.debug('Meeting tools unavailable', exc_info=True)
 

@@ -7,7 +7,8 @@
     "https://teams.microsoft.com",
     "https://teams.live.com",
     "https://app.zoom.us",
-    "https://[*.]zoom.us"
+    "https://[*.]zoom.us",
+    "http://127.0.0.1:8790"
   ],
   "AutoplayAllowed": true
 }

@@ -441,6 +441,27 @@ _MEETING_MIGRATION_COLUMNS = (
     ('reply_mode', "TEXT DEFAULT 'chat'"),
     ('announce', 'BOOLEAN DEFAULT 1'),
     ('answers', 'INTEGER DEFAULT 0'),
+    ('share', "TEXT DEFAULT 'call'"),
+    ('paused', 'BOOLEAN DEFAULT 0'),
+    ('rejoins', 'INTEGER DEFAULT 0'),
+    ('test', 'BOOLEAN DEFAULT 0'),
+    ('runner', "TEXT DEFAULT ''"),
+    ('call_state', "TEXT DEFAULT '{}'"),
+    ('lease_at', "TEXT DEFAULT ''"),
+    ('stop_asked', "TEXT DEFAULT ''"),
+)
+
+# PostgreSQL / MySQL: every meeting field added after the table was first
+# made. Plain types and no defaults (MySQL can't default TEXT, PostgreSQL
+# won't take 1/0 for BOOLEAN); the model's validators read NULL as empty.
+_MEETING_RELATIONAL_COLUMNS = (
+    ('kind', 'TEXT'), ('url', 'TEXT'), ('platform', 'TEXT'), ('bot_name', 'TEXT'), ('reply_mode', 'TEXT'),
+    ('announce', 'BOOLEAN'), ('answers', 'INTEGER'),
+    ('session_id', 'TEXT'), ('chat_agent_id', 'TEXT'), ('series_id', 'TEXT'), ('context', 'TEXT'),
+    ('share', 'TEXT'), ('watch_words', 'TEXT'), ('guidance', 'TEXT'), ('paused', 'BOOLEAN'),
+    ('owner_question', 'TEXT'), ('owner_answer', 'TEXT'), ('live_notes', 'TEXT'), ('rejoins', 'INTEGER'),
+    ('runner', 'TEXT'), ('seen', 'TEXT'), ('test', 'BOOLEAN'), ('speaker_transcript', 'TEXT'),
+    ('action_items', 'TEXT'), ('call_state', 'TEXT'), ('lease_at', 'TEXT'), ('stop_asked', 'TEXT'),
 )
 
 _AGENT_MIGRATION_COLUMNS = (
@@ -737,6 +758,7 @@ async def _migrate_relational_task_schema(database) -> None:
         ('paireddevices', _PAIRED_DEVICE_MIGRATION_COLUMNS),
         ('credentials', _CREDENTIAL_MIGRATION_COLUMNS),
         ('chatindexes', _CHAT_INDEX_MIGRATION_COLUMNS),
+        ('meetingnotes', _MEETING_RELATIONAL_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
@@ -757,6 +779,13 @@ async def _migrate_relational_task_schema(database) -> None:
                     raise RuntimeError(
                         f'Could not migrate {table}.{column} on {dbms}'
                     ) from exc
+
+    # A live call's claim after a restart compares ``runner`` with what was
+    # read (an empty string for NULL), so a NULL never matches: backfill it.
+    for column in ('runner', 'lease_at', 'stop_asked'):
+        await database.query(
+            f"UPDATE meetingnotes SET {column} = '' WHERE {column} IS NULL"
+        )
 
     await database.query(
         "UPDATE taskruns SET authority_kind = 'system' "
@@ -910,6 +939,7 @@ async def _ensure_schema():
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
     from cognitrix.mcp.app_views import MODELS as APP_VIEW_MODELS
     from cognitrix.meetings.calendar_calls import MODELS as CALENDAR_CALL_MODELS
+    from cognitrix.meetings.extras import MODELS as MEETING_SETTINGS_MODELS
     from cognitrix.meetings.notes import MeetingNote
     from cognitrix.models.paired_device import MODELS as PAIRED_DEVICE_MODELS
     from cognitrix.models.sign_in import MODELS as SIGN_IN_MODELS
@@ -943,6 +973,7 @@ async def _ensure_schema():
         *EMAIL_MODELS,
         *PAYMENT_MODELS,
         *CALENDAR_CALL_MODELS,
+        *MEETING_SETTINGS_MODELS,
         *ASSISTANT_MODELS,
         *PR_WATCH_MODELS,
         *PAIRED_DEVICE_MODELS,
