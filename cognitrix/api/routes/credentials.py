@@ -42,12 +42,16 @@ class CredentialBody(BaseModel):
     value: str | None = None
     username: str | None = None
     password: str | None = None
+    # Agents may type it into sign-in pages on all its sites, in their browser
+    # (models/credential.py browser_hosts).
+    use_in_browser: bool = False
 
 
 class CredentialUpdate(BaseModel):
     description: str | None = None
     allowed_hosts: list[str] | None = None
     header: str | None = None
+    use_in_browser: bool | None = None
     value: str | None = None
     username: str | None = None
     password: str | None = None
@@ -65,6 +69,11 @@ def _project(row: Any) -> dict[str, Any]:
         'placeholder': '{{secret:' + row.name + '}}',
     })
     return data
+
+
+def _sites(hosts: list[str]) -> list[str]:
+    """Hosts that are websites (not the sandbox-only marker)."""
+    return [h for h in hosts if h != 'sandbox.invalid']
 
 
 def _hosts(raw: list[str]) -> list[str]:
@@ -145,6 +154,7 @@ async def add_credential(body: CredentialBody, ctx: AuthContext = Depends(jwt_on
         header=_header(body.header) if body.kind == 'token' else '',
         secret=seal_secret(values),
         hint=hint_for(values),
+        browser_hosts=_sites(_hosts(body.allowed_hosts)) if body.use_in_browser else [],
     )
     await row.save()
     forget_cached(owner)
@@ -162,6 +172,17 @@ async def update_credential(credential_id: str, body: CredentialUpdate, ctx: Aut
         changes['allowed_hosts'] = _hosts(body.allowed_hosts)
     if body.header is not None and row.kind == 'token':
         changes['header'] = _header(body.header)
+    hosts_now = changes.get('allowed_hosts', list(row.allowed_hosts or []))
+    kept = [h for h in (row.browser_hosts or []) if h in hosts_now]
+    if body.use_in_browser is False:
+        changes['browser_hosts'] = []
+    elif body.use_in_browser and not kept:
+        # Turned on: the form says "only on the hosts above", every site it lists.
+        changes['browser_hosts'] = _sites(hosts_now)
+    elif 'allowed_hosts' in changes or body.use_in_browser:
+        # Already on: the sites allowed before stay the only ones (a host added
+        # for requests isn't one); a removed host stops being one.
+        changes['browser_hosts'] = kept
 
     current = open_secret(row)
     if row.kind == 'basic' and (body.username is not None or body.password is not None):
@@ -221,13 +242,19 @@ async def answer_sign_in_request(request_id: str, body: SignInAnswer, ctx: AuthC
         hosts = [h for h in (wanted.get('hosts') or []) if h != 'sandbox.invalid']
         if hosts:
             changes['allowed_hosts'] = _hosts(list(dict.fromkeys([*existing.allowed_hosts, *hosts])))
+        if wanted.get('browser') and hosts:
+            # The card said it may be typed into these sites' sign-in pages:
+            # these, not the other sites it was already saved for.
+            changes['browser_hosts'] = list(dict.fromkeys([*(existing.browser_hosts or []), *_hosts(hosts)]))
         await Credential.update_one({'id': existing.id}, changes)
     else:
+        hosts = [h for h in (wanted.get('hosts') or []) if h != 'sandbox.invalid']
         row = Credential(
             owner_id=owner, name=name, kind=kind,
             description=str(wanted.get('description') or '')[:500] or 'Asked for by an agent',
             allowed_hosts=_hosts(list(wanted.get('hosts') or ['sandbox.invalid'])),
             secret=seal_secret(values), hint=hint_for(values),
+            browser_hosts=_hosts(hosts) if wanted.get('browser') and hosts else [],
         )
         await row.save()
     forget_cached(owner)

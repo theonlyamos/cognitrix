@@ -730,6 +730,8 @@ class RemoteDriver:
         self.desktop = desktop
         self.backend = _RemoteBackend(self)
         self._snapshots: dict[int, Snapshot] = {}
+        # Who saw which snapshot (the worker keeps its own copy for actions).
+        self._seen: dict[tuple[Any, int], str] = {}
 
     def _call(self, method: str, **args: Any) -> Any:
         actor = current_actor.get()
@@ -759,6 +761,8 @@ class RemoteDriver:
         out = self._call('look', window_id=int(window_id), query=query, limit=int(limit), viewer=_viewer(viewer))
         snap = snapshot_from_dict(out['snapshot'])
         self._snapshots[snap.window_id] = snap
+        if viewer is not None:
+            self._seen[(viewer, snap.window_id)] = snap.id
         shown = [(i, snap.elements[i]) for i in out.get('shown', []) if 0 <= i < len(snap.elements)]
         return image_from_b64(out.get('image')), snap, shown, out.get('note', '')
 

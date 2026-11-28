@@ -98,7 +98,8 @@ class Element:
         if self.value not in (None, ''):
             bits.append(f'value={self.value[:120]!r}')
         for key, val in self.state.items():
-            bits.append(f'{key}={val}')
+            if not key.startswith('_'):  # driver notes, not for the control list
+                bits.append(f'{key}={val}')
         if not self.enabled:
             bits.append('disabled')
         if self.actions:
@@ -715,7 +716,7 @@ class Driver:
             after_fp = self._settled_fingerprint(win.id, before_fp)
             after = self.backend.element_state(element)
             what = f'{chosen} on {element.role} {element.name!r}'
-            if after is not None and after.state != element.state:
+            if after is not None and _visible(after.state) != _visible(element.state):
                 return ActionResult(CONFIRMED, f'{what}; it is now ' + _state_text(after.state) + '.')
             if after_fp != before_fp:
                 return ActionResult(CONFIRMED, f'{what}; the window changed. Look again to see it.')
@@ -976,7 +977,7 @@ class Driver:
             if target is not None and 'scroll' in target.actions:
                 self.backend.perform(target, f'scroll_{direction}', str(int(amount)))
                 after = self.backend.element_state(target)
-                if after is not None and after.state != target.state:
+                if after is not None and _visible(after.state) != _visible(target.state):
                     return ActionResult(CONFIRMED, f'Scrolled {direction}; ' + _state_text(after.state) + '.')
             else:
                 rect = target.rect if target is not None else win.rect
@@ -1022,8 +1023,13 @@ def _pick_action(element: Element, action: str) -> str | None:
     return action if action in acts else None
 
 
+def _visible(state: dict[str, Any]) -> dict[str, Any]:
+    """An element's state without the driver's own notes (keys starting with _)."""
+    return {k: v for k, v in (state or {}).items() if not str(k).startswith('_')}
+
+
 def _state_text(state: dict[str, Any]) -> str:
-    return ', '.join(f'{k}={v}' for k, v in state.items()) or 'changed'
+    return ', '.join(f'{k}={v}' for k, v in _visible(state).items()) or 'changed'
 
 
 _KEY_ALIASES = {'control': 'ctrl', 'del': 'delete', 'esc': 'escape', 'return': 'enter'}

@@ -715,6 +715,20 @@ class AgentManager:
                         results_by_index[i] = _tool_result_entry(tc_id, checked.answer)
                         continue
                     tool_call.access = checked.card
+                if _normal_tool_key(assigned_tool.name) == 'ask_to_take_over':
+                    # A take over just to type a sign-in goes back to the
+                    # agent once, with how to use saved sign-ins instead.
+                    from cognitrix.safety.approval_gate import web_turn_ctx
+                    from cognitrix.tools.computer import takeover_precheck
+                    from cognitrix.tools.utils import current_execution_context
+
+                    chat_id = ((web_turn_ctx.get(None) or {}).get('session_id')
+                               or current_execution_context().session_id)
+                    sent_back = takeover_precheck(args, chat_id)
+                    if sent_back is not None:
+                        results_by_index[i] = _tool_result_entry(
+                            tc_id, ToolOutcome.failure('use_saved_sign_in', sent_back))
+                        continue
                 risk = self.detector.analyze(assigned_tool.name, args)
                 mcp_risk = await self._mcp_write_risk(assigned_tool, args)
                 if mcp_risk is not None and _RISK_ORDER[mcp_risk.risk_level] > _RISK_ORDER[risk.risk_level]:

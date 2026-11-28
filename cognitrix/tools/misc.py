@@ -2230,6 +2230,7 @@ def bash(
     credentials: list[str] | None = None,
     *,
     approved: bool = False,
+    parent: Any | None = None,
 ) -> str:
     from cognitrix.common import shell as sh
 
@@ -2239,7 +2240,8 @@ def bash(
         if isinstance(sandbox, str):
             return sandbox
         from cognitrix.tools import sandbox_work as _sbw
-        return _sbw.sb_bash(sandbox, command, timeout, working_dir, sh.is_truthy(run_in_background), credentials)
+        return _sbw.sb_bash(sandbox, command, timeout, working_dir, sh.is_truthy(run_in_background), credentials,
+                            agent=parent)
 
     if credentials:
         return ("Error: Saved sign-ins can only be passed to commands in the sandbox. Use Http Request "

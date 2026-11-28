@@ -223,7 +223,10 @@ async def list_credentials(*, parent: Any | None = None):
 
     Each entry has a name, a kind (token, basic or oauth), a description and
     the hosts it may be sent to. Use a name with Http Request (`credential`, or
-    {{secret:NAME}} inside the request). You can't read the values themselves.
+    {{secret:NAME}} inside the request), or type it on one of those sites in the
+    browser on your computer with type_in_window or set_text
+    ({{secret:NAME.username}}, {{secret:NAME.password}}, {{secret:NAME}}).
+    You can't read the values themselves.
 
     Returns:
         str: One line per saved credential, or a note that there are none.
@@ -234,7 +237,12 @@ async def list_credentials(*, parent: Any | None = None):
     lines = []
     for row in sorted(rows, key=lambda r: r.name):
         info = describe(row)
-        hosts = ', '.join(info['allowed_hosts']) or 'no hosts'
+        sites = [h for h in info['allowed_hosts'] if h != 'sandbox.invalid']
+        hosts = ', '.join(sites) or 'no sites'
+        if 'sandbox.invalid' in info['allowed_hosts']:
+            hosts += ' and commands on your computer' if sites else ' (only commands on your computer)'
+        if info.get('browser_hosts'):
+            hosts += '; may be typed into sign-in pages on ' + ', '.join(info['browser_hosts'])
         desc = f" - {info['description']}" if info['description'] else ''
         lines.append(f"{info['name']} ({info['kind']}, for {hosts}){desc}")
     return '\n'.join(lines)
