@@ -226,30 +226,61 @@ def hints(row: MeetingNote, agent_name: str, owner: str, settings: MeetingSettin
 # ---------------------------------------------------------------- spoken commands
 
 _PAUSE = re.compile(r"\b(?:pause|stop|hold)\s+(?:the\s+|your\s+)?(?:notes|note[- ]?taking|taking notes|recording|"
-                    r"listening|transcri\w+)\b|\boff\s+(?:the\s+)?record\b", re.I)
-_RESUME = re.compile(r"\b(?:resume|restart|continue)\b|\b(?:start|keep)\s+(?:taking\s+)?(?:the\s+)?(?:notes|"
-                     r"note[- ]?taking|recording|listening)\b|\bback\s+on\s+(?:the\s+)?record\b|"
-                     r"\bon\s+the\s+record\b", re.I)
+                    r"listening|transcri\w+)\b|\b(?:go|we're|we\s+are|let's\s+go)\s+off\s+(?:the\s+)?record\b",
+                    re.I)
+# A resume is said to the note-taker about the notes ("resume the notes",
+# "start taking notes again", "back on the record"), or is the whole request
+# ("Ada, resume."), never a word inside another sentence ("continue the
+# budget discussion").
+_RESUME = re.compile(r"\b(?:resume|restart|continue|start|keep)\s+(?:taking\s+)?(?:the\s+|your\s+)?(?:notes|"
+                     r"note[- ]?taking|recording|listening|transcri\w+)\b|\bback\s+on\s+(?:the\s+)?record\b|"
+                     r"^\W*(?:you\s+can\s+|please\s+)?resume(?:\s+now|\s+please)?\W*$", re.I)
+_NOT = re.compile(r"\b(?:don'?t|do\s+not|never|no\s+need\s+to|not\s+yet|shouldn'?t|won'?t|can'?t|cannot|"
+                  r"wouldn'?t|not)\b[\w\s,']{0,20}$", re.I)
 _LEAVE = re.compile(r"\b(?:please\s+leave|leave\s+(?:the|this|our)\s+(?:call|meeting)|you\s+can\s+(?:go|leave)"
                     r"(?:\s+now)?\b|drop\s+off\b|hang\s+up\b)", re.I)
 _MARK = re.compile(r"\b(?:mark|note|record|log|add)\s+(?:that|this|it)\s+(?:down\s+)?as\s+(?:an?\s+)?"
                    r"(action(?:\s+item)?|decision|todo|to-do|follow[- ]up)\b", re.I)
 
 
+def _after_name(text: str) -> str:
+    """What follows a leading "Ada," so a bare "Ada, resume." reads as the whole request."""
+    return re.sub(r"^\s*(?:hey\s+|ok\s+|okay\s+)?[\w'-]+(?:\s[\w'-]+)?\s*[,:]\s*", '', text, count=1)
+
+
+def _said(pattern: re.Pattern, text: str) -> re.Match | None:
+    """The command, unless it is negated just before ("don't resume the notes yet")."""
+    for match in pattern.finditer(text):
+        if not _NOT.search(text[:match.start()]):
+            return match
+    return None
+
+
 def command(text: str) -> tuple[str, str] | None:
     """A command in something said to the agent: ('pause'|'resume'|'leave'|'mark', detail)."""
     text = str(text or '')
-    if _PAUSE.search(text):
+    rest = _after_name(text)
+    if _said(_PAUSE, text):
         return 'pause', ''
-    if _RESUME.search(text):
+    if _said(_RESUME, text) or _said(_RESUME, rest):
         return 'resume', ''
-    if _LEAVE.search(text):
+    if _said(_LEAVE, text):
         return 'leave', ''
-    match = _MARK.search(text)
+    match = _said(_MARK, text)
     if match:
         kind = match.group(1).lower()
         return 'mark', 'decision' if kind == 'decision' else 'action item'
     return None
+
+
+def up_to_command(text: str) -> str:
+    """The words up to the end of the sentence that asked for the pause:
+    what followed it in the same piece of speech is off the record."""
+    match = _said(_PAUSE, text)
+    if match is None:
+        return text
+    stop = re.search(r'[.!?]', text[match.end():])
+    return text[:match.end() + (stop.end() if stop else 0)].strip()
 
 
 def watch_hits(text: str, watch: list[str]) -> list[str]:
@@ -361,14 +392,16 @@ async def search(user_id: str, query: str, limit: int = 10, *, exclude: str = ''
         if str(row.id) == str(exclude) or row.test:
             continue
         title, notes = (row.title or '').lower(), (row.notes or '').lower()
-        body = (row.speaker_transcript or row.transcript or '').lower()
+        # Both transcripts: the timed one has the agent's own lines, the speaker one may word things better.
+        body = '\n'.join(t for t in (row.transcript, row.speaker_transcript) if t).lower()
         score = sum(3 * title.count(t) + 2 * notes.count(t) + min(body.count(t), 10) for t in terms)
         matched = sum(1 for t in terms if t in title or t in notes or t in body)
         if not score or matched < max(1, (len(terms) + 1) // 2):
             continue
         if phrase and (phrase in notes or phrase in body):
             score += 10
-        source = row.notes if any(t in notes for t in terms) else (row.speaker_transcript or row.transcript)
+        sources = [row.notes, row.transcript, row.speaker_transcript]
+        source = next((s for s in sources if s and any(t in s.lower() for t in terms)), '')
         scored.append((score, {
             'id': str(row.id), 'title': row.title, 'date': str(getattr(row, 'created_at', '') or '')[:10],
             'kind': row.kind, 'snippet': _snippet(source or '', terms),

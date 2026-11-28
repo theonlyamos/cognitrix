@@ -132,7 +132,9 @@ def _view(row: MeetingNote, full: bool = False) -> dict[str, Any]:
         'reply_mode': row.reply_mode, 'announce': row.announce, 'answers': row.answers,
         'in_call': live_meetings.running(str(row.id)),
         'share': row.share, 'paused': row.paused, 'owner_question': row.owner_question,
-        'rejoins': row.rejoins, 'test': row.test, 'reported': bool(row.session_id),
+        'rejoins': row.rejoins, 'test': row.test,
+        # Sent from a chat, which gets the notes when the call ends.
+        'from_chat': bool(row.session_id),
     }
     if full:
         data.update({

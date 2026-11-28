@@ -173,6 +173,7 @@ class View:
     elements: list[Any]
     origin: tuple[int, int] = (0, 0)
     scale: float = 1.0
+    image: Any = field(default=None, repr=False, compare=False)
 
     def text(self) -> str:
         bits = []
@@ -326,12 +327,16 @@ class Screen:
 
     def _read(self, window_id: int) -> View:
         image, snap, _shown, _note = self.driver.look(window_id, None, 1, viewer=self.viewer)
-        view = View(window_id, snap.id, list(snap.elements), tuple(snap.origin), float(snap.scale or 1.0))
-        # Kept for "what the agent saw" when joining fails.
-        self.last_view, self.last_image = view, image
-        return view
+        return View(window_id, snap.id, list(snap.elements), tuple(snap.origin), float(snap.scale or 1.0), image)
 
     def look(self, *, for_close: bool = False) -> View:
+        view = self._look(for_close=for_close)
+        # Kept for "what the agent saw" when joining fails: only a page that
+        # is the call, never another tab that was read and rejected.
+        self.last_view, self.last_image = view, view.image
+        return view
+
+    def _look(self, *, for_close: bool = False) -> View:
         if self.window_id is not None:
             view = self._read(self.window_id)
             address = view.address()
@@ -643,6 +648,8 @@ class Live:
     started: float = field(default_factory=time.monotonic)
     resume: bool = False
     """Picking a call back up after Cognitrix restarted."""
+    stopping: bool = False
+    """Stopped on purpose (the meeting was deleted), not Cognitrix shutting down."""
 
 
 _live: dict[str, Live] = {}
@@ -732,9 +739,12 @@ class _Desk:
 
         return await asyncio.to_thread(call)
 
-    async def audio(self, method: str, action: str = '', body: dict | None = None, after: int = 0) -> dict:
+    async def audio(self, method: str, action: str = '', body: dict | None = None, after: int = 0,
+                    ack: int | None = None) -> dict:
         path = f'/desktops/{self.desktop}/audio' + (f'/{action}' if action else '')
-        params = {'after': after} if method == 'GET' else None
+        params = None
+        if method == 'GET':
+            params = {'after': after} if ack is None else {'after': after, 'ack': ack}
         return await asyncio.to_thread(self.box.call, method, path, body, params=params, timeout=60)
 
 
@@ -891,6 +901,8 @@ def rejoin_step(screen: Screen) -> None:
 
 
 TRANSCRIBE_TRIES = 3
+DELIVERY_TRIES = 3  # an owner's answer or something to raise, before telling them it didn't go out
+QUIET_SOUND_S = 60  # the recorder must also have heard nothing this long before a quiet leave
 TRANSCRIBE_BACKOFF_S = (1.0, 3.0)
 MAX_REJOINS = 3
 LOST_CHECKS = 3  # screen checks in a row that can't read the call: it is gone
@@ -935,6 +947,7 @@ class _Call:
         self.id = str(row.id)
         self.started = time.monotonic() - float(row.seconds or 0)
         self.after = 0
+        self.done = 0  # the newest piece handled; the recorder keeps the rest for a restart
         self.names = call_names(row.bot_name, agent.name)
         self.hints = extras.hints(row, agent.name, owner, settings)
         self.watch = extras.words(list(row.watch_words) + extras.words(getattr(settings, 'watch_words', '')))
@@ -956,6 +969,9 @@ class _Call:
         self.last_answer = 0.0
         self.guidance: list[str] = list(row.guidance)
         self.to_raise: list[str] = []
+        self.raise_tries = 0
+        self.owner_answer = ''  # the owner's answer, until it is out in the call
+        self.answer_tries = 0
         self.question = row.owner_question
         self.question_at = time.monotonic() if self.question else 0.0
         self.lost = 0
@@ -991,7 +1007,8 @@ class _Call:
                 continue
             self.after = seq
             self.piece_no += 1
-            self.queue.put_nowait((piece.get('audio') or '', self.now(), self.piece_no))
+            self.last_heard = time.monotonic()  # someone is talking, even before the text is back
+            self.queue.put_nowait((piece.get('audio') or '', self.now(), self.piece_no, seq))
         if self.worker is None or self.worker.done():
             self.worker = asyncio.create_task(self._work())
 
@@ -1010,12 +1027,13 @@ class _Call:
 
     async def _work(self) -> None:
         while True:
-            audio, at, number = await self.queue.get()
+            audio, at, number, seq = await self.queue.get()
             try:
                 await self._one(audio, at, number)
             except Exception:
                 logger.exception('Meeting %s: a piece of speech could not be handled', self.id)
             finally:
+                self.done = seq  # in order: everything up to here has its text (or a gap mark)
                 self.queue.task_done()
 
     async def _transcribe(self, clip: bytes) -> str | None:
@@ -1072,7 +1090,10 @@ class _Call:
             if order and order[0] == 'resume' and self.paused:
                 await self.set_paused(False, by='the room', at=number)
             return
-        self._keep_audio(clip)
+        if order and order[0] == 'pause':
+            text = extras.up_to_command(text)  # whatever followed "pause notes" in the same piece is not kept
+        else:
+            self._keep_audio(clip)  # a piece with a pause in it isn't kept for the speaker pass either
         self.add(text, at)
         if order:
             await self._obey(order, number)
@@ -1149,7 +1170,8 @@ class _Call:
             ], stream=False))
         except Exception:
             text = ''
-        return (text or instruction)[:MAX_ANSWER_CHARS]
+        # Never the instruction itself: it is the owner's private words.
+        return text[:MAX_ANSWER_CHARS]
 
     async def answer(self) -> None:
         from cognitrix.meetings import extras
@@ -1198,22 +1220,46 @@ class _Call:
             elif kind == 'raise' and text:
                 self.to_raise.append(text)
             elif kind == 'answer' and text:
-                owner = self.owner or 'The person who sent me'
-                if self.question:
-                    reply = f'{owner} says: {text}'
-                else:
-                    reply = f'{owner} got back to me: {text}'
-                self.question, self.question_at = '', 0.0
-                await _set(self.id, owner_question='', owner_answer=text)
-                await self.say_now(reply[:MAX_ANSWER_CHARS], self.row.reply_mode if self.row.reply_mode != 'off'
-                                   else 'chat')
+                self.owner_answer = text
+                self.answer_tries = 0
+                await self.give_answer()
+
+    async def give_answer(self) -> None:
+        """Pass the owner's answer on; it stays (and the question with it)
+        until it is out in the call."""
+        if not self.owner_answer:
+            return
+        text = self.owner_answer
+        owner = self.owner or 'The person who sent me'
+        reply = f'{owner} says: {text}' if self.question else f'{owner} got back to me: {text}'
+        how = await self.say_now(reply[:MAX_ANSWER_CHARS],
+                                 self.row.reply_mode if self.row.reply_mode != 'off' else 'chat')
+        if how:
+            self.owner_answer, self.answer_tries = '', 0
+            self.question, self.question_at = '', 0.0
+            await _set(self.id, owner_question='', owner_answer=text)
+            return
+        self.answer_tries += 1
+        if self.answer_tries >= DELIVERY_TRIES:
+            self.owner_answer, self.answer_tries = '', 0
+            await _alert(self.row, f"Your answer didn't reach {self.row.title}",
+                         f'{self.row.bot_name} could not pass it on in the call: {text}'[:300])
 
     async def raise_pending(self) -> None:
         if not self.to_raise or self.paused or not self.quiet():
             return
-        instruction = self.to_raise.pop(0)
+        instruction = self.to_raise[0]
         text = await self._phrase(instruction)
-        await self.say_now(text, self.row.reply_mode if self.row.reply_mode != 'off' else 'chat')
+        if text and await self.say_now(text, self.row.reply_mode if self.row.reply_mode != 'off' else 'chat'):
+            self.to_raise.pop(0)
+            self.raise_tries = 0
+            return
+        self.raise_tries += 1
+        if self.raise_tries >= DELIVERY_TRIES:
+            self.to_raise.pop(0)
+            self.raise_tries = 0
+            await _alert(self.row, f"{self.row.bot_name} couldn't bring something up in {self.row.title}",
+                         f'Not said in the call: {instruction}'[:300])
 
     async def question_timeout(self) -> None:
         if self.question and time.monotonic() - self.question_at > ASK_WAIT_S:
@@ -1253,8 +1299,12 @@ class _Call:
 
     async def check_screen(self) -> bool:
         """False when the call is over for the agent (ended, removed, or lost for good)."""
+        from cognitrix.computer import HumanControl
+
         try:
             view = await self.desk.do(self.desk.screen.look)
+        except HumanControl:
+            return True  # the person has the computer: nothing is wrong with the call
         except Exception:
             logger.debug('Meeting %s: screen check failed', self.id, exc_info=True)
             self.lost += 1
@@ -1310,7 +1360,7 @@ class _Call:
         while True:
             if item.leave.is_set() or time.monotonic() - self.started > MAX_MEETING_S:
                 break
-            heard = await self.desk.audio('GET', after=self.after)
+            heard = await self.desk.audio('GET', after=self.after, ack=self.done)
             self.last_sound = float(heard.get('last_sound') or 0)
             quiet = heard.get('quiet_s')
             self.quiet_s = float(quiet) if quiet is not None else (None if 'quiet_s' not in heard else 1e9)
@@ -1320,6 +1370,7 @@ class _Call:
                 text, mode = item.say.get_nowait()
                 await self.say_now(text, mode or row.reply_mode or 'chat')
             await self.take_control()
+            await self.give_answer()
             await self.raise_pending()
             await self.question_timeout()
             if (self.pending_question and row.reply_mode != 'off'
@@ -1327,7 +1378,8 @@ class _Call:
                 await self.answer()
             if self.notes_due():
                 self.write_live_notes()
-            if time.monotonic() - self.last_heard > QUIET_LEAVE_S:
+            if (time.monotonic() - self.last_heard > QUIET_LEAVE_S and self.queue.empty()
+                    and (self.quiet_s is None or self.quiet_s >= QUIET_SOUND_S)):
                 self.add(f'(left after {QUIET_LEAVE_S // 60} quiet minutes)')
                 break
             if time.monotonic() - self.last_check > CHECK_SCREEN_S:
@@ -1336,7 +1388,7 @@ class _Call:
                     break
             if heard.get('error') and not heard.get('listening'):
                 if (await self.desk.audio('POST', 'start')).get('ok'):
-                    self.after = 0  # the new recorder starts its own sequence at one
+                    self.after = self.done = 0  # the new recorder starts its own sequence at one
             try:
                 await asyncio.wait_for(item.leave.wait(), POLL_S)
             except TimeoutError:
@@ -1372,7 +1424,7 @@ class _Call:
                                                      api_key=self.api_key, language=self.row.language or None,
                                                      hints=self.hints)
                     if text:
-                        parts.append(text if size <= chunk else f'(part {index})\n{text}')
+                        parts.append(text if size <= chunk else f'(part {index}; speakers numbered afresh)\n{text}')
             return '\n'.join(parts)[:meeting_notes.MAX_TRANSCRIPT_CHARS]
         except Exception as exc:
             logger.info('Meeting %s: the speaker pass failed: %s', self.id, exc)
@@ -1444,6 +1496,14 @@ async def run(item: Live) -> None:
         else:
             await _finish(call)
     except asyncio.CancelledError:
+        if joined and call is not None and not item.stopping and not row.test:
+            # Cognitrix is shutting down: stay in the call, so the next start
+            # picks it up (resume_interrupted). The recorder keeps what was
+            # not transcribed yet.
+            await call.stop_hearing()
+            await _set(meeting_id, progress='Cognitrix stopped; it picks the call back up when it starts',
+                       transcript='\n'.join(call.lines)[-meeting_notes.MAX_TRANSCRIPT_CHARS:])
+            raise
         await _cleanup(desk, joined)
         if call is not None:
             await call.stop_hearing()
@@ -1548,20 +1608,40 @@ async def _record_seen(desk: _Desk, row: MeetingNote) -> str:
 
 async def _still_in_call(desk: _Desk, row: MeetingNote) -> bool:
     """After a restart: is the agent's browser still in the call?"""
-    desk.screen.platform, desk.screen.url = row.platform or platform_of(row.url), row.url
+    screen = desk.screen
+    screen.platform, screen.url = row.platform or platform_of(row.url), row.url
     try:
         windows = await desk.do(desk.driver.list_windows)
-        for win in reversed(windows or []):
-            if 'chrom' not in (getattr(win, 'app', '') or '').lower():
-                continue
-            desk.screen.window_id = int(win.id)
-            view = await desk.do(desk.screen.look)
-            if view.in_call(desk.screen.platform):
-                return True
     except Exception:
-        logger.info('Meeting %s: could not check the call after a restart', row.id, exc_info=True)
-    desk.screen.window_id = None
+        logger.info('Meeting %s: could not list windows after a restart', row.id, exc_info=True)
+        windows = []
+    for win in reversed(windows or []):
+        if 'chrom' not in (getattr(win, 'app', '') or '').lower():
+            continue
+        try:
+            view = await desk.do(screen._read, int(win.id))
+            if not view.in_call(screen.platform) or not _is_this_call(screen, view, win):
+                continue
+            screen.window_id = int(win.id)
+            return True
+        except Exception:  # a window that closed or can't be read: try the next one
+            logger.debug('Meeting %s: window %s not readable after a restart', row.id, win.id, exc_info=True)
+    screen.window_id = None
     return False
+
+
+def _is_this_call(screen: Screen, view: View, win: Any) -> bool:
+    """The page is this meeting, not another call open in the same browser."""
+    address = view.address()
+    if screen.platform == 'meet':
+        return screen._matches_meet(view, getattr(win, 'title', '') or '', False)
+    if not address.hostname:
+        return False  # can't tell which call it is
+    if platform_of(address.geturl()) != screen.platform:
+        return False
+    # Zoom's web client keeps the meeting number in the address.
+    wanted = re.search(r'/(?:j|wc/join|wc)/(\d{6,})', urlsplit(screen.url).path)
+    return not wanted or wanted.group(1) in address.path
 
 
 async def _test_call(call: _Call) -> None:
@@ -1703,6 +1783,7 @@ async def cancel(meeting_id: str) -> None:
     item = _live.get(meeting_id)
     if item is None or item.task is None or item.task.done():
         return
+    item.stopping = True
     item.task.cancel()
     try:
         await item.task

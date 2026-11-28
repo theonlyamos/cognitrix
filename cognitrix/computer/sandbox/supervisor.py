@@ -25,7 +25,8 @@ container's token (``Authorization: Bearer <COGNITRIX_SANDBOX_TOKEN>``):
     POST   /desktops/<name>/release       hand back: screen view-only again
     POST   /desktops/<name>/audio/start   listen to what the desktop plays (a call), see audio.py
     POST   /desktops/<name>/audio/stop
-    GET    /desktops/<name>/audio?after=N pieces of speech heard since piece N
+    GET    /desktops/<name>/audio?after=N&ack=M pieces of speech heard since piece N (kept until
+                                          acknowledged up to M, so an engine restart can read them again)
     POST   /desktops/<name>/audio/say     play audio into the desktop's microphone
     GET    /apps                          apps and whether each is running (see apps.py)
     GET    /apps/<slug>                   one app's status
@@ -639,7 +640,9 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
             action = parts[3] if len(parts) > 3 else ''
             if method == 'GET' and not action:
                 q = parse_qs(urlsplit(self.path).query)
-                self._reply(200, audio.read(int((q.get('after') or ['0'])[0] or 0)))
+                ack = (q.get('ack') or [''])[0]
+                self._reply(200, audio.read(int((q.get('after') or ['0'])[0] or 0),
+                                            int(ack) if ack.lstrip('-').isdigit() else None))
             elif method == 'POST' and action == 'start':
                 self._reply(200, audio.start())
             elif method == 'POST' and action == 'stop':

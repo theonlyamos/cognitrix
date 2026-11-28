@@ -127,13 +127,13 @@ class DesktopAudio:
             result['pieces'] = rec.pieces_after(after) if rec is not None else []
         return result
 
-    def read(self, after: int) -> dict:
+    def read(self, after: int, ack: int | None = None) -> dict:
         rec = self.recorder
         if rec is None:
             return {'ok': True, 'listening': False, 'pieces': [], 'last_sound': 0.0}
         # quiet_s is measured here, so the engine on another machine needs no matching clock.
         quiet = round(time.time() - rec.last_sound, 2) if rec.last_sound else None
-        return {'ok': True, 'listening': rec.alive, 'pieces': rec.pieces_after(after),
+        return {'ok': True, 'listening': rec.alive, 'pieces': rec.pieces_after(after, ack),
                 'last_sound': rec.last_sound, 'quiet_s': quiet, 'error': rec.error}
 
     # --------------------------------------------------------------- speaking
@@ -302,10 +302,13 @@ class Recorder:
             self._pieces.append({'seq': self.seq, 'at': time.time(), 'seconds': round(len(pcm) / (RATE * 2), 2),
                                  'audio': base64.b64encode(wav_bytes(pcm)).decode()})
 
-    def pieces_after(self, after: int) -> list[dict]:
-        """Pieces newer than ``after``; asking for them hands over the older
-        ones, which are dropped (the engine reads in order)."""
+    def pieces_after(self, after: int, ack: int | None = None) -> list[dict]:
+        """Pieces newer than ``after``. Pieces up to ``ack`` (the engine has
+        their text) are dropped; without ``ack``, asking for newer ones hands
+        over the older ones. Pieces between the two are kept, so an engine
+        that restarts before transcribing them can read them again."""
+        keep_from = after if ack is None else min(ack, after)
         with self._guard:
-            while self._pieces and self._pieces[0]['seq'] <= after:
+            while self._pieces and self._pieces[0]['seq'] <= keep_from:
                 self._pieces.popleft()
-            return list(self._pieces)
+            return [p for p in self._pieces if p['seq'] > after]

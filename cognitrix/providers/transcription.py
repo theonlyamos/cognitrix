@@ -250,7 +250,8 @@ async def _gemini(audio: bytes, info: WavInfo | None, model: str, api_key: str, 
     if hints:
         prompt += f' Names and words that may come up (spell them like this): {hints}.'
     parts: list[str] = []
-    for piece in split_wav(audio, info, GEMINI_CHUNK_SECONDS):
+    pieces = split_wav(audio, info, GEMINI_CHUNK_SECONDS)
+    for index, piece in enumerate(pieces, 1):
         result = await client.chat.completions.create(
             model=model,
             messages=[{
@@ -264,6 +265,10 @@ async def _gemini(audio: bytes, info: WavInfo | None, model: str, api_key: str, 
             }],
         )
         text = (result.choices[0].message.content or '').strip() if result.choices else ''
+        if text and speakers and len(pieces) > 1:
+            # Each request numbers its speakers from 1: "Speaker 1" in one
+            # part need not be the same person in the next.
+            text = f'(part {index}; speakers numbered afresh)\n{text}'
         if text:
             parts.append(text)
     return ('\n' if speakers else ' ').join(parts)

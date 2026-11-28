@@ -1415,3 +1415,92 @@ class AsyncFind:
 
     async def nothing(self):
         return None
+
+
+async def test_what_follows_a_spoken_pause_in_the_same_piece_is_not_kept(call, monkeypatch):
+    c = await _in_call(call)
+    _saying(call, monkeypatch, 'Ada, pause the notes. The acquisition price is 40 million.')
+    await c._one(_b64(), '0:01', 1)
+    assert c.paused and c.lines[0] == '[0:01] Ada, pause the notes.'
+    assert not any('40 million' in ln for ln in c.lines)
+
+
+async def test_private_things_to_raise_are_never_said_word_for_word(call, monkeypatch):
+    async def broken(prompt, stream=False):
+        return SimpleNamespace(error='model down', llm_response='')
+
+    c = await _in_call(call, broken)
+    c.quiet_s = 10
+    c.item.control.put_nowait(('raise', 'Ask whether they will drop the price to 9k'))
+    await c.take_control()
+    for _ in range(call.live.DELIVERY_TRIES):
+        await c.raise_pending()
+    assert not any('9k' in t for t in call.driver.typed)
+    assert not c.to_raise and call.alerts[-1].startswith("Ada couldn't bring something up")
+
+
+async def test_the_owners_answer_waits_until_it_is_out_in_the_call(call, monkeypatch):
+    c = await _in_call(call, SteerLLM())
+    await c.ask_owner('Is Monday OK?')
+    out = {'ok': False}
+    real = call.live.deliver
+
+    async def deliver(desk, row, text, mode):
+        return await real(desk, row, text, mode) if out['ok'] else ''
+
+    monkeypatch.setattr(call.live, 'deliver', deliver)
+    c.item.control.put_nowait(('answer', 'Yes, Monday works.'))
+    await c.take_control()
+    assert c.question and (await call.notes.MeetingNote.get(c.id)).owner_question == 'Is Monday OK?'
+    out['ok'] = True
+    await c.give_answer()
+    assert 'Sam says: Yes, Monday works.\n' in call.driver.typed and not c.question
+
+
+async def test_shutting_down_stays_in_the_call_for_the_next_start(call):
+    from cognitrix.api.routes import meetings as routes
+
+    made = await routes.join_live(routes.LiveJoin(url='https://meet.google.com/abc-defg-hij', announce=False), _ctx())
+    for _ in range(200):
+        if (await call.notes.MeetingNote.get(made['id'])).status == call.live.LIVE:
+            break
+        await asyncio.sleep(0.02)
+    task = call.live._live[made['id']].task
+    task.cancel()  # what the event loop does to running tasks when Cognitrix stops
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    row = await call.notes.MeetingNote.get(made['id'])
+    assert row.status == call.live.LIVE and 'picks the call back up' in row.progress
+    assert 'Leave call' not in call.driver.clicked and ('POST', '/desktops/a1/audio/stop') not in call.box.calls
+
+
+async def test_recovery_skips_unreadable_and_other_windows(call):
+    live = call.live
+    row = call.notes.MeetingNote(user_id='u1', kind='live', platform='meet', bot_name='Ada', status='live',
+                                 url='https://meet.google.com/abc-defg-hij')
+
+    class Driver:
+        def list_windows(self, query=None):
+            return [SimpleNamespace(id=3, app='chromium', title='Meet'), SimpleNamespace(id=2, app='chromium', title='Meet'),
+                    SimpleNamespace(id=1, app='chromium', title='Meet')]
+
+        def look(self, window_id, query=None, limit=60, viewer=None):
+            if window_id == 1:
+                raise RuntimeError('window closed')
+            address = {3: 'https://meet.google.com/abc-defg-hij', 2: 'https://meet.google.com/zzz-zzzz-zzz'}[window_id]
+            elements = [_el('push button', 'Leave call'), _el('entry', 'Address and search bar', address)]
+            return None, SimpleNamespace(id='s', elements=elements, origin=(0, 0), scale=1.0), [], ''
+
+    class Desk:
+        def __init__(self):
+            self.driver = Driver()
+            self.screen = live.Screen(self.driver, 'meeting:1')
+
+        async def do(self, fn, *args):
+            return fn(*args)
+
+    desk = Desk()
+    assert await live._still_in_call(desk, row) and desk.screen.window_id == 3
+    row.url = 'https://meet.google.com/qqq-qqqq-qqq'
+    desk = Desk()
+    assert not await live._still_in_call(desk, row) and desk.screen.window_id is None

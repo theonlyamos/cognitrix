@@ -188,3 +188,143 @@ def test_the_sandbox_serves_the_practice_call_and_says_when_an_agent_is_in_a_cal
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.mark.parametrize('said', [
+    'Ada, do not resume notes yet',
+    'Ada, can we continue the budget discussion?',
+    "Ada, don't leave the call",
+    "Ada, please don't pause the notes",
+    'We should resume the hiring plan next week',
+])
+def test_ordinary_speech_is_not_a_command(said):
+    from cognitrix.meetings import extras
+
+    assert extras.command(said) is None
+
+
+def test_a_spoken_pause_keeps_only_what_came_before_it():
+    from cognitrix.meetings import extras
+
+    said = 'Ada, pause the notes. The acquisition price is 40 million.'
+    assert extras.up_to_command(said) == 'Ada, pause the notes.'
+    assert extras.up_to_command('No command here.') == 'No command here.'
+
+
+def test_the_recorder_keeps_speech_until_the_engine_has_its_text():
+    from collections import deque
+
+    from cognitrix.computer.sandbox import audio
+
+    rec = audio.Recorder.__new__(audio.Recorder)
+    rec._guard = __import__('threading').Lock()
+    rec._pieces = deque({'seq': n, 'audio': ''} for n in (1, 2, 3))
+    assert [p['seq'] for p in rec.pieces_after(2, ack=0)] == [3]  # 1 and 2 handed over, not yet transcribed
+    assert [p['seq'] for p in rec.pieces_after(0, ack=0)] == [1, 2, 3]  # a restarted engine reads them again
+    assert [p['seq'] for p in rec.pieces_after(3, ack=2)] == []
+    assert [p['seq'] for p in rec._pieces] == [3]
+    assert [p['seq'] for p in rec.pieces_after(3)] == [] and not rec._pieces  # older engines: as before
+
+
+async def test_existing_postgresql_and_mysql_tables_get_the_meeting_columns():
+    from cognitrix.config import _migrate_relational_task_schema
+    from cognitrix.meetings.notes import MeetingNote
+
+    for dbms in ('postgresql', 'mysql'):
+        statements = []
+
+        class Cursor:
+            def __init__(self, rows=()):
+                self.rows = rows
+
+            def fetchall(self):
+                return list(self.rows)
+
+        class Recorder:
+            pass
+
+        async def query(statement, params=None, _s=statements):
+            _s.append(statement)
+            if 'pg_index' in statement.lower() or 'show index' in statement.lower():
+                return Cursor([(True, ['run_id', 'sequence'])])
+            return Cursor()
+
+        Recorder.dbms, Recorder.query = dbms, staticmethod(query)
+        try:
+            await _migrate_relational_task_schema(Recorder)
+        except RuntimeError as exc:
+            assert 'taskrunevents' in str(exc)  # the fake can't describe MySQL's index; meetings ran before it
+        sql = '\n'.join(statements).lower()
+        for field in MeetingNote.model_fields:
+            if field in ('id', 'user_id', 'title', 'filename', 'agent_id', 'language', 'status', 'progress',
+                         'seconds', 'transcript', 'notes', 'error', 'created_at', 'updated_at'):
+                continue
+            assert 'alter table meetingnotes add column' in sql and f' {field} ' in sql, (dbms, field)
+        assert 'default 1' not in sql.split('meetingnotes', 1)[1].split('\n')[0]
+
+
+def test_search_and_read_tools_are_offered_without_the_computer():
+    import cognitrix.tools  # noqa: F401  (registers the tools)
+    from cognitrix.tools.base import ToolManager
+    from cognitrix.tools.meetings import MEETING_TOOL_CATEGORY, OFFLINE_MEETING_TOOL_NAMES
+
+    names = [t.name for t in ToolManager.get_tools_by_category(MEETING_TOOL_CATEGORY)
+             if t.name.lower().replace(' ', '_') in OFFLINE_MEETING_TOOL_NAMES]
+    assert sorted(names) == ['Meeting Transcript', 'Search Meetings', 'Upcoming Calls']
+
+
+def test_a_tab_that_is_not_the_call_is_never_kept_as_what_the_agent_saw():
+    from cognitrix.meetings import live
+
+    class Driver:
+        def look(self, window_id, query=None, limit=60, viewer=None):
+            elements = [SimpleNamespace(role='entry', name='Address and search bar', value='https://mail.google.com/',
+                                        enabled=True, rect=(0, 0, 1, 1))]
+            return 'IMAGE', SimpleNamespace(id='s1', elements=elements, origin=(0, 0), scale=1.0), [], ''
+
+    screen = live.Screen(Driver(), 'meeting:1')
+    screen.platform, screen.url, screen.window_id = 'meet', 'https://meet.google.com/abc-defg-hij', 5
+    with pytest.raises(live.Stale):
+        screen.look()
+    assert screen.last_view is None and screen.last_image is None
+
+
+def test_restart_recovery_only_accepts_this_meetings_room():
+    from cognitrix.meetings import live
+
+    def view(address):
+        return live.View(1, 's', [SimpleNamespace(role='entry', name='Address and search bar', value=address,
+                                                  enabled=True, rect=(0, 0, 1, 1))])
+
+    screen = live.Screen(SimpleNamespace(), 'meeting:1')
+    screen.platform, screen.url = 'zoom', 'https://us02web.zoom.us/wc/join/81234567890'
+    win = SimpleNamespace(title='Zoom')
+    assert live._is_this_call(screen, view('https://us02web.zoom.us/wc/81234567890/start'), win)
+    assert not live._is_this_call(screen, view('https://us02web.zoom.us/wc/89999999999/start'), win)
+    screen.platform, screen.url = 'teams', 'https://teams.microsoft.com/l/meetup-join/abc'
+    assert not live._is_this_call(screen, view('https://us02web.zoom.us/wc/81234567890/start'), win)
+    screen.platform, screen.url = 'meet', 'https://meet.google.com/abc-defg-hij'
+    assert live._is_this_call(screen, view('https://meet.google.com/abc-defg-hij'), win)
+    assert not live._is_this_call(screen, view('https://meet.google.com/zzz-zzzz-zzz'), win)
+
+
+def test_search_looks_in_both_transcripts():
+    import asyncio
+
+    from cognitrix.meetings import extras
+    from cognitrix.meetings.notes import MeetingNote
+
+    row = MeetingNote(id='m1', user_id='u1', title='Sync', notes='## Summary\nOk',
+                      transcript='[0:01] Ada (chat): The invoice goes out Friday.',
+                      speaker_transcript='Speaker 1: Hello all.')
+
+    async def find(query):
+        return [row]
+
+    original = MeetingNote.find
+    MeetingNote.find = staticmethod(find)
+    try:
+        hits = asyncio.run(extras.search('u1', 'invoice Friday'))
+    finally:
+        MeetingNote.find = original
+    assert hits and 'invoice goes out Friday' in hits[0]['snippet']

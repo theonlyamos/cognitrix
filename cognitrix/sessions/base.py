@@ -819,7 +819,7 @@ class Session(Model):
                 names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
                 extra = [t for t in ToolManager.get_tools_by_category(MEETING_TOOL_CATEGORY)
                          if t.name.lower() not in names
-                         and (computer_on or t.name.lower() in OFFLINE_MEETING_TOOL_NAMES)]
+                         and (computer_on or t.name.lower().replace(' ', '_') in OFFLINE_MEETING_TOOL_NAMES)]
                 if extra:
                     agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})
             except Exception:

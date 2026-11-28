@@ -448,6 +448,19 @@ _MEETING_MIGRATION_COLUMNS = (
     ('runner', "TEXT DEFAULT ''"),
 )
 
+# PostgreSQL / MySQL: every meeting field added after the table was first
+# made. Plain types and no defaults (MySQL can't default TEXT, PostgreSQL
+# won't take 1/0 for BOOLEAN); the model's validators read NULL as empty.
+_MEETING_RELATIONAL_COLUMNS = (
+    ('kind', 'TEXT'), ('url', 'TEXT'), ('platform', 'TEXT'), ('bot_name', 'TEXT'), ('reply_mode', 'TEXT'),
+    ('announce', 'BOOLEAN'), ('answers', 'INTEGER'),
+    ('session_id', 'TEXT'), ('chat_agent_id', 'TEXT'), ('series_id', 'TEXT'), ('context', 'TEXT'),
+    ('share', 'TEXT'), ('watch_words', 'TEXT'), ('guidance', 'TEXT'), ('paused', 'BOOLEAN'),
+    ('owner_question', 'TEXT'), ('owner_answer', 'TEXT'), ('live_notes', 'TEXT'), ('rejoins', 'INTEGER'),
+    ('runner', 'TEXT'), ('seen', 'TEXT'), ('test', 'BOOLEAN'), ('speaker_transcript', 'TEXT'),
+    ('action_items', 'TEXT'),
+)
+
 _AGENT_MIGRATION_COLUMNS = (
     ('owner_id', 'TEXT'),
     ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'), ('can_request_access', 'BOOLEAN'),
@@ -735,6 +748,7 @@ async def _migrate_relational_task_schema(database) -> None:
         ('agentoffers', _OFFER_MIGRATION_COLUMNS),
         ('paireddevices', _PAIRED_DEVICE_MIGRATION_COLUMNS),
         ('chatindexes', _CHAT_INDEX_MIGRATION_COLUMNS),
+        ('meetingnotes', _MEETING_RELATIONAL_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
