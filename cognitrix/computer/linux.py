@@ -757,9 +757,12 @@ class LinuxBackend:
             return positioned[0]
         twins = sorted(w for w in self._client_windows() if (other := self._info(w)) is not None
                        and other.pid == info.pid and title_key(other.title) == key)
-        # Windows of one process are made, and listed by AT-SPI, in the same
-        # order as their X ids grow.
-        by_order = alike[twins.index(info.id)] if len(twins) == len(alike) and info.id in twins else None
+        # Chromium's windows are made, and listed by AT-SPI, in the same order
+        # as their X ids grow. Other toolkits list a window again at the end
+        # when it is hidden and shown (GTK), so there the order says nothing:
+        # no frame (no controls, try again) beats another window's controls.
+        by_order = (alike[twins.index(info.id)]
+                    if info.app in _CHROMIUM_APPS and len(twins) == len(alike) and info.id in twins else None)
         # The window in front is the one frame that is active: that settles
         # it for that window, and rules its frame out for the others.
         active = [f for f in alike if _ST_ACTIVE in a.states(f)]

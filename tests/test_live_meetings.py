@@ -792,7 +792,9 @@ class _SignInBrowser:
 
     MEETING = 'https://meet.google.com/abc-defg-hij'
 
-    def __init__(self, lands_on=None, held_looks=()):
+    def __init__(self, lands_on=None, held_looks=(), takes_over_at_google=False):
+        self.takes_over_at_google = takes_over_at_google
+        self.held_for = 0
         self.windows = {}  # id -> address
         self.signed_in = False
         self.in_call = False
@@ -831,7 +833,13 @@ class _SignInBrowser:
         from cognitrix.computer import HumanControl
 
         self.looks += 1
-        if self.looks in self.held_looks:
+        if self.takes_over_at_google and urlsplit(self.windows[window_id]).hostname == 'accounts.google.com':
+            # The person takes over before the agent has read Google's page,
+            # signs in there, and hands back a few looks later.
+            self.takes_over_at_google, self.signed_in, self.held_for = False, True, 3
+            self.windows[window_id] = self.lands_on
+        if self.looks in self.held_looks or self.held_for > 0:
+            self.held_for -= 1
             raise HumanControl('Ama has taken over this computer.')
         address, elements = self._elements(window_id)
         elements = elements + [_el('entry', 'Address and search bar', address.split('://', 1)[1])]
@@ -895,3 +903,114 @@ async def test_the_call_is_opened_again_when_google_lands_elsewhere_even_if_take
     assert browser.opened[-1] == browser.MEETING and len(browser.opened) == 3
     assert alerts == ['Sign in to Google for Standup']
     assert browser.clicked == ['Join now']
+
+
+async def test_the_call_is_opened_again_when_the_person_took_over_before_googles_page_was_read(monkeypatch):
+    """Codex review on PR #212: taken over before the first look at Google's
+    sign-in window, signed in, handed back from the account page. The call's
+    window was never found, and it used to wait there until the time ran out."""
+    from cognitrix.meetings import live
+
+    monkeypatch.setattr(live, 'REOPEN_AFTER_S', 0)
+    browser = _SignInBrowser(lands_on='https://myaccount.google.com/', takes_over_at_google=True)
+    _updates, alerts = await _join_through(browser, monkeypatch)
+    assert browser.opened[-1] == browser.MEETING and len(browser.opened) == 3
+    assert alerts == ['Sign in to Google for Standup'] and browser.clicked == ['Join now']
+
+
+def test_a_window_just_opened_gets_time_to_load_before_the_call_is_opened_again():
+    from cognitrix.meetings import live
+
+    browser = _SignInBrowser()
+    screen = live.Screen(browser, 'meeting:m1')
+    screen.open(browser.MEETING)
+    browser.windows[11] = 'https://workspace.google.com/loading'  # not there yet
+    assert live.back_to_call(screen) is False and browser.opened == [browser.MEETING]
+    browser.windows[11] = browser.MEETING
+    assert live.back_to_call(screen) is True and browser.opened == [browser.MEETING]
+
+
+def test_waiting_to_be_let_in_is_not_the_call_having_ended():
+    """Meet's logo is a "Return to home screen" link on its join and waiting
+    pages (seen on the real join page, Nov 28)."""
+    from cognitrix.meetings import live
+
+    logo = _el('link', 'Return to home screen')
+    asking = _Page(logo, _el('heading', 'Asking to join…'), _el('static', "You'll join the call when someone lets you in"))
+    assert live.join_step(asking, 'Ada', set()) == 'lobby'
+    # ... also if the page had the button of the pages after a call.
+    asking.elements[0] = _el('push button', 'Return to home screen')
+    assert live.join_step(asking, 'Ada', set()) == 'lobby'
+    # The logo alone (a page between two screens) says nothing.
+    assert live.join_step(_Page(logo), 'Ada', set()) == 'working'
+    # The pages after a call still count.
+    removed = _Page(logo, _el('push button', 'Return to home screen'), _el('timer', 'Returning to home screen'))
+    assert live.join_step(removed, 'Ada', set()) == 'ended'
+
+
+def test_a_nickname_link_is_followed_to_its_room_past_other_restored_windows():
+    """Codex review on PR #212: /lookup/team went on to a room code while
+    Chromium also restored Gmail, and the room was not taken for the call."""
+    from cognitrix.meetings import live
+
+    addresses = {8: 'mail.google.com/mail/u/0/#inbox', 9: 'meet.google.com/abc-defg-hij'}
+
+    class Restored(FakeDriver):
+        def list_windows(self, query=None):
+            return [SimpleNamespace(id=i, app='chromium', title='Chromium') for i in addresses] if self.url else []
+
+        def look(self, window_id, *args, **kwargs):
+            result = super().look(window_id, *args, **kwargs)
+            result[1].elements = [_el('entry', 'Address and search bar', addresses[window_id])]
+            return result
+
+    screen = live.Screen(Restored(), 'meeting:1')
+    screen.open('https://meet.google.com/lookup/team')
+    assert screen.look().window_id == 9
+    # Two rooms open: it can't tell which one the nickname went to.
+    addresses[8] = 'meet.google.com/xyz-abcd-xyz'
+    other = live.Screen(Restored(), 'meeting:2')
+    other.open('https://meet.google.com/lookup/team')
+    with pytest.raises(live.Stale):
+        other.look()
+
+
+def test_a_tab_that_cannot_be_read_as_the_call_is_not_closed(monkeypatch):
+    """Codex review on PR #212: after a switch to another tab, an empty read of
+    the window still let Ctrl+W through, which closes the tab in front."""
+    from cognitrix.meetings import live
+
+    monkeypatch.setattr(live, 'CLOSE_LOOK_GAP_S', 0)
+    shown: list = []
+
+    class Blank(FakeDriver):
+        def look(self, window_id, *args, **kwargs):
+            result = super().look(window_id, *args, **kwargs)
+            result[1].elements = list(shown)
+            return result
+
+    driver = Blank()
+    screen = live.Screen(driver, 'meeting:1')
+    screen.open('https://meet.google.com/abc-defg-hij')
+    screen.window_id = driver.window
+    screen.close()
+    assert driver.clicked == [] and driver.snapshots == live.CLOSE_LOOKS
+    # An image whose address bar can't be read: the page itself shows it is the call.
+    shown[:] = [_el('heading', 'Asking to join…'), _el('push button', 'Cancel')]
+    screen.close()
+    assert driver.clicked == ['ctrl+w']
+
+
+def test_same_titled_windows_of_other_apps_are_not_told_apart_by_order():
+    """Codex review on PR #212: GTK lists a window again at the end when it is
+    hidden and shown, so order paired a window with another one's controls."""
+    backend, infos = _backend(['Notes', 'Notes', 'Notes'], [(5, 'Notes'), (6, 'Notes'), (7, 'Notes')])
+    for info in infos.values():
+        info.app = 'gedit'
+    assert all(backend._frame(info) is None for info in infos.values())
+    # The one in front is still known by its active frame.
+    from cognitrix.computer import linux
+    backend.foreground = lambda: 6
+    backend.atspi.states = lambda acc: {linux._ST_SHOWING} | ({linux._ST_ACTIVE} if acc.ptr == 'f2' else set())
+    assert backend._frame(infos[6]).ptr == 'f2' and backend._frame(infos[5]) is None
+

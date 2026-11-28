@@ -58,7 +58,9 @@ REPLY_MODES = ('chat', 'voice', 'off')
 JOIN_TIMEOUT_S = 120  # getting through the join screen
 LOBBY_WAIT_S = 15 * 60  # waiting for the host to let it in
 SIGN_IN_WAIT_S = 15 * 60  # waiting for the person to sign in on the agent's computer
+REOPEN_AFTER_S = 30  # a call's window that never showed up is opened again after this
 SIGNED_IN_LOOKS = 3  # looks in a row away from the sign-in pages that mean it is done
+CLOSE_LOOKS, CLOSE_LOOK_GAP_S = 3, 0.5  # reads of the call's tab before it is closed
 MAX_SAME_CLICKS = 3  # a join-screen button pressed this often without effect is skipped
 QUIET_LEAVE_S = 15 * 60  # nothing heard for this long: the call is over
 MAX_MEETING_S = 4 * 3600
@@ -144,7 +146,11 @@ GOOGLE_SIGN_IN = 'https://accounts.google.com/ServiceLogin?continue='
 SIGN_IN_PAGES = ('sign in - google accounts', 'to continue to google meet', 'to continue to meet', 'email or phone',
                  'enter your password', 'choose an account', "verify it's you", '2-step verification')
 ENDED = ('you left the meeting', 'you left the call', 'the call has ended', 'the meeting has ended',
-         'meeting has ended', 'call ended', 'return to home screen', 'this meeting has been ended')
+         'meeting has ended', 'call ended', 'this meeting has been ended')
+# Meet's pages after a call have a "Return to home screen" button. Its logo
+# is a link with that name on the join and waiting pages too, so only a
+# button counts, and never over a page that says it is waiting to be let in.
+HOME_BUTTON = 'return to home screen'
 MEET_ROOM_CONTROLS = (('show everyone',), ('chat with everyone', 'in-call messages'),
                       ('raise hand', 'lower hand'), ('meeting details',))
 CHAT_BUTTONS = ('chat with everyone', 'open chat', 'show conversation', 'chat')
@@ -226,7 +232,18 @@ class View:
         return sum(self.find(labels) is not None for labels in MEET_ROOM_CONTROLS) >= 2
 
     def ended(self) -> str:
-        return 'rejoin' if self.find(('rejoin',)) is not None else self.says(ENDED)
+        if self.find(('rejoin',)) is not None:
+            return 'rejoin'
+        said = self.says(ENDED)
+        if said or self.find((HOME_BUTTON,), roles=('push button', 'button')) is None:
+            return said
+        return HOME_BUTTON
+
+    def about_the_call(self, platform: str) -> bool:
+        """Something on the page says it is the call (joining, waiting, in it,
+        over, or Google's sign-in on the way to it), not some other tab."""
+        return bool(self.in_call(platform) or self.offers_join(platform) or self.ended()
+                    or self.says(LOBBY + REFUSED + SIGN_IN_PAGES))
 
     def point(self, index: int) -> tuple[float, float]:
         """Where a control is, in the screenshot's pixels (what type_text takes)."""
@@ -246,6 +263,7 @@ class Screen:
         self.url = ''
         self._room_code = ''
         self._previous_windows: set[int] = set()
+        self.launched_at = 0.0
 
     def open(self, url: str) -> None:
         self.platform = platform_of(url)
@@ -256,6 +274,7 @@ class Screen:
         """A new browser window on ``address``: the call, or Google's sign-in
         page on its way back to it. For Meet, ``look`` then finds the window."""
         self.window_id = None
+        self.launched_at = time.monotonic()
         if self.platform == 'meet':
             self._previous_windows = {w.id for w in self.driver.list_windows()}
         win = self.driver.open('chromium', args=f'--new-window {address}', timeout_s=20)
@@ -321,10 +340,13 @@ class Screen:
             raise MeetingError('The call is not open.')
         # Chromium can restore several windows when it starts a signed-in
         # profile. Driver.open may return any of them before Meet has loaded.
-        windows = self._new_windows()
-        for win in windows:
-            view = self._read(int(win.id))
-            if self._matches_meet(view, win.title or '', len(windows) == 1 and not for_close):
+        # A window on another site (restored Gmail) is not a candidate, so it
+        # doesn't stop a nickname link's redirect to the room from being followed.
+        views = [(win, self._read(int(win.id))) for win in self._new_windows()]
+        hosts = (None, urlsplit(self.url).hostname, 'accounts.google.com')
+        only = sum(view.address().hostname in hosts for _win, view in views) == 1 and not for_close
+        for win, view in views:
+            if self._matches_meet(view, win.title or '', only):
                 self.window_id = view.window_id
                 return view
         raise Stale('Waiting for the requested Google Meet window to open.')
@@ -340,7 +362,17 @@ class Screen:
     def close(self) -> None:
         try:
             if self.platform == 'meet':
-                self.look(for_close=True)  # Ctrl+W closes the active tab in this window.
+                # Ctrl+W closes the active tab in this window, which can be
+                # the person's own after a take-over: the page has to show it
+                # is the call (an empty read doesn't).
+                for attempt in range(CLOSE_LOOKS):
+                    view = self.look(for_close=True)
+                    if view.address().hostname or view.about_the_call(self.platform):
+                        break
+                    if attempt == CLOSE_LOOKS - 1:
+                        logger.info('Left the call window open: it could not be read as the call')
+                        return
+                    time.sleep(CLOSE_LOOK_GAP_S)
             if self.window_id is not None:
                 self.driver.press_key(self.window_id, 'ctrl+w', use_screen=True)
         except Exception:
@@ -382,9 +414,10 @@ def join_step(screen: Screen, name: str, typed: set[int], clicks: dict[str, int]
     # Meet's join screen has a "Return to home screen" link of its own, so a
     # page that still offers to join has not ended.
     offers_join = view.offers_join(screen.platform)
-    if view.ended() and not offers_join:
+    ended, lobby = view.ended(), view.says(LOBBY)
+    if ended and not offers_join and not (lobby and ended == HOME_BUTTON):
         return 'ended'
-    if view.says(LOBBY):
+    if lobby:
         return 'lobby'
     if view.says(('sign in to join',)):
         if not meet:
@@ -436,14 +469,20 @@ def open_sign_in(screen: Screen) -> None:
     screen.launch(GOOGLE_SIGN_IN + quote(screen.url, safe=''))
 
 
-def back_to_call(screen: Screen) -> None:
+def back_to_call(screen: Screen) -> bool:
     """After signing in, open the call again if Google sent the browser
-    somewhere else (the tab it left there is the person's to close)."""
+    somewhere else (the tab it left there is the person's to close). True
+    once the call's window is found; until then it is tried again."""
     try:
         screen.look()
+        return True
     except Stale:
-        if screen.window_id is not None:
+        # The window showed another page, or was never found (the person took
+        # over before the first look at Google's page). One just opened gets
+        # time to load before another is opened.
+        if screen.window_id is not None or time.monotonic() - screen.launched_at >= REOPEN_AFTER_S:
             screen.launch(screen.url)
+        return False
 
 
 def post_chat(screen: Screen, text: str) -> bool:
@@ -717,8 +756,7 @@ async def _join(item: Live, desk: _Desk, row: MeetingNote) -> None:
                 deadline = time.monotonic() + JOIN_TIMEOUT_S
         if returning and seen != 'held':
             try:
-                await desk.do(back_to_call, desk.screen)
-                returning = False
+                returning = not await desk.do(back_to_call, desk.screen)
             except Exception as exc:  # taken over, or a look failed: tried again on the next step
                 logger.info('Meeting %s: going back to the call after sign-in: %s', row.id, exc)
 
