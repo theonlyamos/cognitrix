@@ -999,7 +999,7 @@ def project(app: HostedApp, role: str | None, *, people: dict[str, str], agents:
         'task_id': app.task_id if can_edit(role) else '',
         'access': access_label(app),
         'shared_with': {k: v for k, v in shares(app).items() if not _tailnet_key(k)} if owner else {},
-        # People on the owner's tailnet who may open it with no account (view only).
+        # People on the owner's tailnet who may open it with no account (they use it, they can't change it).
         'tailnet': tailnet_shares(app) if owner else {'everyone': False, 'logins': []},
         'pinned': bool(app.pinned) if owner else False,
         'sleep_after': app.sleep_after,

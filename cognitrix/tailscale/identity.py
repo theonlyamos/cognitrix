@@ -178,19 +178,28 @@ async def view(request: Any, user: Any = None) -> dict[str, Any]:
     return out
 
 
-async def link(request: Any, user: Any) -> dict[str, Any]:
-    """Tie the Tailscale login this request is seen as to the signed-in account."""
+async def link(request: Any, user: Any, sid: str = '') -> dict[str, Any]:
+    """Tie the Tailscale login this request is seen as to the signed-in account.
+    A device that itself came in by a code less than a day ago can't add this way
+    in, like it can't make a code or approve a PC."""
     from cognitrix import audit, signins
     from cognitrix.models.sign_in import TailscaleLink
 
     if not signin_on():
         raise IdentityError('off', 'Signing in from the tailnet is turned off on this server.', 403)
+    if await signins.new_from_a_code(sid):
+        raise IdentityError('too_new', "This device signed in with a code less than a day ago, so it can't add "
+                            'another way to sign in yet. Link your Tailscale login on a device you signed in to '
+                            'with your password or a passkey.', 403)
     seen = visitor(request, own_page=True)
     if seen is None:
         raise IdentityError('not_on_tailnet', 'Open Cognitrix at its Tailscale address on this device first, '
                                               'so it can see which Tailscale login you are.')
     if any(str(row.user_id) != str(user.id) for row in await _links(seen.login)):
         raise IdentityError('taken', 'That Tailscale login is linked to another account here.', 409)
+    before = await link_of_user(user)
+    if before is not None and before.login != seen.login:
+        _drop_pair_requests(user)
     await TailscaleLink.delete_many({'user_id': str(user.id)})
     await TailscaleLink(user_id=str(user.id), login=seen.login, name=seen.name,
                         created_at=signins.now_stamp()).save()
@@ -209,11 +218,19 @@ async def link(request: Any, user: Any) -> dict[str, Any]:
     return await view(request, user)
 
 
+def _drop_pair_requests(user: Any) -> None:
+    """A PC that asked to pair as the old login is no longer waiting for a yes."""
+    from cognitrix.computer.paired import store
+
+    store.drop_requests(str(user.id))
+
+
 async def unlink(request: Any, user: Any) -> dict[str, Any]:
     from cognitrix import audit
     from cognitrix.models.sign_in import TailscaleLink
 
     removed = await TailscaleLink.delete_many({'user_id': str(user.id)})
+    _drop_pair_requests(user)
     if removed:
         audit.record('sign_in', 'Unlinked their Tailscale login', user_id=str(user.id),
                      actor=str(getattr(user, 'email', '') or ''), outcome='ok')

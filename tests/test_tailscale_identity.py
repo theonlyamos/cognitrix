@@ -153,6 +153,29 @@ async def test_a_login_signs_in_only_after_its_owner_linked_it(db):  # noqa: F81
         await identity.sign_in(_request(ADA))
 
 
+async def test_a_device_that_came_in_by_a_code_today_cannot_link_a_login(db):  # noqa: F811
+    """One stolen sign-in code must not turn into a way in that lasts."""
+    from datetime import UTC, datetime, timedelta
+
+    from cognitrix import signins
+    from cognitrix.models.sign_in import SignIn, TailscaleLink
+
+    ada = await _user('Ada', 'ada@example.com')
+    _on(signin=True)
+    by_code = await signins.start(ada, method='code', name='New phone')
+    with pytest.raises(identity.IdentityError) as too_new:
+        await identity.link(_request(ADA), ada, sid=by_code)
+    assert too_new.value.status == 403 and too_new.value.code == 'too_new'
+    assert not await TailscaleLink.find({'user_id': str(ada.id)})
+
+    # A day later that device counts like any other, and so does one that used the password.
+    await SignIn.update_one({'sid': by_code}, {'created_at': signins.now_stamp(datetime.now(UTC) - timedelta(days=2))})
+    assert (await identity.link(_request(ADA), ada, sid=by_code))['linked'] == 'ada@example.com'
+    await identity.unlink(_request(ADA), ada)
+    by_password = await signins.start(ada, method='password', name='Chrome on Windows')
+    assert (await identity.link(_request(ADA), ada, sid=by_password))['linked'] == 'ada@example.com'
+
+
 async def test_one_login_one_account_and_disabled_accounts_stay_out(db):  # noqa: F811
     from cognitrix.models import User
     from cognitrix.models.sign_in import TailscaleLink

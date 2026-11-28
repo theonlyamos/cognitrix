@@ -220,6 +220,37 @@ def _servers_after_pairing(server: str, told: Any) -> list[str]:
     return out[:MAX_SERVERS]
 
 
+def is_paired_address(server: str, cfg: dict[str, Any]) -> bool:
+    """The address this PC's owner paired at (the others were named by the server)."""
+    return str(server or '').strip().rstrip('/').lower() == str(cfg.get('server') or '').strip().rstrip('/').lower()
+
+
+async def same_server(server: str, cfg: dict[str, Any]) -> bool:
+    """Before this PC's token goes to an address the server named: does that
+    address show it is the server this PC paired with? It gets a fresh question
+    only the two of them can answer (see ``proof_of``). https proves a name, not
+    that two names are the same Cognitrix, and whoever answers at an address
+    gets to send this PC work."""
+    import hmac
+    import secrets
+
+    from cognitrix.computer.paired import hash_token, proof_of
+
+    device_id, token = str(cfg.get('device_id') or ''), str(cfg.get('token') or '')
+    if not device_id or not token:
+        return False
+    nonce = secrets.token_urlsafe(24)
+    try:
+        address = normalize_server(server)
+        out = await _post(address, '/prove', {'device_id': device_id, 'nonce': nonce, 'address': address}, timeout=15)
+    except LinkError:
+        return False
+    return hmac.compare_digest(str(out.get('proof') or ''), proof_of(hash_token(token), device_id, nonce, address))
+
+
+NOT_THE_SAME = "{server} didn't show it is the server this PC is linked to, so this PC didn't use it."
+
+
 def check_folders(folders: Any) -> list[dict[str, Any]]:
     """Shared folders as absolute, existing, allowed paths."""
     from cognitrix.common.folders import is_blocked
@@ -257,6 +288,9 @@ async def remote(method: str, path: str, body: dict[str, Any] | None = None) -> 
     last: LinkError | None = None
     for server in servers_of(cfg):
         try:
+            if not is_paired_address(server, cfg) and not await same_server(server, cfg):
+                last = LinkError('unreachable', NOT_THE_SAME.format(server=server))
+                continue
             url = normalize_server(server) + API_PREFIX + path
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http, http.request(
                     method, url, json=body, headers={'Authorization': f"Bearer {cfg['token']}"}) as resp:
@@ -281,11 +315,11 @@ async def remote(method: str, path: str, body: dict[str, Any] | None = None) -> 
 # Pairing (HTTP, before there is a token)
 # ---------------------------------------------------------------------------
 
-async def _post(server: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+async def _post(server: str, path: str, body: dict[str, Any], *, timeout: float = 30) -> dict[str, Any]:
     import aiohttp
     url = normalize_server(server) + API_PREFIX + path
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as http:
             async with http.post(url, json=body) as resp:
                 try:
                     data = await resp.json(content_type=None)
@@ -689,6 +723,11 @@ class Connector:
             for server in servers_of(cfg):
                 was_up = False
                 try:
+                    if not is_paired_address(server, cfg) and not await same_server(server, cfg):
+                        # Never the token, and never work, for an address that can't show this.
+                        self.last_error = NOT_THE_SAME.format(server=server)
+                        logger.info('Paired PC: skipped an address that did not show it is the linked server')
+                        continue
                     await self._session(cfg, server)
                     backoff = 1.0
                     was_up = True

@@ -249,7 +249,7 @@ async def test_an_approval_ends_when_its_approver_is_signed_out(world, tmp_path)
     path, body = await approved_request()
     assert await signins.end(str(world.kofi.id), world.here.sid)
     gone = await world.http.post(path + '/pair', json=body)
-    assert gone.status_code == 404 and 'signed out since' in gone.json()['detail']['message']
+    assert gone.status_code == 404 and 'no longer stands' in gone.json()['detail']['message']
     assert (await world.http.post(path + '/status', json=body)).json()['status'] == 'denied'
 
     # Signed out everywhere (what a new password does too).
@@ -267,6 +267,103 @@ async def test_an_approval_ends_when_its_approver_is_signed_out(world, tmp_path)
     await User.update_one({'id': world.kofi.id}, {'tokens_valid_after': int(time.time()) - 5})
     path, body = await approved_request()
     assert (await world.http.post(path + '/pair', json=body)).status_code == 200
+
+
+async def test_unlinking_the_tailscale_login_ends_what_it_asked_for(world, tmp_path):
+    from cognitrix import signins
+    from cognitrix.models.sign_in import TailscaleLink
+
+    world.here.sid = await signins.start(world.kofi, method='password', name='Chrome on Windows')
+    tailnet_request = SimpleNamespace(headers={'tailscale-user-login': 'kofi@example.com', 'user-agent': 'test'},
+                                      scope={doors.SCOPE_KEY: doors.TAILNET}, client=SimpleNamespace(host=PC_IP))
+    body = {'folders': [str(tmp_path)], 'powers': ['files']}
+
+    # Unlinked while a request waits: it is gone from the list and from the PC.
+    waiting = (await world.http.post('/pair-requests', json={'name': 'Laptop'})).json()
+    approved = (await world.http.post('/pair-requests', json={'name': 'Desk', 'platform': 'Linux'})).json()
+    assert approved['request_id'] != waiting['request_id']
+    await identity.unlink(tailnet_request, world.kofi)
+    assert (await world.http.get('/pair-requests')).json() == {'requests': []}
+    assert store._requests == {}
+
+    # The link goes away by another road after the yes: the yes no longer counts.
+    await identity.link(tailnet_request, world.kofi)
+    ask = (await world.http.post('/pair-requests', json={'name': 'Laptop'})).json()
+    path = f"/pair-requests/{ask['request_id']}"
+    assert (await world.http.post(path + '/approve')).status_code == 200
+    await TailscaleLink.delete_many({'user_id': str(world.kofi.id)})
+    gone = await world.http.post(path + '/pair', json={**body, 'secret': ask['secret']})
+    assert gone.status_code == 404 and 'no longer stands' in gone.json()['detail']['message']
+
+    # And a request can't be approved for a login that isn't linked any more.
+    await identity.link(tailnet_request, world.kofi)
+    ask = (await world.http.post('/pair-requests', json={'name': 'Laptop'})).json()
+    await TailscaleLink.delete_many({'user_id': str(world.kofi.id)})
+    refused = await world.http.post(f"/pair-requests/{ask['request_id']}/approve")
+    assert refused.status_code == 404 and 'no longer linked' in refused.json()['detail']
+
+
+async def test_a_named_address_must_show_it_is_the_same_server(world, tmp_path, my_tailnet, monkeypatch):
+    """The server names other addresses it answers at. Before the PC's token goes to
+    one, that address has to answer a question only the paired server can."""
+    import uvicorn
+
+    from cognitrix.common import addresses
+    from cognitrix.computer.paired.connector import (
+        Connector,
+        ask,
+        link_approved,
+        load_config,
+        same_server,
+        save_config,
+    )
+
+    shared = tmp_path / 'project'
+    shared.mkdir()
+    asked = await ask(world.url, name='Work laptop', client='desktop')
+    await world.http.post(f"/pair-requests/{asked['request_id']}/approve")
+    await link_approved(asked, name='Work laptop', folders=[str(shared)], powers=['files'], client='desktop')
+    cfg = load_config()
+
+    # The server only vouches for addresses it answers at today.
+    assert await same_server(world.url, cfg) is False
+    monkeypatch.setattr(addresses, 'configured', lambda: world.url)
+    assert await same_server(world.url, cfg) is True
+    assert await same_server(world.url, {**cfg, 'token': 'cgxd_' + 'x' * 43}) is False
+    assert await same_server(world.url, {**cfg, 'device_id': 'someone-else'}) is False
+
+    # Another Cognitrix (or anything else) at a named address: it is asked, fails, and never
+    # sees the token or gets to send this PC work.
+    seen: list[tuple[str, str, str]] = []
+
+    async def other(scope, receive, send):
+        if scope['type'] != 'http':
+            seen.append((scope.get('path', ''), 'live connection', ''))
+            return
+        headers = {k.decode(): v.decode() for k, v in scope['headers']}
+        body = (await receive()).get('body', b'').decode()
+        seen.append((scope['path'], headers.get('authorization', ''), body))
+        answer = b'{"proof": "' + b'f' * 64 + b'"}'
+        await send({'type': 'http.response.start', 'status': 200, 'headers': [(b'content-type', b'application/json')]})
+        await send({'type': 'http.response.body', 'body': answer})
+
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(other, host='127.0.0.1', port=port, log_level='warning', lifespan='off'))
+    task = asyncio.create_task(srv.serve())
+    assert await _wait(lambda: srv.started, 10)
+    impostor = f'http://127.0.0.1:{port}'
+    save_config({**cfg, 'servers': [impostor, world.url]})
+    connector = Connector()
+    connector.start()
+    try:
+        assert await _wait(lambda: connector.status == 'connected', 30), connector.last_error
+        assert connector.view()['connected_to'] == world.url
+    finally:
+        await connector.stop()
+        srv.should_exit = True
+        await task
+    assert seen and all(path.endswith('/prove') and not auth for path, auth, _ in seen)
+    assert cfg['token'] not in str(seen)
 
 
 async def test_declined_expired_and_repeated_requests(world):
@@ -380,30 +477,61 @@ async def test_the_desktop_app_asks_and_finishes(world, tmp_path, my_tailnet, mo
     from cognitrix.common.security import AuthContext
     from cognitrix.computer.paired.connector import get_connector
 
-    me = AuthContext(user=SimpleNamespace(id='local'))
+    me = AuthContext(user=SimpleNamespace(id='local'), sid='app-window')
+    here = SimpleNamespace(client=SimpleNamespace(host='127.0.0.1'), scope={}, headers={})
     with pytest.raises(HTTPException) as web_only:
-        await routes.ask_server(routes.AskServerBody(server=world.url), me)
+        await routes.ask_server(routes.AskServerBody(server=world.url), here, me)
     assert web_only.value.status_code == 404                 # only the desktop app has a PC to link
     monkeypatch.setenv('COGNITRIX_DESKTOP', '1')
     monkeypatch.setattr(routes, '_asked', {})
     assert (await routes.asked_status(me))['status'] == 'none'
     shared = tmp_path / 'project'
     shared.mkdir()
-    view = await routes.ask_server(routes.AskServerBody(server=world.url, name='Work laptop'), me)
+    ask_body = routes.AskServerBody(server=world.url, name='Work laptop')
+    finish_body = routes.AskFinishBody(name='Work laptop', folders=[str(shared)], powers=['files'])
+
+    # Linking this PC and choosing what it shares happens at this PC: a session that reaches
+    # the engine from another machine (its Tailscale address, the local network) is refused.
+    through_tailnet = SimpleNamespace(client=SimpleNamespace(host='0.0.0.0'), scope={doors.SCOPE_KEY: doors.TAILNET}, headers={})
+    spoofed_door = SimpleNamespace(client=SimpleNamespace(host='127.0.0.1'), scope={doors.SCOPE_KEY: doors.TAILNET}, headers={})
+    from_the_lan = SimpleNamespace(client=SimpleNamespace(host='192.168.1.20'), scope={}, headers={})
+    for elsewhere in (through_tailnet, spoofed_door, from_the_lan):
+        for call in (lambda r: routes.ask_server(ask_body, r, me), lambda r: routes.finish_asked(finish_body, r, me),
+                     lambda r: routes.forget_asked(r, me),
+                     lambda r: routes.make_link(routes.LinkBody(server=world.url, code='K7QF29XM'), r, me),
+                     lambda r: routes.change_link(routes.LinkChange(folders=[str(shared)]), r, me),
+                     lambda r: routes.remove_link(r, me)):
+            with pytest.raises(HTTPException) as refused:
+                await call(elsewhere)
+            assert refused.value.status_code == 403 and 'on this PC itself' in refused.value.detail
+    assert routes._asked == {}
+
+    view = await routes.ask_server(ask_body, here, me)
     assert view == {'status': 'pending', 'server': world.url, 'account': 'Kofi Boateng · kofi@example.com'}
     assert 'secret' not in str(view)
     request_id = routes._asked['request_id']
     await world.http.post(f'/pair-requests/{request_id}/approve')
+
+    # The request belongs to the session that asked: another one neither sees nor finishes it.
+    for other in (AuthContext(user=SimpleNamespace(id='local'), sid='another-window'),
+                  AuthContext(user=SimpleNamespace(id='someone-else'), sid='app-window')):
+        assert (await routes.asked_status(other))['status'] == 'none'
+        with pytest.raises(HTTPException) as not_theirs:
+            await routes.finish_asked(finish_body, here, other)
+        assert not_theirs.value.status_code == 400
+        await routes.forget_asked(here, other)
+    assert routes._asked['request_id'] == request_id
+
     assert (await routes.asked_status(me))['status'] == 'approved'
     try:
-        link = await routes.finish_asked(routes.AskFinishBody(name='Work laptop', folders=[str(shared)], powers=['files']), me)
+        link = await routes.finish_asked(finish_body, here, me)
         assert link['linked'] and link['servers'] == [f'https://{NAME}', world.url]
         assert routes._asked == {}
     finally:
         await get_connector().stop()
 
     # Declined on the web: the app is told once, then there is nothing to wait on.
-    await routes.ask_server(routes.AskServerBody(server=world.url, name='Work laptop'), me)
+    await routes.ask_server(ask_body, here, me)
     await world.http.post(f"/pair-requests/{routes._asked['request_id']}/deny")
     assert (await routes.asked_status(me))['status'] == 'denied'
     assert (await routes.asked_status(me))['status'] == 'none'

@@ -295,6 +295,11 @@ async def decide_request(user_id: str, request_id: str, approve: bool, sid: str 
     if approve and await signins.new_from_a_code(sid):
         raise PairingError('too_new', "This device signed in with a code less than a day ago, so it can't approve "
                            'a PC yet. Approve it on a device you signed in to with your password.', 403)
+    if approve and not await _still_linked(item):
+        with _lock:
+            _requests.pop(item.id, None)
+        raise PairingError('gone', 'The Tailscale login that asked is no longer linked to your account. Link it '
+                           'again in Settings, Sign-ins, then ask again from the PC.', 404)
     with _lock:
         if item.status != 'pending':
             raise PairingError('gone', 'That request is no longer waiting. Ask again from the PC.', 404)
@@ -323,7 +328,35 @@ async def _still_approved(item: PairRequest) -> bool:
         row = await SignIn.find_one({'sid': item.approved_by_sid})
         if row is None or row.ended_at or str(row.user_id) != str(item.user_id):
             return False
-    return True
+    return await _still_linked(item)
+
+
+async def _still_linked(item: PairRequest) -> bool:
+    """The Tailscale login that asked is still linked to the account it asked for."""
+    from cognitrix.tailscale import identity
+
+    if not identity.signin_on():
+        return False
+    link = await identity.link_of_login(item.login)
+    return link is not None and str(link.user_id) == str(item.user_id)
+
+
+def drop_requests(user_id: str) -> None:
+    """Forget the account's open pairing requests (its Tailscale login was unlinked or changed)."""
+    with _lock:
+        for key in [k for k, r in _requests.items() if r.user_id == str(user_id) and r.status in ('pending', 'approved')]:
+            _requests.pop(key, None)
+
+
+async def prove(device_id: str, nonce: str, address: str) -> str:
+    """Show a paired PC that this is the server it paired with (see ``proof_of``)."""
+    from cognitrix.computer.paired import proof_of
+    from cognitrix.models.paired_device import PairedDevice
+
+    device = await PairedDevice.find_one({'id': str(device_id)}) if device_id else None
+    if device is None or not device.token_hash:
+        raise PairingError('gone', 'That PC is not known here.', 404)
+    return proof_of(device.token_hash, str(device.id), nonce, address)
 
 
 def _own_request(request_id: str, secret: str, login: str, address: str) -> PairRequest:
@@ -361,7 +394,8 @@ async def pair_approved(request_id: str, secret: str, login: str, address: str, 
         with _lock:
             if item.status == 'approved':
                 item.status = 'denied'
-        raise PairingError('gone', 'The device that approved this request has been signed out since. Ask again.', 404)
+        raise PairingError('gone', 'That approval no longer stands: the device that gave it was signed out, or the '
+                           'Tailscale login was unlinked. Ask again.', 404)
     with _lock:
         if item.status == 'used':
             raise PairingError('gone', 'That request was already used to pair a PC. Ask again.', 404)

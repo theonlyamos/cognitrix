@@ -579,6 +579,38 @@ async def pair_approved_device(request_id: str, body: AskPairBody, request: Requ
     return {'device_id': str(device.id), 'token': token, 'name': device.name, 'addresses': _own_addresses()}
 
 
+class ProveBody(BaseModel):
+    device_id: str = Field(max_length=80)
+    nonce: str = Field(min_length=16, max_length=128)
+    address: str = Field(max_length=300)
+
+
+def _same_address(a: str, b: str) -> bool:
+    from urllib.parse import urlsplit
+
+    def key(value: str) -> tuple[str, str]:
+        parts = urlsplit(str(value or '').strip())
+        return parts.scheme.lower(), parts.netloc.lower()
+
+    return bool(key(a)[1]) and key(a) == key(b)
+
+
+@devices_api.post('/prove')
+async def prove_same_server(body: ProveBody) -> dict[str, str]:
+    """A paired PC asks this before it sends its token to an address the server
+    named (not the one its owner paired at): show you are the server I paired
+    with. Only for addresses this server answers at today, so an address that
+    has gone to someone else can't pass the question on to us."""
+    from cognitrix.computer.paired.store import PairingError, prove
+
+    if not any(_same_address(body.address, own) for own in _own_addresses()):
+        raise HTTPException(status_code=404, detail={'code': 'not_mine', 'message': 'This server does not answer at that address.'})
+    try:
+        return {'proof': await prove(body.device_id, body.nonce, body.address)}
+    except PairingError as exc:
+        raise _pairing_error(exc) from None
+
+
 @devices_api.websocket('/connect')
 async def connect(websocket: WebSocket) -> None:
     """A paired PC's connection. Its first message proves which PC it is."""
@@ -674,6 +706,25 @@ def _desktop_only() -> None:
         raise HTTPException(status_code=404, detail='Only the desktop app can link its PC to a web account.')
 
 
+def _at_this_pc(request: Request) -> None:
+    """What this PC shares, and with which account, is decided at this PC: in the
+    desktop app's own window. A session that reaches the engine from another
+    machine (its Tailscale address, the local network) can look, not change."""
+    import ipaddress
+
+    from cognitrix import signins
+    from cognitrix.tailscale import doors
+
+    address = signins.client_address(request)
+    try:
+        local = ipaddress.ip_address(address).is_loopback
+    except ValueError:
+        local = address == 'localhost'
+    if not local or doors.door_of(request) != doors.DIRECT:
+        raise HTTPException(status_code=403, detail='Only the Cognitrix app on this PC itself can link it or change '
+                                                    'what it shares. Open the app on that PC.')
+
+
 def _link_error(exc) -> HTTPException:
     # Shown as is on the desktop app's screen.
     return HTTPException(status_code=400, detail=exc.message)
@@ -697,8 +748,9 @@ class PreviewBody(BaseModel):
 
 
 @link_api.post('/preview')
-async def preview_link(body: PreviewBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+async def preview_link(body: PreviewBody, request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     _desktop_only()
+    _at_this_pc(request)
     from cognitrix.computer.paired.connector import LinkError, preview
     try:
         return await preview(body.server, body.code)
@@ -715,8 +767,9 @@ class LinkBody(BaseModel):
 
 
 @link_api.post('')
-async def make_link(body: LinkBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+async def make_link(body: LinkBody, request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     _desktop_only()
+    _at_this_pc(request)
     from cognitrix.computer.paired.connector import LinkError, get_connector, link
     try:
         await link(body.server, body.code, name=body.name, folders=body.folders, powers=body.powers,
@@ -743,8 +796,17 @@ async def find_servers(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
-# The request this PC is waiting on. Its secret stays in the engine.
+# The request this PC is waiting on. Its secret stays in the engine, and it
+# belongs to the session that asked: no other session sees or finishes it.
 _asked: dict[str, Any] = {}
+
+
+def _asker(ctx: AuthContext) -> tuple[str, str]:
+    return str(getattr(ctx.user, 'id', '') or ''), str(ctx.sid or '')
+
+
+def _my_asked(ctx: AuthContext) -> bool:
+    return bool(_asked) and _asked.get('by') == _asker(ctx)
 
 
 class AskServerBody(BaseModel):
@@ -752,24 +814,25 @@ class AskServerBody(BaseModel):
     name: str = Field(default='', max_length=80)
 
 
-def _asked_view(status: str = '') -> dict[str, Any]:
-    if not _asked:
+def _asked_view(status: str = '', mine: bool = True) -> dict[str, Any]:
+    if not _asked or not mine:
         return {'status': 'none', 'server': '', 'account': ''}
     return {'status': status or _asked.get('status') or 'pending', 'server': _asked['server'],
             'account': _asked.get('account') or ''}
 
 
 @link_api.post('/ask')
-async def ask_server(body: AskServerBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+async def ask_server(body: AskServerBody, request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     """Ask a server on the tailnet to pair this PC; its owner approves on the web."""
     _desktop_only()
+    _at_this_pc(request)
     from cognitrix.computer.paired.connector import LinkError, ask
     try:
         asked = await ask(body.server, name=body.name, client='desktop')
     except LinkError as exc:
         raise _link_error(exc) from None
     _asked.clear()
-    _asked.update(asked, status='pending')
+    _asked.update(asked, status='pending', by=_asker(ctx))
     return _asked_view()
 
 
@@ -777,8 +840,8 @@ async def ask_server(body: AskServerBody, ctx: AuthContext = Depends(jwt_only)) 
 async def asked_status(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     _desktop_only()
     from cognitrix.computer.paired.connector import LinkError, ask_status
-    if not _asked:
-        return _asked_view()
+    if not _my_asked(ctx):
+        return _asked_view(mine=False)
     try:
         now = await ask_status(_asked)
     except LinkError as exc:
@@ -794,10 +857,12 @@ async def asked_status(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
 
 
 @link_api.delete('/ask')
-async def forget_asked(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+async def forget_asked(request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     _desktop_only()
-    _asked.clear()
-    return _asked_view()
+    _at_this_pc(request)
+    if _my_asked(ctx):
+        _asked.clear()
+    return _asked_view(mine=False)
 
 
 class AskFinishBody(BaseModel):
@@ -807,11 +872,12 @@ class AskFinishBody(BaseModel):
 
 
 @link_api.post('/ask/finish')
-async def finish_asked(body: AskFinishBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+async def finish_asked(body: AskFinishBody, request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     """The request was approved: share the chosen folders and save the link."""
     _desktop_only()
+    _at_this_pc(request)
     from cognitrix.computer.paired.connector import LinkError, get_connector, link_approved
-    if not _asked:
+    if not _my_asked(ctx):
         raise HTTPException(status_code=400, detail='There is no pairing request to finish. Ask again.')
     try:
         await link_approved(_asked, name=body.name, folders=body.folders, powers=body.powers, client='desktop')
@@ -833,8 +899,9 @@ class LinkChange(BaseModel):
 
 
 @link_api.patch('')
-async def change_link(body: LinkChange, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+async def change_link(body: LinkChange, request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     _desktop_only()
+    _at_this_pc(request)
     from cognitrix.computer.paired.connector import LinkError, check_folders, get_connector, load_config, save_config
     cfg = load_config()
     if not cfg.get('token'):
@@ -856,8 +923,9 @@ async def change_link(body: LinkChange, ctx: AuthContext = Depends(jwt_only)) ->
 
 
 @link_api.delete('')
-async def remove_link(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+async def remove_link(request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     _desktop_only()
+    _at_this_pc(request)
     from cognitrix.computer.paired.connector import get_connector
     await get_connector().unpair()
     return _link_view()

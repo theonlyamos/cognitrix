@@ -213,7 +213,7 @@ async def make_link(request: Request, ctx: AuthContext = Depends(jwt_only)) -> d
     from cognitrix.tailscale import identity
 
     try:
-        return await identity.link(request, ctx.user)
+        return await identity.link(request, ctx.user, sid=ctx.sid or '')
     except identity.IdentityError as exc:
         raise _identity_error(exc) from None
 
