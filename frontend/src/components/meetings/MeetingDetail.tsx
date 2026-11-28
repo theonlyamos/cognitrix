@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, Copy, Download, MoreHorizontal, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import { Check, ChevronLeft, Copy, Download, MoreHorizontal, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
 import { Select } from '@/lib/components/ui/select';
@@ -59,7 +59,15 @@ export function MeetingDetail({ id, agents, onBack, onChanged, onOpen }: {
   }, [busyOnServer, id]);
 
   if (!meeting) {
-    return <p className="px-6 py-5 text-[13px] text-fg-dim">{error || tr('ui.meetings.loading')}</p>;
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <button type="button" onClick={onBack}
+          className="mx-2 mt-2 inline-flex h-10 items-center gap-1 self-start rounded-lg px-2 text-[13px] text-fg-dim hover:bg-panel-2 hover:text-fg md:hidden">
+          <ChevronLeft size={18} aria-hidden />{tr('ui.meetings.paneHeader.backToMeetings')}
+        </button>
+        <p className="px-6 py-5 text-[13px] text-fg-dim">{error || tr('ui.meetings.loading')}</p>
+      </div>
+    );
   }
 
   if (IN_CALL.includes(meeting.status)) {
@@ -112,7 +120,7 @@ export function MeetingDetail({ id, agents, onBack, onChanged, onOpen }: {
     try {
       const res = await api.post<Meeting>('/meetings/live', {
         url: meeting.url, title: meeting.title, agent_id: meeting.agent_id || null, name: meeting.bot_name || null, reply_mode: meeting.reply_mode || 'chat',
-        announce: true, context: meeting.context || null, watch_words: (meeting.watch_words ?? []).join(', ') || null, share: meeting.share || null,
+        announce: meeting.announce ?? true, context: meeting.context || null, watch_words: (meeting.watch_words ?? []).join(', ') || null, share: meeting.share || null,
       });
       onChanged();
       onOpen(res.data.id);

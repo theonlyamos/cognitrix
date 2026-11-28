@@ -147,3 +147,30 @@ it('groups the list, opens a finished meeting with its action items, and sends a
   await waitFor(() => expect(post).toHaveBeenCalledWith('/meetings/live', expect.objectContaining({ url: 'https://zoom.us/j/123', reply_mode: 'chat' })));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 });
+
+it('retries a failed call with the same announcement choice, and offers a way back when a meeting will not load', async () => {
+  const failed: MeetingSummary = {
+    id: 'm5', title: 'Standup', filename: '', agent_id: 'a1', status: 'error',
+    progress: '', seconds: 0, error: 'Nobody let Ada in.', created_at: '2026-11-28T10:00:00Z', has_transcript: false,
+    kind: 'live', platform: 'meet', bot_name: 'Ada', url: 'https://meet.google.com/abc-defg-hij', reply_mode: 'chat', announce: false,
+  };
+  vi.spyOn(api, 'get').mockImplementation(async (path) => {
+    switch (path) {
+      case '/agents': return { data: [{ id: 'a1', name: 'Ada' }] };
+      case '/meetings': return { data: { meetings: [failed], voice_ready: true, ffmpeg: true } };
+      case '/meetings/calendar': return { data: { connected: false, calls: [] } };
+      case '/meetings/m5': return { data: { ...failed, transcript: '', notes: '' } };
+      case '/meetings/gone': throw new Error('Not found');
+      default: throw new Error(`Unexpected GET ${path}`);
+    }
+  });
+  const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 'gone' } });
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+
+  renderPage('/meetings?open=m5');
+  fireEvent.click(await screen.findByRole('button', { name: /Try again/ }));
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/meetings/live', expect.objectContaining({ announce: false })));
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Back to meetings' }));
+  expect(await screen.findByText('Pick a meeting to see its notes')).toBeInTheDocument();
+});

@@ -22,6 +22,8 @@ export interface MeetingSummary {
   platform?: string;
   bot_name?: string;
   reply_mode?: ReplyMode;
+  /** The agent says hello in the call chat when it joins. */
+  announce?: boolean;
   answers?: number;
   /** The live meeting worker is running, including while it writes notes after the call. */
   in_call?: boolean;
